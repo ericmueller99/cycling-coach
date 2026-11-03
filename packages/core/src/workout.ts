@@ -156,15 +156,17 @@ export function describeMainSet(segments: readonly WorkoutSegment[]): string {
 }
 
 /** "Work 400 W · Rest 173 W" style target line at the current FTP. */
-export function describeTargets(segments: readonly WorkoutSegment[], ftp: number): string {
+/** Watt targets at this FTP; % of FTP while it isn't known yet (DECISIONS #62). */
+export function describeTargets(segments: readonly WorkoutSegment[], ftp: number | undefined): string {
   const steps = flatten(segments);
   const work = steps.filter((s) => s.role === 'work');
   const rest = steps.filter((s) => s.role === 'rest');
   const parts: string[] = [];
   const uniq = (xs: number[]) => [...new Set(xs)].sort((a, b) => b - a);
   const workPcts = uniq(work.map((s) => s.pct));
-  if (workPcts.length) parts.push(`Work ${workPcts.map((p) => `${watts(p, ftp)} W`).join(' / ')}`);
+  const target = (p: number) => (ftp ? `${watts(p, ftp)} W` : `${p}%`);
+  if (workPcts.length) parts.push(`Work ${workPcts.map(target).join(' / ')}`);
   const restPcts = uniq(rest.map((s) => s.pct));
-  if (restPcts.length) parts.push(`Rest ${restPcts.map((p) => `${watts(p, ftp)} W`).join(' / ')}`);
+  if (restPcts.length) parts.push(`Rest ${restPcts.map(target).join(' / ')}`);
   return parts.join(' · ');
 }

@@ -20,8 +20,18 @@ export const zwiftMetricsSchema = z.object({
 });
 export type ZwiftMetrics = z.infer<typeof zwiftMetricsSchema>;
 
+/** Where the athlete's FTP came from (onboarding asks; DECISIONS #62). */
+export const ftpSources = ['zwift', 'ramp', '20min', 'app', 'guess'] as const;
+export const ftpSourceSchema = z.enum(ftpSources);
+export type FtpSource = z.infer<typeof ftpSourceSchema>;
+
 export const profileSchema = z.object({
-  ftpZwift: z.number().int().min(50).max(700),
+  /**
+   * Unset until it's known (DECISIONS #62): a new athlete who doesn't know theirs gets a ramp test
+   * first, and the coach prescribes by feel and heart rate until then.
+   */
+  ftpZwift: z.number().int().min(50).max(700).optional(),
+  ftpSource: ftpSourceSchema.optional(),
   /**
    * Coaching weight. When synced, the TREND weight — the median of the last 7 days of weigh-ins
    * from intervals.icu — so a one-off swing doesn't move it (core.trendWeight).

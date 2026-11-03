@@ -23,6 +23,8 @@ import type {
   FoodInput,
   FoodLogEntry,
   FoodSettings,
+  OnboardingFitness,
+  OnboardingGoals,
   IngredientLine,
   IngredientMatch,
   MealIdea,
@@ -453,6 +455,21 @@ export interface JobDoc {
   updatedAt: Date;
 }
 
+/** First-run onboarding (DECISIONS #62). No doc and no profile means it hasn't started. */
+export interface OnboardingDoc {
+  _id?: ObjectId;
+  userId: string;
+  step: number;
+  fitness?: OnboardingFitness;
+  unit?: 'kg' | 'lb';
+  goals?: OnboardingGoals;
+  /** The goals the wizard made, replaced when the Goals step is saved again. */
+  goalIds: string[];
+  rampTest?: { date: string; eventId: string };
+  completedAt?: Date;
+  updatedAt: Date;
+}
+
 /** Better Auth's `user` collection. Better Auth owns it; we only read the fields we show. */
 export interface UserDoc {
   _id: ObjectId;
@@ -494,6 +511,7 @@ export function collections(db: Db) {
     activities: db.collection<ActivityDoc>('activities'),
     wellness: db.collection<WellnessDoc>('wellness'),
     jobs: db.collection<JobDoc>('jobs'),
+    onboarding: db.collection<OnboardingDoc>('onboarding'),
   };
 }
 
@@ -546,5 +564,6 @@ export async function ensureIndexes(db: Db): Promise<void> {
     c.activities.createIndex({ userId: 1, detailAt: 1, startLocal: -1 }),
     c.wellness.createIndex({ userId: 1, date: 1 }, { unique: true }),
     c.jobs.createIndex({ kind: 1, runAt: 1 }),
+    c.onboarding.createIndex({ userId: 1 }, { unique: true }),
   ]);
 }

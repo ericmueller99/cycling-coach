@@ -27,6 +27,26 @@ const set3013: WorkoutSegment = {
   ],
 };
 
+/**
+ * The first workout for an athlete who doesn't know their FTP (DECISIONS #62): a minute-by-minute
+ * ramp ridden until they can't hold it. FTP ≈ 75% of the best one-minute power. The steps are % of
+ * whatever FTP Zwift or intervals.icu has on file; where the ramp starts barely matters, because it
+ * ends at failure.
+ */
+export const RAMP_TEST: WorkoutInput = {
+  name: 'FTP Ramp Test',
+  category: 'Test',
+  description:
+    'Ramp test: 5 min easy, then the target goes up every minute until you can no longer hold it — ride to failure. ' +
+    'Your FTP is about 75% of your best one-minute power. Rest well the day before.',
+  inZwift: true,
+  segments: [
+    { kind: 'steady', durSec: 300, pct: 50 },
+    ...Array.from({ length: 16 }, (_, i): WorkoutSegment => ({ kind: 'steady', durSec: 60, pct: 60 + i * 6 })),
+    { kind: 'ramp', durSec: 300, fromPct: 50, toPct: 40 },
+  ],
+};
+
 export const STARTER_WORKOUTS: WorkoutInput[] = [
   {
     name: 'VO2 5x4',
@@ -79,4 +99,5 @@ export const STARTER_WORKOUTS: WorkoutInput[] = [
       ...STANDARD_COOLDOWN,
     ],
   },
+  RAMP_TEST,
 ];

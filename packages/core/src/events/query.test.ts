@@ -85,7 +85,7 @@ describe('eligibility', () => {
 
 describe('z2Wkg', () => {
   it('Z2 at Zwift FTP over Zwift weight', () => {
-    const [lo, hi] = z2Wkg(athlete);
+    const [lo, hi] = z2Wkg(athlete)!;
     expect(lo).toBeCloseTo(193 / 83, 2);
     expect(hi).toBeCloseTo(259 / 83, 2);
   });

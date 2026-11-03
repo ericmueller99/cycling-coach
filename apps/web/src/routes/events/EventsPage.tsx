@@ -124,8 +124,9 @@ export function EventsPage({ search }: { search: EventsSearch }) {
   const p = profile.data?.profile;
   const timeZone = p?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
   const z2 = useMemo(() => {
-    if (!p) return undefined;
-    const [lo, hi] = z2Wkg({ ftp: p.ftpZwift, weightKg: p.weightKg, zwiftWeightKg: p.zwiftWeightKg });
+    const range = p ? z2Wkg({ ftp: p.ftpZwift, weightKg: p.weightKg, zwiftWeightKg: p.zwiftWeightKg }) : null;
+    if (!range) return undefined;
+    const [lo, hi] = range;
     return `${lo.toFixed(2)}–${hi.toFixed(2)}`;
   }, [p]);
 

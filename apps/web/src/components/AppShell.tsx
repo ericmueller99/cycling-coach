@@ -7,6 +7,7 @@ import { fullSyncFraction } from '../routes/athlete/connections';
 import { Avatar } from './Avatar';
 import { CORE_NAV, useExtensions, type NavItem } from '../extensions';
 import { ChevronRight, LogoIcon, XIcon } from './icons';
+import { VerifyEmailBanner } from './VerifyEmailBanner';
 
 /** The same destinations on the sidebar and the phone tab bar: the core five plus any an extension adds. */
 function useNav(): readonly NavItem[] {
@@ -172,7 +173,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
           <div>
             <div className="text-base font-bold">{brand}</div>
-            <div className="text-xs text-muted">{data ? `FTP ${data.snapshot.ftpZwift} W` : ' '}</div>
+            <div className="text-xs text-muted">{data ? (data.snapshot.ftpZwift ? `FTP ${data.snapshot.ftpZwift} W` : 'FTP not set yet') : ' '}</div>
           </div>
         </div>
         {nav.map(({ to, label, icon: Icon, match }) => {
@@ -191,6 +192,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           );
         })}
         <div className="min-h-6 grow" />
+        <VerifyEmailBanner variant="card" />
         <ImportProgress progress={importing} variant="sidebar" />
         <ProfileLink active={path.startsWith('/account')} />
       </nav>

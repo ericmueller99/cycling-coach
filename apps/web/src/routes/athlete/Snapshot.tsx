@@ -37,8 +37,8 @@ export function Snapshot({ profile, mainGoal, today }: { profile: Profile; mainG
 
   return (
     <div className="grid grid-cols-5 gap-2 mobile:flex mobile:scrollbar-none mobile:overflow-x-auto mobile:px-4 mobile:pb-2.5">
-      <SnapTile tab="performance" label="FTP" value={profile.ftpZwift}>
-        W · {wattsPerKg(profile.ftpZwift, profile.weightKg).toFixed(2)} W/kg
+      <SnapTile tab="performance" label="FTP" value={profile.ftpZwift ?? '—'}>
+        {profile.ftpZwift ? `W · ${wattsPerKg(profile.ftpZwift, profile.weightKg).toFixed(2)} W/kg` : 'Not set yet'}
       </SnapTile>
       <SnapTile tab="body" label="Trend weight" value={profile.weightKg.toFixed(1)}>
         kg

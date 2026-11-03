@@ -79,3 +79,19 @@ describe('ride ratings in tool output', () => {
     expect(formatFeedbackForModel(ratings[2]!)).toBe('2026-10-31 · Z2 spin · RPE 2/10 (Very easy) · "First two felt easy." · unplanned ride, activity i9');
   });
 });
+
+describe('renderAthleteBlock — FTP not known yet (DECISIONS #62)', () => {
+  it('tells the coach to prescribe by feel and lists workout targets as % of FTP', () => {
+    const base = ctx() as unknown as { profile: Record<string, unknown>; workouts: unknown[] };
+    const { ftpZwift: _f, ...profile } = base.profile;
+    const block = renderAthleteBlock({
+      ...base,
+      profile,
+      workouts: [{ id: 'w1', name: 'Steady', category: 'Endurance', inZwift: false, segments: [{ kind: 'steady', durSec: 1200, pct: 70 }] }],
+    } as unknown as Parameters<typeof renderAthleteBlock>[0]);
+    expect(block).toContain('FTP: not known yet');
+    expect(block).not.toContain('Zones at Zwift FTP');
+    expect(block).toContain('70%');
+    expect(block).not.toMatch(/\d+ W\b.*Steady|Steady.* \d+ W/);
+  });
+});

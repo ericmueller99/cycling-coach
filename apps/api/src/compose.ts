@@ -38,7 +38,7 @@ import { sessionRideIds, todayIn } from '@cycling-coach/core';
 import type { IntegrationStatus, ZwiftStatus } from '@cycling-coach/shared';
 import type { Db } from 'mongodb';
 import { createApp, type AppServices } from './app';
-import { createAuth, type Auth, type AuthExtension } from './auth';
+import { authConfig, createAuth, type Auth, type AuthExtension } from './auth';
 import type { Env } from './lib/env';
 import { allowSpend, type SpendGuard } from './lib/spend';
 import { envCredentials, envFeatures, IntegrationResolver, memoOwner, type CredentialSource, type FeatureSource } from './integrations';
@@ -63,6 +63,7 @@ import { ZwiftSync } from './services/zwift-sync';
 import { ZwiftPublic } from './providers/zwift';
 import { ZwiftEventsService } from './services/zwift-events';
 import { applyProposal, dismissProposal } from './services/proposals';
+import { OnboardingService } from './services/onboarding';
 
 /** What `createCore` hands the credential and feature factories. */
 export interface CoreContext {
@@ -88,6 +89,12 @@ export interface CoreOptions {
   auth?: AuthExtension;
   /** Asked before every Claude call. Default: never refuses. */
   spendGuard?: SpendGuard;
+  /**
+   * Appended to workout names pushed to intervals.icu, e.g. " via example.com". Zwift titles the ride
+   * after the workout, so it shows wherever the ride is shared. Stripped from names read back.
+   * Default: none (DECISIONS #63).
+   */
+  eventNameSuffix?: string;
   now?: () => Date;
 }
 
@@ -175,8 +182,9 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
 
   /** Rides, wellness and curves as synced from intervals.icu (DECISIONS #49) — what every screen reads. */
   const training = new TrainingData(c, integrations, now);
-  const calendar = new CalendarService(c, integrations, authorName, now);
+  const calendar = new CalendarService(c, integrations, authorName, now, opts.eventNameSuffix);
   const feedback = new FeedbackService(c, training, now);
+  const onboarding = new OnboardingService(c, calendar, now);
   const food = new FoodService(c, now);
   const recipeShares = new RecipeShareService(c, env.APP_URL, now);
   const energy = new EnergyService(c, training, now);
@@ -242,6 +250,16 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
 
   const services: AppServices = {
     features: (userId) => features.forUser(userId),
+
+    onboarding: {
+      onboarded: (userId) => onboarding.onboarded(userId),
+      state: (userId) => onboarding.state(userId),
+      saveFitness: (userId, input) => onboarding.saveFitness(userId, input),
+      saveBody: (userId, input) => onboarding.saveBody(userId, input),
+      saveGoals: (userId, input) => onboarding.saveGoals(userId, input),
+      setStep: (userId, step) => onboarding.setStep(userId, step),
+      finish: (userId) => onboarding.finish(userId),
+    },
 
     dashboard: async (userId) => {
       const status = await intervalsStatus(userId);
@@ -437,7 +455,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     },
   };
 
-  const app = createApp({ auth, env, services });
+  const app = createApp({ auth, authConfig: authConfig(opts.auth), env, services });
 
   return {
     env,

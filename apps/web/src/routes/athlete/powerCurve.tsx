@@ -15,9 +15,10 @@ const xAt = (sec: number) => PAD.l + ((Math.log(sec) - X_MIN) / (X_MAX - X_MIN))
 const X_TICKS = [5, 15, 60, 300, 1200, 3600];
 
 /** Log-x power curve through the stored bests, with the FTP line dashed across. */
-function CurveChart({ rows, ftp }: { rows: PowerBest[]; ftp: number }) {
+function CurveChart({ rows, ftp }: { rows: PowerBest[]; ftp: number | undefined }) {
   const pts = rows.filter((r): r is PowerBest & { watts: number } => !!r.watts);
-  const values = [...pts.map((p) => p.watts), ftp];
+  const values = [...pts.map((p) => p.watts), ...(ftp ? [ftp] : [])];
+  if (!values.length) values.push(200);
   const lo = Math.max(0, Math.floor((Math.min(...values) * 0.85) / 50) * 50);
   const hi = Math.ceil((Math.max(...values) * 1.05) / 50) * 50;
   const yAt = (w: number) => PAD.t + (1 - (w - lo) / (hi - lo || 1)) * (H - PAD.t - PAD.b);
@@ -41,10 +42,14 @@ function CurveChart({ rows, ftp }: { rows: PowerBest[]; ftp: number }) {
           {durLabel(t).replace(' ', '')}
         </text>
       ))}
-      <line x1={PAD.l} x2={W - PAD.r} y1={yAt(ftp)} y2={yAt(ftp)} stroke="#7DA30A" strokeWidth="1.5" strokeDasharray="5 4" />
-      <text x={W - PAD.r} y={yAt(ftp) - 5} textAnchor="end" fontSize="10" fill="#3F6212" fontWeight="600">
-        FTP {ftp}
-      </text>
+      {ftp && (
+        <>
+          <line x1={PAD.l} x2={W - PAD.r} y1={yAt(ftp)} y2={yAt(ftp)} stroke="#7DA30A" strokeWidth="1.5" strokeDasharray="5 4" />
+          <text x={W - PAD.r} y={yAt(ftp) - 5} textAnchor="end" fontSize="10" fill="#3F6212" fontWeight="600">
+            FTP {ftp}
+          </text>
+        </>
+      )}
       {pts.length > 1 && <polyline points={line} fill="none" stroke="#2563EB" strokeWidth="2.5" strokeLinejoin="round" />}
       {pts.map((p) => (
         <circle key={p.durationSec} cx={xAt(p.durationSec)} cy={yAt(p.watts)} r="3.5" fill="#FFFFFF" stroke="#2563EB" strokeWidth="2" />
@@ -57,7 +62,7 @@ function CurveChart({ rows, ftp }: { rows: PowerBest[]; ftp: number }) {
  * Power curve: the 11 stored bests per period as a curve and tiles. A tile opens
  * an override — kept while it's higher than intervals.icu's; empty goes back to the synced value.
  */
-export function PowerCurveCard({ bests, weightKg, ftp, goalDurations }: { bests: PowerBest[]; weightKg: number; ftp: number; goalDurations: number[] }) {
+export function PowerCurveCard({ bests, weightKg, ftp, goalDurations }: { bests: PowerBest[]; weightKg: number; ftp: number | undefined; goalDurations: number[] }) {
   const { savePowerBests } = useProfileMutations();
   const [period, setPeriod] = useState<PowerBest['period']>('90d');
   const [editing, setEditing] = useState<number | null>(null);

@@ -56,17 +56,28 @@ export function renderAthleteBlock(ctx: AthleteContext): string {
   if (ctx.name) lines.push(`Name: ${ctx.name}`);
   // Body weight changes daily, so it lives in the per-turn context, not here (keeps this block
   // stable and cached). The Zwift weight is a monthly baseline, so it's fine here.
-  lines.push(
-    `FTP ${p.ftpZwift} W (set in Zwift)${p.zwiftWeightKg ? ` · Zwift weight ${p.zwiftWeightKg} kg (set in Zwift, used for race categories) → ${wattsPerKg(p.ftpZwift, p.zwiftWeightKg).toFixed(2)} W/kg in Zwift` : ''}`,
-  );
+  if (p.ftpZwift) {
+    const ftp = p.ftpZwift;
+    lines.push(
+      `FTP ${ftp} W (set in Zwift)${p.zwiftWeightKg ? ` · Zwift weight ${p.zwiftWeightKg} kg (set in Zwift, used for race categories) → ${wattsPerKg(ftp, p.zwiftWeightKg).toFixed(2)} W/kg in Zwift` : ''}`,
+    );
+  } else {
+    // DECISIONS #62: a new athlete who doesn't know their FTP starts with a ramp test.
+    lines.push(
+      'FTP: not known yet. Until a test sets it, prescribe by feel (RPE) and heart rate and never state watts. If the FTP Ramp Test is on the calendar, it comes first; once it has been ridden, propose the FTP from it (about 75% of the best one-minute power) as a profile update.',
+    );
+  }
   const zwiftLine = renderZwiftMetrics(p);
   if (zwiftLine) lines.push(zwiftLine);
-  lines.push(
-    `Zones at Zwift FTP: ${ZONES.map((z) => {
-      const [lo, hi] = zoneWatts(z.zone, p.ftpZwift);
-      return Number.isFinite(hi) ? `${z.zone} ${lo}–${hi} W` : `${z.zone} >${lo - 1} W`;
-    }).join(' · ')}`,
-  );
+  if (p.ftpZwift) {
+    const ftp = p.ftpZwift;
+    lines.push(
+      `Zones at Zwift FTP: ${ZONES.map((z) => {
+        const [lo, hi] = zoneWatts(z.zone, ftp);
+        return Number.isFinite(hi) ? `${z.zone} ${lo}–${hi} W` : `${z.zone} >${lo - 1} W`;
+      }).join(' · ')}`,
+    );
+  }
   lines.push(`Timezone: ${p.timezone}`);
 
   lines.push('', '# Power bests');
@@ -183,7 +194,8 @@ export interface TurnContextInput {
   fitness?: FitnessDay | undefined;
   weight?:
     | {
-        ftp: number;
+        /** Unset until the athlete's FTP is known. */
+        ftp?: number | undefined;
         trendKg: number;
         source: 'intervals.icu' | 'manual';
         latest?: { kg: number; date: IsoDate } | undefined;
@@ -248,10 +260,11 @@ export function renderTurnContext(input: TurnContextInput): string {
   }
   if (input.weight) {
     const w = input.weight;
+    const wkg = w.ftp ? ` → ${wattsPerKg(w.ftp, w.trendKg).toFixed(2)} W/kg` : '';
     parts.push(
       w.source === 'intervals.icu'
-        ? `Weight (intervals.icu weigh-ins): trend ${w.trendKg} kg (median of the last 7 days)${w.latest ? `, last weigh-in ${w.latest.kg} kg on ${w.latest.date}` : ''} → ${wattsPerKg(w.ftp, w.trendKg).toFixed(2)} W/kg.`
-        : `Weight: ${w.trendKg} kg (entered by the athlete) → ${wattsPerKg(w.ftp, w.trendKg).toFixed(2)} W/kg.`,
+        ? `Weight (intervals.icu weigh-ins): trend ${w.trendKg} kg (median of the last 7 days)${w.latest ? `, last weigh-in ${w.latest.kg} kg on ${w.latest.date}` : ''}${wkg}.`
+        : `Weight: ${w.trendKg} kg (entered by the athlete)${wkg}.`,
     );
   }
   if (input.food) parts.push(renderFoodLine(input.food));

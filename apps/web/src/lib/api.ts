@@ -58,8 +58,32 @@ async function authPost(path: string, body: object, fallback: string) {
   }
 }
 
-export async function signIn(email: string, password: string) {
-  await authPost('sign-in/email', { email, password }, 'Sign-in failed');
+/** `rememberMe: false` ends the session when the browser closes. */
+export async function signIn(email: string, password: string, rememberMe = true) {
+  await authPost('sign-in/email', { email, password, rememberMe }, 'Sign-in failed');
+}
+
+/**
+ * Creates the account and signs it in (DECISIONS #61). Where the server verifies email, the link in
+ * that email comes back to `callbackURL`. An address already in use → ApiError `USER_ALREADY_EXISTS`.
+ */
+export async function signUp(body: { name: string; email: string; password: string }) {
+  await authPost('sign-up/email', { ...body, callbackURL: `${window.location.origin}/welcome` }, 'Could not create your account');
+}
+
+/** Emails a reset link if the account exists. The answer is the same either way. */
+export async function requestPasswordReset(email: string) {
+  await authPost('request-password-reset', { email, redirectTo: `${window.location.origin}/reset` }, 'Could not send the reset email');
+}
+
+/** With the token from the emailed link. An expired or used token → ApiError `INVALID_TOKEN`. */
+export async function resetPassword(token: string, newPassword: string) {
+  await authPost('reset-password', { token, newPassword }, 'Could not reset your password');
+}
+
+/** Sends the confirm-your-email link again. */
+export async function sendVerificationEmail(email: string) {
+  await authPost('send-verification-email', { email, callbackURL: `${window.location.origin}/` }, 'Could not send the email');
 }
 
 export async function signOut() {

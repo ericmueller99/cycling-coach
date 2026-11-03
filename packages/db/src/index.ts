@@ -8,6 +8,7 @@ export * from './repos/events';
 export * from './repos/feedback';
 export * from './repos/food';
 export * from './repos/jobs';
+export * from './repos/onboarding';
 export * from './repos/profile';
 export * from './repos/recipe-shares';
 export * from './repos/staples';

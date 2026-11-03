@@ -1311,3 +1311,85 @@ needs no cross-process invalidation channel.
 - *A TTL on cached clients*: every expiry would mean a fresh Zwift login, and a change would still lag.
 - *A change notification between processes* (a collection to poll, or pub/sub): more moving parts than
   re-reading the source.
+
+## 61. Real sign-in routes; what sign-in offers is per deployment (Nov 3)
+
+**Decision.** The single sign-in card that rendered in place at any URL is replaced by real routes:
+- Signed-out only: `/login`, `/register`, `/forgot`, `/reset`. A signed-in visitor goes on to `?next=` or
+  `/`. Signed out on an app route → `/login?next=<path>`. `?next=` only ever takes a path on this site
+  (`safeNextPath` in `packages/shared`: no `//host`, `/\host`, schemes or control characters).
+- Desktop pages are the form beside a dark showcase panel of static sample content; phones get their own
+  layouts. "Keep me signed in" maps to Better Auth's `rememberMe`.
+- Public **`GET /api/auth-config`** → `{ signUp, passwordReset, emailVerification }`, derived from the auth
+  options (`allowSignUp`, whether `sendResetPassword` and `sendVerificationEmail` exist). The pages show
+  "Create an account", "Forgot password?" and the verify reminder only when the server can do them.
+- `/api/me` adds `emailVerified` and `onboarded` (#62).
+- Two web slots: `legalLinks` (terms and privacy URLs; when set, registering requires agreeing to them) and
+  `signUpClosed` (what `/register` says while sign-up is off).
+- While a server verifies email and the address isn't confirmed yet, a "Confirm your email" card with
+  Resend sits in the desktop sidebar and on the Account page (and a bar on onboarding). Not in the page
+  flow: the full-height pages (coach, calendar, library) would scroll.
+
+**Self-host is unchanged in effect:** sign-up stays closed (the seed makes the account), there's no email, so
+no reset or verification, and the seeded account goes straight to the app. A deployment opens sign-up and
+adds email through `createCore({ auth })` (#57).
+
+**Rejected.**
+- *A hosted copy of the auth pages*: they're generic; only the brand, legal links and the email transport
+  differ, and those are slots and options.
+- *Requiring verification before sign-in* (`requireEmailVerification`): a new athlete would bounce to their
+  inbox before onboarding. A deployment that needs verification gates what costs money instead (its
+  spend guard).
+
+## 62. First-run onboarding; FTP may be unknown until a ramp test (Nov 3)
+
+**Decision.** A signed-in account that isn't onboarded is sent to **`/welcome`**: five steps and a summary in
+one card, no app shell. Fitness · Body · Goals · Memory (optional) · Sync (optional) · All set.
+- **State:** an `onboarding` document `{ step, fitness, unit, goals, goalIds, rampTest, completedAt }`.
+  `onboarded` = a finished wizard, or a profile with no onboarding document (seeded accounts and accounts
+  from before onboarding). Every Continue saves its step (`/api/onboarding/*`), and `step` only moves
+  forward, so a refresh resumes where the athlete was. Skip saves nothing for that step.
+- **Fitness:** a known FTP and where it's from (`profile.ftpSource`), or "I'm not sure".
+- **Body:** creates the profile: weight (typed in kg or lb, stored in kg), the browser's timezone, and FTP
+  from the Fitness step. Seeds the starter library (`seedStarterLibrary`, shared with the seed script).
+- **Goals:** one main goal (the athlete's words, else the event, else the first chip), the other chips as
+  its "Focus" line, and an event as its own goal. No measures; the coach proposes them later. Saving the
+  step again replaces the goals it made before, never the athlete's own.
+- **Memory:** ordinary long-term memory notes. Short-term things are told to the coach in chat.
+- **Sync:** the deployment's intervals.icu connect slot (#58).
+- **Finish:** when FTP is unknown, books the **FTP Ramp Test** (now in the starter library, category
+  `Test`) for tomorrow in the athlete's timezone through `CalendarService` (rule 1); it reaches
+  intervals.icu on the first sync after connecting. "Go to my coach" opens a new thread with a prompt.
+
+**FTP can be unset.** `profile.ftpZwift` is optional. Screens show "Not set" or "—", workout targets fall
+back to % of FTP, W/kg is left out, goal progress on FTP waits, and the coach's athlete block says to
+prescribe by feel and heart rate and to propose an FTP from the ramp test (about 75% of the best minute).
+
+**Rejected.**
+- *A placeholder FTP until the test*: W/kg, zones, the energy budget and the coach would all present a
+  made-up number as fact.
+- *One goal per chip*: "Raise my FTP" next to "Raise my FTP to 300 W" is noise on the Athlete page.
+- *Saving the whole wizard at the end*: a refresh or a closed tab would lose it.
+
+## 63. A deployment can tag pushed workout names (`eventNameSuffix`) (Nov 3)
+
+**Decision.** `createCore` takes an optional `eventNameSuffix`, e.g. `" via example.com"`. It's appended
+to the `name` of every workout pushed to intervals.icu. The default is none, so a self-host install is
+unchanged.
+- **Why the name:** intervals.icu forwards the workout to Zwift, and Zwift titles the ride after it
+  (`Zwift - Intervals icu: <name>`). The tag therefore reaches wherever the ride is shared, including
+  Strava, without any Strava API (#2, #13). Zwift writes the ride's description itself, so a description
+  can't travel this way.
+- **Where:** `withNameSuffix` in `buildWorkoutEvent` (`providers/intervals-icu/map.ts`), passed in by
+  `CalendarService`. Workouts only: races keep their plain title, because Zwift names race rides after
+  the Zwift event.
+- **Round trip:** `IntervalsSync` strips an exact trailing match (`withoutNameSuffix`) from every remote
+  event it lists, before reconciling. Our own titles and the library-workout dedupe (by name and
+  structure) never see the tag, and a rename made in intervals.icu doesn't come back as `… tag tag`.
+- **Existing events** get the tag the next time they're pushed (a create, an edit or a move).
+
+**Rejected.**
+- *Tagging the `.zwo` `<name>` as well*: the library workout's own name would then carry the tag on
+  downloads and imports. Revisit only if Zwift turns out to title rides from the file rather than the
+  event.
+- *A prefix*: Zwift already puts its own `Intervals icu: ` in front, so a tag at the end reads better.

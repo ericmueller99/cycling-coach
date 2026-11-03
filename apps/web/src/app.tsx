@@ -1,19 +1,22 @@
 import { weekStart } from '@cycling-coach/core';
+import { safeNextPath } from '@cycling-coach/shared';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   createRootRouteWithContext,
   createRoute,
   createRouter,
+  Navigate,
   Outlet,
   redirect,
   RouterProvider,
   stripSearchParams,
   useRouteContext,
+  useRouter,
   useRouterState,
   type AnyRoute,
   type AnyRouter,
 } from '@tanstack/react-router';
-import { StrictMode } from 'react';
+import { StrictMode, useEffect } from 'react';
 import { AppShell } from './components/AppShell';
 import { Spinner } from './components/ui';
 import { ExtensionsProvider, type Extensions } from './extensions';
@@ -27,7 +30,8 @@ import { CoachPage } from './routes/coach/CoachPage';
 import { EventsPage } from './routes/events/EventsPage';
 import { LIBRARY_TABS, LibraryPage, type LibraryTab } from './routes/library/LibraryPage';
 import { RecipePage } from './routes/library/RecipePage';
-import { LoginPage } from './routes/LoginPage';
+import { ForgotPasswordPage, RegisterPage, ResetPasswordPage, SignInPage } from './routes/auth/AuthPages';
+import { WelcomePage } from './routes/welcome/WelcomePage';
 import { SharedRecipePage } from './routes/SharedRecipePage';
 
 /**
@@ -49,17 +53,48 @@ export interface RouterContext {
 /** Share links (`/r/:token`, DECISIONS #48) are always public. */
 const CORE_PUBLIC_PATHS = ['/r/'] as const;
 
-/** Public pages render bare; everything else is behind the one login, inside the app shell. */
+/** Signed-out only (DECISIONS #61): a signed-in visitor is sent on to `?next=` or the coach. */
+const AUTH_PATHS: readonly string[] = ['/login', '/register', '/forgot', '/reset'];
+/** Signed in, without the app shell: first-run onboarding (DECISIONS #62). */
+const WELCOME_PATH = '/welcome';
+
+/**
+ * Public pages render bare; the auth pages only for signed-out visitors; everything else is behind
+ * the login, inside the app shell, once onboarding is done.
+ */
 function Root() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { publicPaths } = useRouteContext({ from: '__root__' });
-  return publicPaths.some((p) => pathname.startsWith(p)) ? <Outlet /> : <SignedIn />;
+  if (publicPaths.some((p) => pathname.startsWith(p))) return <Outlet />;
+  if (AUTH_PATHS.includes(pathname)) return <SignedOut />;
+  return <SignedIn bare={pathname === WELCOME_PATH} />;
 }
 
-function SignedIn() {
+function SignedOut() {
   const me = useMe();
+  const next = useRouterState({ select: (s) => (s.location.search as { next?: unknown }).next });
   if (me.isPending) return <Spinner />;
-  if (!me.data) return <LoginPage />;
+  if (me.data) return <ReplaceWith href={safeNextPath(next) ?? '/'} />;
+  return <Outlet />;
+}
+
+/** A typed `Navigate` needs a route; `?next=` is any path on this site. */
+function ReplaceWith({ href }: { href: string }) {
+  const router = useRouter();
+  useEffect(() => {
+    router.history.replace(href);
+  }, [router, href]);
+  return <Spinner />;
+}
+
+function SignedIn({ bare }: { bare: boolean }) {
+  const me = useMe();
+  const href = useRouterState({ select: (s) => s.location.href });
+  if (me.isPending) return <Spinner />;
+  // Back to this page after signing in; the coach (`/`) is where sign-in lands anyway.
+  if (!me.data) return <Navigate to="/login" search={href === '/' ? {} : { next: href }} replace />;
+  if (bare) return <Outlet />;
+  if (!me.data.onboarded) return <Navigate to="/welcome" replace />;
   return (
     <AppShell>
       <Outlet />
@@ -251,7 +286,38 @@ const accountRoute = createRoute({
   },
 });
 
+const loginRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/login',
+  validateSearch: (s: Record<string, unknown>): { next?: string } => {
+    const next = safeNextPath(s['next']);
+    return next ? { next } : {};
+  },
+  component: SignInPage,
+});
+const registerRoute = createRoute({ getParentRoute: () => rootRoute, path: '/register', component: RegisterPage });
+const forgotRoute = createRoute({ getParentRoute: () => rootRoute, path: '/forgot', component: ForgotPasswordPage });
+/** Better Auth sends the emailed reset link here with `?token=`, or `?error=INVALID_TOKEN`. */
+const resetRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/reset',
+  validateSearch: (s: Record<string, unknown>): { token?: string; error?: string } => ({
+    ...(typeof s['token'] === 'string' ? { token: s['token'] } : {}),
+    ...(typeof s['error'] === 'string' ? { error: s['error'] } : {}),
+  }),
+  component: function ResetRoute() {
+    const { token, error } = resetRoute.useSearch();
+    return <ResetPasswordPage token={token} error={error} />;
+  },
+});
+const welcomeRoute = createRoute({ getParentRoute: () => rootRoute, path: WELCOME_PATH, component: WelcomePage });
+
 const coreRoutes = [
+  loginRoute,
+  registerRoute,
+  forgotRoute,
+  resetRoute,
+  welcomeRoute,
   coachRoute,
   calendarRoute,
   calendarDayRoute,

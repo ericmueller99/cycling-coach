@@ -73,6 +73,8 @@ export class CalendarService {
     private readonly integrations: Pick<IntegrationResolver, 'intervalsFor'>,
     private readonly authorName: (userId: string) => Promise<string>,
     private readonly now: () => Date = () => new Date(),
+    /** Appended to pushed workout names; the sync strips it from names it reads back (DECISIONS #63). */
+    readonly eventNameSuffix?: string,
   ) {}
 
   async create(
@@ -220,7 +222,7 @@ export class CalendarService {
     if (!event.workoutId) throw new Error('This workout session has no library workout.');
     const workout = await getWorkout(this.c, userId, event.workoutId);
     if (!workout) throw new Error('Its library workout no longer exists.');
-    return buildWorkoutEvent(event, workout, buildZwo(workout, { author: await this.authorName(userId) }));
+    return buildWorkoutEvent(event, workout, buildZwo(workout, { author: await this.authorName(userId) }), this.eventNameSuffix);
   }
 
   private async unlink(userId: string, event: CalendarEvent): Promise<CalendarEvent | { error: string }> {

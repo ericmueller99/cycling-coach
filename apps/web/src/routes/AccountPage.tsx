@@ -6,6 +6,7 @@ import { AppBar } from '../components/AppBar';
 import { Avatar } from '../components/Avatar';
 import { CheckCircleIcon, CheckIcon, ChevronRight, LockIcon } from '../components/icons';
 import { Button, Card, ErrorNote, PageHeader, Spinner } from '../components/ui';
+import { VerifyEmailBanner } from '../components/VerifyEmailBanner';
 import { useExtensions } from '../extensions';
 import { ApiError, changePassword, signOut } from '../lib/api';
 import { errorMessage, keys, useMe, useProfile, useProfileMutations, useUpdateName } from '../lib/queries';
@@ -49,6 +50,7 @@ export function AccountPage({ password = false }: { password?: boolean | undefin
       <>
         <AppBar back title="Account" />
         <div className="flex flex-col gap-3.5 p-4">
+          <VerifyEmailBanner variant="card" />
           <div className="flex flex-col items-center gap-1.5 py-2">
             <Avatar name={me.data.name} size={72} />
             <div className="text-[17px] font-semibold">{me.data.name}</div>
@@ -87,6 +89,7 @@ export function AccountPage({ password = false }: { password?: boolean | undefin
     <>
       <PageHeader title="Account" subtitle="Your sign-in details" />
       <div className="flex w-full max-w-[600px] flex-col gap-5 p-7 max-[560px]:p-4">
+        <VerifyEmailBanner variant="card" />
         <ProfileCard name={me.data.name} email={me.data.email} />
         <TimezoneCard />
         <PasswordCard email={me.data.email} />

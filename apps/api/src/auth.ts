@@ -1,4 +1,4 @@
-import { MIN_PASSWORD_LENGTH } from '@cycling-coach/shared';
+import { MIN_PASSWORD_LENGTH, type AuthConfig } from '@cycling-coach/shared';
 import { betterAuth, type BetterAuthOptions, type BetterAuthPlugin } from 'better-auth';
 import { mongodbAdapter } from 'better-auth/adapters/mongodb';
 import { bearer } from 'better-auth/plugins';
@@ -70,4 +70,13 @@ export function createAuth(mongo: { db: Db; client: MongoClient }, env: Env, opt
     emailAndPassword: { ...base.emailAndPassword, ...opts.options?.emailAndPassword },
     plugins: [bearer(), ...(opts.plugins ?? [])],
   }) as unknown as Auth;
+}
+
+/** What sign-in offers with these additions (DECISIONS #61): public, for the sign-in and register pages. */
+export function authConfig(opts: AuthExtension = {}): AuthConfig {
+  return {
+    signUp: !!opts.allowSignUp,
+    passwordReset: !!opts.options?.emailAndPassword?.sendResetPassword,
+    emailVerification: !!opts.options?.emailVerification?.sendVerificationEmail,
+  };
 }

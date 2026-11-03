@@ -56,6 +56,15 @@ import {
   type Workout,
   type ZwiftStatus,
   type Features,
+  type AuthConfig,
+  onboardingBodySchema,
+  onboardingFitnessSchema,
+  onboardingGoalsSchema,
+  onboardingStepSchema,
+  type OnboardingBody,
+  type OnboardingFitness,
+  type OnboardingGoals,
+  type OnboardingState,
 } from '@cycling-coach/shared';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
@@ -76,6 +85,16 @@ import { publicRoutes, type PublicServices } from './routes/public';
 export interface AppServices {
   /** What this account may use (DECISIONS #54); sent with `/api/me`. */
   features(userId: string): Promise<Features>;
+  /** First-run onboarding (DECISIONS #62); `onboarded` is sent with `/api/me`. */
+  onboarding: {
+    onboarded(userId: string): Promise<boolean>;
+    state(userId: string): Promise<OnboardingState>;
+    saveFitness(userId: string, input: OnboardingFitness): Promise<OnboardingState>;
+    saveBody(userId: string, input: OnboardingBody): Promise<OnboardingState>;
+    saveGoals(userId: string, input: OnboardingGoals): Promise<OnboardingState>;
+    setStep(userId: string, step: number): Promise<OnboardingState>;
+    finish(userId: string): Promise<OnboardingState | ServiceFailure>;
+  };
   dashboard(userId: string): Promise<DashboardPayload | null>;
   usage(userId: string): Promise<UsagePayload>;
   profile: {
@@ -217,6 +236,8 @@ type Variables = {
 
 export interface AppDeps {
   auth: Auth;
+  /** What sign-in offers on this server (DECISIONS #61); public at `/api/auth-config`. */
+  authConfig: AuthConfig;
   env: Env;
   services: AppServices;
 }
@@ -225,7 +246,7 @@ const indexesSchema = z.object({ indexes: z.array(z.number().int().min(0)).optio
 const powerBestsSchema = z.object({ bests: z.array(powerBestSchema).max(60) });
 
 export function createApp(deps: AppDeps) {
-  const { auth, env, services } = deps;
+  const { auth, authConfig, env, services } = deps;
   const app = new Hono<{ Variables: Variables }>();
 
   app.use(
@@ -257,7 +278,25 @@ export function createApp(deps: AppDeps) {
 
     .get('/me', async (c) => {
       const user = c.get('user')!;
-      return c.json({ id: user.id, email: user.email, name: user.name, features: await services.features(user.id) });
+      const [features, onboarded] = await Promise.all([services.features(user.id), services.onboarding.onboarded(user.id)]);
+      return c.json({ id: user.id, email: user.email, name: user.name, emailVerified: user.emailVerified, onboarded, features });
+    })
+
+    // ── First-run onboarding (DECISIONS #62) ────────────────────────────────
+    .get('/onboarding', async (c) => c.json(await services.onboarding.state(c.get('user')!.id)))
+    .put('/onboarding/fitness', json(onboardingFitnessSchema), async (c) =>
+      c.json(await services.onboarding.saveFitness(c.get('user')!.id, c.req.valid('json'))),
+    )
+    .put('/onboarding/body', json(onboardingBodySchema), async (c) => c.json(await services.onboarding.saveBody(c.get('user')!.id, c.req.valid('json'))))
+    .put('/onboarding/goals', json(onboardingGoalsSchema), async (c) =>
+      c.json(await services.onboarding.saveGoals(c.get('user')!.id, c.req.valid('json'))),
+    )
+    .put('/onboarding/step', json(onboardingStepSchema), async (c) =>
+      c.json(await services.onboarding.setStep(c.get('user')!.id, c.req.valid('json').step)),
+    )
+    .post('/onboarding/finish', async (c) => {
+      const r = await services.onboarding.finish(c.get('user')!.id);
+      return isFailure(r) ? c.json({ error: r.error }, r.status) : c.json(r);
     })
 
     .get('/dashboard', async (c) => {
@@ -490,6 +529,9 @@ export function createApp(deps: AppDeps) {
   // `/api/public` is registered before `/api`, so it answers before the auth guard runs.
   return app
     .get('/health', (c) => c.json({ ok: true, service: 'cycling-coach-api' }))
+    // Public: the sign-in and register pages ask before anyone is signed in. Not under
+    // `/api/auth/*`, which belongs to Better Auth.
+    .get('/api/auth-config', (c) => c.json<AuthConfig>(authConfig))
     .route('/api/public', publicRoutes(services.public))
     .route('/api', api);
 }

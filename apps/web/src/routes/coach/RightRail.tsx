@@ -81,10 +81,10 @@ export function TodayStrip({ onAsk }: { onAsk: (prompt: string) => void }) {
           {today && (today.coachNote || today.meta) && <div className="text-[13px] text-muted">{today.coachNote ?? today.meta}</div>}
           <div className="grid grid-cols-3 gap-2">
             <MiniTile label="FTP">
-              <div className="font-mono font-semibold">{data.snapshot.ftpZwift} W</div>
+              <div className="font-mono font-semibold">{data.snapshot.ftpZwift ? `${data.snapshot.ftpZwift} W` : '—'}</div>
             </MiniTile>
             <MiniTile label="W/kg">
-              <div className="font-mono font-semibold">{data.snapshot.wattsPerKg.toFixed(2)}</div>
+              <div className="font-mono font-semibold">{data.snapshot.wattsPerKg?.toFixed(2) ?? '—'}</div>
             </MiniTile>
             <MiniTile label="Next race">
               <div className="truncate text-[13px] font-semibold" title={data.nextRace?.title}>
@@ -179,8 +179,8 @@ export function RightRail({ onAsk }: { onAsk: (prompt: string) => void }) {
           </Link>
         </div>
         <div className="grid grid-cols-2 gap-2.5">
-          <StatTile label="FTP (Zwift)" value={data.snapshot.ftpZwift} unit="W" />
-          <StatTile label="W/kg" value={data.snapshot.wattsPerKg.toFixed(2)} />
+          <StatTile label="FTP (Zwift)" value={data.snapshot.ftpZwift ?? '—'} {...(data.snapshot.ftpZwift ? { unit: 'W' } : {})} />
+          <StatTile label="W/kg" value={data.snapshot.wattsPerKg?.toFixed(2) ?? '—'} />
           <StatTile label="Best 5 min" value={data.snapshot.best5minW ?? '—'} {...(data.snapshot.best5minW ? { unit: 'W' } : {})} />
           <div className="rounded-[10px] bg-surface-2 p-2.5" title="Median of the last 7 days of weigh-ins">
             <div className="text-xs text-muted">Weight (trend)</div>

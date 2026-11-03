@@ -10,3 +10,4 @@ export * from './profile';
 export * from './workout';
 export * from './training';
 export * from './api';
+export * from './onboarding';

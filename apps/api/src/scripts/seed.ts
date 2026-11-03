@@ -10,12 +10,12 @@
  * intervals.icu sync replaces the weight with the synced trend. `--sample` adds example goals and
  * coach memory to show what they look like; delete them on the Athlete page.
  */
-import { STARTER_WORKOUTS } from '@cycling-coach/core';
-import { collections, countCnfFoods, createGoal, createMemory, createWorkout, createMongo, ensureIndexes, replaceCnfFoods, saveProfile } from '@cycling-coach/db';
+import { collections, countCnfFoods, createGoal, createMemory, createMongo, ensureIndexes, replaceCnfFoods, saveProfile } from '@cycling-coach/db';
 import { profileSchema, type GoalInput } from '@cycling-coach/shared';
 import { createAuth } from '../auth';
 import { loadEnv } from '../lib/env';
 import { importCnf } from '../services/import-cnf';
+import { seedStarterLibrary } from '../services/onboarding';
 
 const args = process.argv.slice(2);
 const option = (name: string): string | undefined => {
@@ -101,10 +101,8 @@ if (args.includes('--sample') && (await c.memories.countDocuments({ userId })) =
   console.log('added sample coach memory');
 }
 
-if ((await c.workouts.countDocuments({ userId })) === 0) {
-  for (const w of STARTER_WORKOUTS) await createWorkout(c, userId, w, 'seed', now);
-  console.log(`added ${STARTER_WORKOUTS.length} starter workouts`);
-}
+const added = await seedStarterLibrary(c, userId, now);
+if (added) console.log(`added ${added} starter workouts`);
 
 // Staples search table (reference data, not your foods — those start empty by design).
 if ((await countCnfFoods(c)) === 0) {

@@ -50,15 +50,16 @@ export interface DashboardPayload {
   /** The next planned race after today, within four weeks (the mobile Today strip). */
   nextRace?: { date: IsoDate; title: string } | undefined;
   snapshot: {
-    ftpZwift: number;
+    /** Unset until the athlete knows it (a ramp test is booked; DECISIONS #62). */
+    ftpZwift?: number | undefined;
     /** Trend weight (or manual). */
     weightKg: number;
     weightLatest?: { kg: number; date: IsoDate } | undefined;
     zwiftWeightKg?: number | undefined;
     /** The Zwift weight syncs from Zwift, so the drift alert can't offer to set it here. */
     zwiftWeightSynced?: boolean | undefined;
-    /** On the trend weight. */
-    wattsPerKg: number;
+    /** On the trend weight; unset without an FTP. */
+    wattsPerKg?: number | undefined;
     best5minW?: number | undefined;
     /** Today's fitness from intervals.icu, when connected. */
     fitness?: FitnessDay | undefined;

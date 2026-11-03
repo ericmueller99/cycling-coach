@@ -17,9 +17,12 @@ export const editPrompt = (w: Workout) => `Let's edit my "${w.name}" workout (id
 export const NEW_WORKOUT_PROMPT = 'Build me a new workout: ';
 
 /** "≈ 800 kJ of work" at the current FTP — about the kcal the ride burns (DECISIONS #36). */
-const fuelLine = (w: Workout, ftp: number) => `≈ ${plannedSessionKcal({ type: 'intervals', segments: w.segments }, ftp).toLocaleString('en-US')} kJ of work at FTP ${ftp} W ≈ kcal burned`;
+const fuelLine = (w: Workout, ftp: number | undefined) =>
+  ftp
+    ? `≈ ${plannedSessionKcal({ type: 'intervals', segments: w.segments }, ftp).toLocaleString('en-US')} kJ of work at FTP ${ftp} W ≈ kcal burned`
+    : 'Targets are % of FTP until yours is set';
 
-function WorkoutCard({ workout, ftp, today }: { workout: Workout; ftp: number; today: string }) {
+function WorkoutCard({ workout, ftp, today }: { workout: Workout; ftp: number | undefined; today: string }) {
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
   const { totalSec } = workoutMetrics(workout.segments);
@@ -82,7 +85,7 @@ function MoreSheet({ workout, onClose }: { workout: Workout; onClose: () => void
   );
 }
 
-function MobileWorkoutCard({ workout, ftp, today }: { workout: Workout; ftp: number; today: string }) {
+function MobileWorkoutCard({ workout, ftp, today }: { workout: Workout; ftp: number | undefined; today: string }) {
   const [error, setError] = useState<string | null>(null);
   const [more, setMore] = useState(false);
   const { totalSec } = workoutMetrics(workout.segments);
@@ -122,7 +125,7 @@ function MobileWorkoutCard({ workout, ftp, today }: { workout: Workout; ftp: num
 }
 
 /** Library › Workouts: the Zwift workouts, filterable, with a fuel line. */
-export function WorkoutsTab({ mobile, today, ftp }: { mobile: boolean; today: string; ftp: number }) {
+export function WorkoutsTab({ mobile, today, ftp }: { mobile: boolean; today: string; ftp: number | undefined }) {
   const workouts = useWorkouts();
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>('All');
   const [query, setQuery] = useState('');

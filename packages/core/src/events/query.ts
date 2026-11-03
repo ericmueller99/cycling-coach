@@ -17,7 +17,8 @@ import { estimateMinutes } from './routes';
 
 /** What the Events page knows about the athlete. Everything but FTP and weight may be missing. */
 export interface EventAthlete {
-  ftp: number;
+  /** Unset until the athlete knows their FTP (DECISIONS #62). */
+  ftp?: number | undefined;
   weightKg: number;
   /** The weight set in Zwift — what Zwift's W/kg rules use. */
   zwiftWeightKg?: number | undefined;
@@ -127,7 +128,8 @@ export function eligibility(
 }
 
 /** The athlete's Z2 as W/kg (Zwift weight, like Zwift's own numbers). */
-export function z2Wkg(athlete: EventAthlete): [number, number] {
+export function z2Wkg(athlete: EventAthlete): [number, number] | null {
+  if (!athlete.ftp) return null;
   const kg = athlete.zwiftWeightKg ?? athlete.weightKg;
   const [lo, hi] = zoneWatts('Z2', athlete.ftp);
   return [lo / kg, hi / kg];
@@ -141,8 +143,10 @@ function paceFor(event: ZwiftEvent, pen: ZwiftEventPen, athlete: EventAthlete | 
   if (pen.paceFrom && pen.paceTo && pen.paceTo <= 6) return (pen.paceFrom + pen.paceTo) / 2;
   if (!athlete) return event.type === 'race' ? 3.5 : 2.5;
   const kg = athlete.zwiftWeightKg ?? athlete.weightKg;
-  const ftp = athlete.zftp ?? athlete.ftp;
-  return event.type === 'race' || event.type === 'tt' || event.type === 'ttt' ? (ftp * 0.9) / kg : (athlete.ftp * 0.65) / kg;
+  const race = event.type === 'race' || event.type === 'tt' || event.type === 'ttt';
+  const ftp = race ? (athlete.zftp ?? athlete.ftp) : athlete.ftp;
+  if (!ftp) return race ? 3.5 : 2.5;
+  return race ? (ftp * 0.9) / kg : (ftp * 0.65) / kg;
 }
 
 /** Each pen's ride time: its own duration, else an estimate from distance and climbing. */

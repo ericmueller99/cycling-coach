@@ -57,6 +57,7 @@ import {
 } from '@cycling-coach/shared';
 import type { IntegrationResolver } from '../integrations';
 import { IntervalsError, isTransient, type IntervalsIcu, type RemoteEvent } from '../providers/intervals-icu';
+import { withoutNameSuffix } from '../providers/intervals-icu/map';
 import type { CalendarService } from './calendar';
 import { reconcile } from './calendar-reconcile';
 
@@ -318,7 +319,10 @@ export class IntervalsSync {
       const from = addDays(today, -span.back);
       const to = addDays(today, span.ahead);
       const icu = await this.client(userId);
-      const [remote, local] = await Promise.all([icu.listEvents(from, to), listSyncedEvents(this.c, userId, from, to)]);
+      const [listed, local] = await Promise.all([icu.listEvents(from, to), listSyncedEvents(this.c, userId, from, to)]);
+      // Our names come back with the deployment's tag on (#63): drop it before titles and the
+      // library-workout dedupe see them, or each round trip would add another.
+      const remote = listed.map((r) => ({ ...r, name: withoutNameSuffix(r.name, this.calendar.eventNameSuffix) }));
       for (const action of reconcile(local, remote)) {
         switch (action.type) {
           case 'import':

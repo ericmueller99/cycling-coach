@@ -5,6 +5,10 @@ import type {
   SavedSearchInput,
   GoalInput,
   GoalPatch,
+  OnboardingBody,
+  OnboardingFitness,
+  OnboardingGoals,
+  OnboardingState,
   PowerBest,
   Profile,
   Proposal,
@@ -17,6 +21,8 @@ import { api, ApiError, unwrap, updateName } from './api';
 
 export const keys = {
   me: ['me'] as const,
+  authConfig: ['auth-config'] as const,
+  onboarding: ['onboarding'] as const,
   dashboard: ['dashboard'] as const,
   profile: ['profile'] as const,
   weight: ['weight'] as const,
@@ -45,6 +51,46 @@ export function useMe() {
     retry: false,
     staleTime: Infinity,
   });
+}
+
+/** What this server's sign-in offers: sign-up, password reset, email verification (DECISIONS #61). */
+export function useAuthConfig() {
+  return useQuery({
+    queryKey: keys.authConfig,
+    queryFn: async () => unwrap(await api.api['auth-config'].$get()),
+    staleTime: Infinity,
+  });
+}
+
+/** The onboarding wizard's saved state (DECISIONS #62). */
+export function useOnboarding() {
+  return useQuery({ queryKey: keys.onboarding, queryFn: async () => unwrap(await api.api.onboarding.$get()) });
+}
+
+/** Each step saves as the athlete continues; the answer is the new state. */
+export function useOnboardingMutations() {
+  const qc = useQueryClient();
+  const onSuccess = (state: OnboardingState) => {
+    qc.setQueryData(keys.onboarding, state);
+    // The profile, goals, library and calendar change under the athlete's feet.
+    void qc.invalidateQueries({ predicate: (q) => q.queryKey[0] !== 'onboarding' && q.queryKey[0] !== 'me' && q.queryKey[0] !== 'auth-config' });
+  };
+  return {
+    fitness: useMutation({ mutationFn: async (input: OnboardingFitness) => unwrap(await api.api.onboarding.fitness.$put({ json: input })), onSuccess }),
+    body: useMutation({ mutationFn: async (input: OnboardingBody) => unwrap(await api.api.onboarding.body.$put({ json: input })), onSuccess }),
+    goals: useMutation({ mutationFn: async (input: OnboardingGoals) => unwrap(await api.api.onboarding.goals.$put({ json: input })), onSuccess }),
+    step: useMutation({ mutationFn: async (step: number) => unwrap(await api.api.onboarding.step.$put({ json: { step } })), onSuccess }),
+    finish: useMutation({
+      mutationFn: async () => unwrap(await api.api.onboarding.finish.$post()),
+      onSuccess: (state) => {
+        onSuccess(state);
+        // Straight away, so the router lets the athlete into the app on the next navigation.
+        qc.setQueryData(keys.me, (me: { onboarded: boolean } | null | undefined) => (me ? { ...me, onboarded: true } : me));
+      },
+    }),
+    /** After a note is added or removed on the Memory step. */
+    refresh: () => qc.invalidateQueries({ queryKey: keys.onboarding }),
+  };
 }
 
 /** The Better Auth user's name (sidebar, coach). */

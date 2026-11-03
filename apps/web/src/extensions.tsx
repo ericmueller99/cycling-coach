@@ -36,8 +36,15 @@ export interface Extensions {
   brand: string;
   /** Sidebar and tab bar items, given the core five. */
   navItems: (core: readonly NavItem[]) => readonly NavItem[];
-  /** Under the sign-in form ("Create an account", "Forgot password?"). */
+  /** Under the sign-in form, for anything extra (sign-up and reset links come from the server's auth config). */
   loginFooter: ReactNode;
+  /**
+   * Terms and privacy pages. When set, the auth pages link them and registering requires agreeing
+   * to them (DECISIONS #61). Self-host: none.
+   */
+  legalLinks: { terms: string; privacy: string } | null;
+  /** What `/register` says while this server doesn't take sign-ups. */
+  signUpClosed: ReactNode;
   /** The intervals.icu row on Connections while this athlete isn't connected. */
   intervalsConnect: ConnectSlot;
   /** The Zwift row on Connections while this athlete has no Zwift login. */
@@ -62,6 +69,8 @@ export const defaultExtensions: Extensions = {
   brand: 'Coach',
   navItems: (core) => core,
   loginFooter: null,
+  legalLinks: null,
+  signUpClosed: 'Sign-up is closed on this server. Ask whoever runs it for an account.',
   intervalsConnect: { hint: 'Set INTERVALS_ICU_KEY on the server — it connects the owner account only' },
   zwiftConnect: { hint: 'Set ZWIFT_USERNAME and ZWIFT_PASSWORD on the server (owner account only), or enter zFTP by hand' },
   usageCard: ClaudeUsageRow,

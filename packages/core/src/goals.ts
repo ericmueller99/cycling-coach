@@ -1,7 +1,8 @@
 import type { Goal, GoalProgress, PowerBest } from '@cycling-coach/shared';
 
 export interface GoalSnapshot {
-  ftp: number;
+  /** Unset until the athlete knows their FTP (DECISIONS #62). */
+  ftp?: number | undefined;
   /** Trend weight. */
   weightKg: number;
   zwiftWeightKg?: number | undefined;
@@ -32,7 +33,7 @@ export function goalProgress(goal: Pick<Goal, 'measure' | 'target'>, s: GoalSnap
   switch (measure.kind) {
     case 'wkg': {
       const zwift = measure.weight === 'zwift' && s.zwiftWeightKg !== undefined;
-      current = round(s.ftp / (zwift ? s.zwiftWeightKg! : s.weightKg), 2);
+      current = s.ftp !== undefined ? round(s.ftp / (zwift ? s.zwiftWeightKg! : s.weightKg), 2) : undefined;
       unit = 'W/kg';
       label = zwift ? 'W/kg (Zwift weight)' : 'W/kg (trend weight)';
       break;
