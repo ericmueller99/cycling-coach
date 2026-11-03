@@ -188,8 +188,12 @@ export interface IntegrationDoc {
   /** When the last full import of all history finished (DECISIONS #49). */
   lastFullSyncAt?: Date;
   lastError?: string;
+  /** The HTTP status behind `lastError`: a 401/403 means the key or token no longer works (DECISIONS #64). */
+  lastErrorStatus?: number;
   /** intervals.icu's athlete record, refreshed at most hourly by the sync. */
   athlete?: { athleteId?: string; zwiftConnected?: boolean; ftp?: number; at: Date };
+  /** intervals.icu said the athlete's settings changed: the next sync refreshes `athlete` regardless of its age. */
+  athleteStale?: boolean;
   /** The athlete power curves (90d, season, 1y, all-time) as last fetched. */
   curves?: PowerCurve[];
   curvesAt?: Date;
@@ -446,6 +450,8 @@ export interface JobDoc {
   key: string;
   /** Due from this time. Locks never fall due. */
   runAt: Date;
+  /** A kick that may have landed during a run: that run's release keeps this if it's sooner (DECISIONS #64). */
+  rerunAt?: Date;
   lockedBy?: string;
   lockedUntil?: Date;
   /** Failures in a row, for the backoff. */

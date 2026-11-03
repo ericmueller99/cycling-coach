@@ -40,6 +40,8 @@ export interface IntegrationResolverOptions {
   intervalsGate?: RequestGate;
   /** Shared by every Zwift client and the public feed: one request every 2 s in total (DECISIONS #29). */
   zwiftGate?: RequestGate;
+  /** Another intervals.icu, for a local stand-in. */
+  intervalsBaseUrl?: string | undefined;
   fetchFn?: typeof fetch;
 }
 
@@ -70,7 +72,13 @@ export class IntegrationResolver {
   async intervalsFor(userId: string): Promise<IntervalsIcu | null> {
     const creds = await this.source.intervals(userId);
     return reuse(this.intervalsClients, userId, creds, ({ athleteId, ...auth }) =>
-      new IntervalsIcu({ auth, athleteId, gate: this.intervalsGate, ...(this.opts.fetchFn ? { fetchFn: this.opts.fetchFn } : {}) }),
+      new IntervalsIcu({
+        auth,
+        athleteId,
+        gate: this.intervalsGate,
+        ...(this.opts.intervalsBaseUrl ? { baseUrl: this.opts.intervalsBaseUrl } : {}),
+        ...(this.opts.fetchFn ? { fetchFn: this.opts.fetchFn } : {}),
+      }),
     );
   }
 

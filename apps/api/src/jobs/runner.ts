@@ -101,6 +101,12 @@ export class JobRunner {
     return kickJob(this.c, kind, key, this.now());
   }
 
+  /** Due in `delayMs`, or sooner if it already was: a burst of these is one run (DECISIONS #64). */
+  kickSoon(kind: string, key: string, delayMs: number): Promise<void> {
+    const now = this.now();
+    return kickJob(this.c, kind, key, now, new Date(now.getTime() + delayMs));
+  }
+
   remove(kind: string, key: string): Promise<void> {
     return removeJob(this.c, kind, key);
   }

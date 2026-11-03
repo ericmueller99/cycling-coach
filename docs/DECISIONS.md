@@ -1393,3 +1393,40 @@ unchanged.
   downloads and imports. Revisit only if Zwift turns out to title rides from the file rather than the
   event.
 - *A prefix*: Zwift already puts its own `Intervals icu: ` in front, so a tag at the end reads better.
+
+## 64. Sync seams for webhooks: kicks that aren't lost, a settable poll, and a visible rejection (Nov 3)
+
+**Decision.** A deployment that receives intervals.icu webhooks can schedule a sync for an athlete and poll less.
+The webhook handler itself isn't in this repo: it needs an OAuth app, so it belongs to whoever runs one.
+- **`Core.intervalsChanged(userId, { settings })`:** schedules that athlete's delta 60 s out. `settings` also
+  re-reads the athlete record on that run, whatever its age (`athleteStale`), so an FTP change arrives.
+- **`JobRunner.kickSoon(kind, key, delayMs)`:** `kickJob` now uses `$min`, so a burst of kicks is one run at the
+  first one's time, and a kick never delays a run.
+- **`rerunAt` on a job:** a kick during a run used to be lost, because the run's release overwrote `runAt` with its
+  next interval. `rerunAt` survives into the release, which takes the sooner of the two. Claiming a job clears it:
+  any kick before the claim is covered by the run that follows. It fixes `credentialsChanged` as well.
+- **`createCore({ intervalsSyncEveryMs })`:** the delta's interval. Default 15 min, so self-host is unchanged.
+- **`createCore({ intervalsBaseUrl })`:** a stand-in for intervals.icu in local testing.
+- **`IntervalsIcu.disconnectApp()`:** revokes an OAuth token (#53).
+- **A rejected key or token is an error state.** `lastErrorStatus` is stored with `lastError`, and `status()` says
+  `error` on a 401/403 even after past syncs. Before, it only did on an account that had never synced, so a
+  revoked token still showed "Connected". A successful sync clears it, and so does `credentialsChanged`.
+- **`fullRun` stops when the athlete isn't connected.** "Not connected" counted as transient, so an import retried
+  every minute forever after a disconnect. Its state stays, so a reconnect's delta resumes it.
+
+**Why.** Polling doesn't fit an OAuth app's limits (#53). A delta is about 3 requests, so every 15 minutes is about
+290 per rider per day against an allowance of 100 per user per day with a floor of 5,000: about 17 riders would use
+all of it. A notification should only say "look now": the delta already reads and reconciles everything, so nothing
+in a webhook needs trusting or parsing, and a forged one can at worst cause a sync.
+
+**Verified.** Tests on in-memory Mongo (`jobs/runner.test.ts`, `services/intervals-sync.test.ts`), and a hosted
+deployment driven in a browser against a local stand-in for intervals.icu: five notifications made one sync 62 s
+later.
+
+**Rejected.**
+- *Applying the webhook's payload directly*: a second path into the calendar and rides, with undocumented shapes.
+- *Stopping polling*: activity webhooks aren't sent for Strava-sourced rides, and delivery gives up after about
+  8.5 minutes.
+- *Ignoring our own `CALENDAR_UPDATED` echoes*: a push fires one, but a delta with no changes pushes nothing, so
+  it ends after one extra run.
+

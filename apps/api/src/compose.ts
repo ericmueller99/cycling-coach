@@ -95,6 +95,10 @@ export interface CoreOptions {
    * Default: none (DECISIONS #63).
    */
   eventNameSuffix?: string;
+  /** How often each athlete's intervals.icu delta runs. Default 15 min; less with webhooks (DECISIONS #64). */
+  intervalsSyncEveryMs?: number | undefined;
+  /** Another intervals.icu, for a local stand-in. */
+  intervalsBaseUrl?: string | undefined;
   now?: () => Date;
 }
 
@@ -116,9 +120,18 @@ export interface Core {
    * first sync starts the full import). Works from any process — jobs are database documents.
    */
   credentialsChanged(userId: string): Promise<{ intervals: boolean; zwift: boolean }>;
+  /**
+   * intervals.icu says something changed for this athlete (a webhook): sync them shortly. Nothing from
+   * the notification is trusted; the sync reads what's there. `settings` also re-reads the athlete
+   * record, for FTP (DECISIONS #64).
+   */
+  intervalsChanged(userId: string, opts?: { settings?: boolean }): Promise<void>;
   /** Hand back job leases and close the database. */
   close(): Promise<void>;
 }
+
+/** A ride fires several webhooks about a minute apart; this makes each burst one or two syncs. */
+const WEBHOOK_DEBOUNCE_MS = 60_000;
 
 /** Self-host: INTERVALS_ICU_KEY and ZWIFT_* belong to the owner account. */
 function selfHostCredentials({ env, ownerId }: CoreContext): CredentialSource {
@@ -164,7 +177,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
    */
   const ownerId = memoOwner(() => ownerUserId(c, env.OWNER_EMAIL));
   const ctx: CoreContext = { c, db: mongo.db, env, ownerId };
-  const integrations = new IntegrationResolver(opts.credentials ? opts.credentials(ctx) : selfHostCredentials(ctx));
+  const integrations = new IntegrationResolver(opts.credentials ? opts.credentials(ctx) : selfHostCredentials(ctx), { intervalsBaseUrl: opts.intervalsBaseUrl });
   const features = opts.features ? opts.features(ctx) : envFeatures(ownerId);
   if (!opts.credentials) {
     if (!env.INTERVALS_ICU_KEY) console.warn('INTERVALS_ICU_KEY not set — no training data; the coach will say so.');
@@ -218,7 +231,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   );
   const zwiftSync = new ZwiftSync(c, integrations, zwiftLock);
   const zwiftEvents = new ZwiftEventsService(c, new ZwiftPublic({ gate: integrations.zwiftGate }), integrations, now, {}, undefined, zwiftLock);
-  const jobDeps: JobDeps = { c, sync, zwiftSync, zwiftEvents, now };
+  const jobDeps: JobDeps = { c, sync, zwiftSync, zwiftEvents, deltaEveryMs: opts.intervalsSyncEveryMs, now };
   registerJobs(jobs, jobDeps);
   const coachFood = new CoachFoodService(
     c,
@@ -473,8 +486,15 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     credentialsChanged: async (userId) => {
       integrations.invalidate(userId);
       const connected = await ensureUserJobs(jobs, jobDeps, userId);
-      if (connected.intervals) await jobs.kick(JOB.delta, userId);
+      if (connected.intervals) {
+        await sync.clearRejection(userId);
+        await jobs.kick(JOB.delta, userId);
+      }
       return connected;
+    },
+    intervalsChanged: async (userId, { settings } = {}) => {
+      if (settings) await sync.markAthleteStale(userId);
+      await jobs.kickSoon(JOB.delta, userId, WEBHOOK_DEBOUNCE_MS);
     },
     close: async () => {
       // Hand back leases so another process can pick the jobs up at once.
@@ -488,5 +508,6 @@ export type { CredentialSource, FeatureSource, IntegrationResolver } from './int
 export type { AuthExtension } from './auth';
 export type { AiUse, SpendGuard } from './lib/spend';
 export { JobRunner } from './jobs';
+export { IntervalsError, IntervalsIcu } from './providers/intervals-icu';
 export { serveSpa } from './lib/spa';
 export { loadEnv, webOrigins, type Env } from './lib/env';

@@ -20,11 +20,15 @@ export async function ensureJob(c: Collections, kind: string, key: string, runAt
   );
 }
 
-/** Make the job due now (creating it if needed). A run already holding it isn't disturbed. */
-export async function kickJob(c: Collections, kind: string, key: string, now: Date): Promise<void> {
+/**
+ * Make the job due by `at` (creating it if needed). `$min`, so a burst of kicks is one run at the
+ * first one's time, and a kick never delays a run. A run already holding the job isn't disturbed: it
+ * may have read its data before this kick, so `rerunAt` survives into its release (DECISIONS #64).
+ */
+export async function kickJob(c: Collections, kind: string, key: string, now: Date, at: Date = now): Promise<void> {
   await c.jobs.updateOne(
     { _id: jobId(kind, key) },
-    { $setOnInsert: { kind, key, attempts: 0 }, $set: { runAt: now, updatedAt: now } },
+    { $setOnInsert: { kind, key, attempts: 0 }, $min: { runAt: at, rerunAt: at }, $set: { updatedAt: now } },
     { upsert: true },
   );
 }
@@ -41,7 +45,7 @@ export async function getJob(c: Collections, kind: string, key: string): Promise
 export async function claimDueJob(c: Collections, kinds: string[], owner: string, now: Date, leaseMs: number): Promise<JobDoc | null> {
   return c.jobs.findOneAndUpdate(
     { kind: { $in: kinds }, runAt: { $lte: now }, ...free(now) },
-    { $set: { lockedBy: owner, lockedUntil: new Date(now.getTime() + leaseMs), updatedAt: now } },
+    { $set: { lockedBy: owner, lockedUntil: new Date(now.getTime() + leaseMs), updatedAt: now }, $unset: { rerunAt: '' } },
     { sort: { runAt: 1 }, returnDocument: 'after' },
   );
 }
@@ -55,7 +59,7 @@ export async function claimJob(c: Collections, kind: string, key: string, owner:
   try {
     return await c.jobs.findOneAndUpdate(
       { _id: jobId(kind, key), ...free(now) },
-      { $set: lease, $setOnInsert: { kind, key, runAt: now, attempts: 0 } },
+      { $set: lease, $unset: { rerunAt: '' }, $setOnInsert: { kind, key, runAt: now, attempts: 0 } },
       { upsert: true, returnDocument: 'after' },
     );
   } catch (err) {
@@ -72,8 +76,8 @@ export async function extendLease(c: Collections, id: string, owner: string, now
 }
 
 /**
- * Let go of it. `next` reschedules (a job), `null` deletes it (a one-off that's done), `undefined`
- * just unlocks (a lock). Only the holder can do this.
+ * Let go of it. `next` reschedules (a job), or sooner if a kick arrived during the run; `null` deletes
+ * it (a one-off that's done); `undefined` just unlocks (a lock). Only the holder can do this.
  */
 export async function releaseJob(
   c: Collections,
@@ -90,17 +94,19 @@ export async function releaseJob(
   const unlock = { lockedBy: '', lockedUntil: '' } as const;
   if (!outcome.next) {
     await c.jobs.updateOne(mine, { $unset: unlock, $set: { updatedAt: now } });
-  } else if (outcome.error) {
-    await c.jobs.updateOne(mine, {
-      $unset: unlock,
-      $set: { runAt: outcome.next, lastRunAt: now, lastError: outcome.error, updatedAt: now },
-      $inc: { attempts: 1 },
-    });
   } else {
-    await c.jobs.updateOne(mine, {
-      $unset: { ...unlock, lastError: '' },
-      $set: { runAt: outcome.next, lastRunAt: now, attempts: 0, updatedAt: now },
-    });
+    // A pipeline, so the new time can read `rerunAt`. `$min` skips a missing field.
+    const runAt = { $min: [outcome.next, '$rerunAt'] };
+    const fields = ['lockedBy', 'lockedUntil', 'rerunAt'];
+    await c.jobs.updateOne(
+      mine,
+      outcome.error
+        ? [
+            { $set: { runAt, lastRunAt: now, lastError: { $literal: outcome.error }, attempts: { $add: ['$attempts', 1] }, updatedAt: now } },
+            { $unset: fields },
+          ]
+        : [{ $set: { runAt, lastRunAt: now, attempts: 0, updatedAt: now } }, { $unset: [...fields, 'lastError'] }],
+    );
   }
 }
 

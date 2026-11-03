@@ -200,3 +200,79 @@ describe('manual runs and locks', () => {
     expect((await getJob(c, 'test', 'k'))!.runAt).toEqual(t.now());
   });
 });
+
+describe('kicks (DECISIONS #64)', () => {
+  const MIN = 60_000;
+
+  it('a kick during a run brings the next run forward instead of being lost', async () => {
+    const t = clock();
+    let release = () => {};
+    const running = new Promise<void>((r) => (release = r));
+    let runs = 0;
+    const a = runner('a', t.now).register('test', {
+      every: 120 * MIN,
+      run: async () => {
+        runs++;
+        if (runs === 1) await running;
+      },
+    });
+    await a.kick('test', 'k');
+    await a.tick();
+    await a.kickSoon('test', 'k', MIN);
+    release();
+    await a.idle();
+    const job = await getJob(c, 'test', 'k');
+    expect(job?.runAt).toEqual(new Date(t.now().getTime() + MIN));
+    expect(job?.rerunAt).toBeUndefined();
+
+    t.advance(MIN);
+    await a.tick();
+    await a.idle();
+    await a.stop(0);
+    expect(runs).toBe(2);
+    // With no kick during that run, it's back to the job's own interval.
+    expect((await getJob(c, 'test', 'k'))?.runAt).toEqual(new Date(t.now().getTime() + 120 * MIN));
+  });
+
+  it('a burst of kicks is one run, at the first one\'s time', async () => {
+    const t = clock();
+    let runs = 0;
+    const a = runner('a', t.now).register('test', { every: 120 * MIN, run: async () => void runs++ });
+    await a.schedule('test', 'k');
+    await a.tick();
+    await a.idle();
+    expect(runs).toBe(1);
+
+    await a.kickSoon('test', 'k', MIN);
+    const due = (await getJob(c, 'test', 'k'))?.runAt;
+    t.advance(30_000);
+    await a.kickSoon('test', 'k', MIN);
+    await a.tick();
+    await a.idle();
+    expect(runs).toBe(1);
+    expect((await getJob(c, 'test', 'k'))?.runAt).toEqual(due);
+
+    t.advance(30_000);
+    await a.tick();
+    await a.idle();
+    await a.stop(0);
+    expect(runs).toBe(2);
+  });
+
+  it('a failed run still honours a kick, and keeps counting failures', async () => {
+    const t = clock();
+    let fail = () => {};
+    const failing = new Promise<void>((_, reject) => (fail = () => reject(new Error('$oops'))));
+    const a = runner('a', t.now).register('test', { every: 120 * MIN, run: () => failing });
+    await a.kick('test', 'k');
+    await a.tick();
+    await a.kickSoon('test', 'k', 30_000);
+    fail();
+    await a.idle();
+    await a.stop(0);
+    const job = await getJob(c, 'test', 'k');
+    expect(job?.runAt).toEqual(new Date(t.now().getTime() + 30_000));
+    expect(job?.attempts).toBe(1);
+    expect(job?.lastError).toBe('$oops');
+  });
+});

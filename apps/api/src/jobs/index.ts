@@ -11,7 +11,7 @@ const HOUR = 60 * MIN;
 
 /** Job kinds (DECISIONS #56). Per-athlete jobs are keyed by userId; the rest by `GLOBAL`. */
 export const JOB = {
-  /** The intervals.icu delta sync (DECISIONS #49), every 15 min per connected athlete. */
+  /** The intervals.icu delta sync (DECISIONS #49), every 15 min per connected athlete unless set otherwise (#64). */
   delta: 'intervals.delta',
   /** A full history import, in slices, until it's done; then the job is deleted. */
   full: 'intervals.full',
@@ -29,6 +29,8 @@ export interface JobDeps {
   sync: IntervalsSync;
   zwiftSync: ZwiftSync;
   zwiftEvents: ZwiftEventsService;
+  /** How often the delta runs. Default 15 min; a deployment with webhooks can poll less (DECISIONS #64). */
+  deltaEveryMs?: number | undefined;
   now: () => Date;
   log?: (line: string) => void;
 }
@@ -38,7 +40,7 @@ export function registerJobs(jobs: JobRunner, d: JobDeps): JobRunner {
   const log = d.log ?? ((line: string) => console.warn(line));
   return jobs
     .register(JOB.delta, {
-      every: 15 * MIN,
+      every: d.deltaEveryMs ?? 15 * MIN,
       run: async (userId) => {
         await d.sync.run(userId);
       },

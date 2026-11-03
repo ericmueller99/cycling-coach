@@ -169,7 +169,7 @@ export function useEnergy() {
   return useQuery({ queryKey: foodKeys.energy, queryFn: async () => unwrap(await api.api.energy.$get()) });
 }
 
-/** The day's calorie budget (BMR + daily activity + exercise + goal). Rides sync every 15 min. */
+/** The day's calorie budget (BMR + daily activity + exercise + goal). Rides arrive with the sync. */
 export function useEnergyBudget(date: IsoDate) {
   return useQuery({
     queryKey: foodKeys.budget(date),

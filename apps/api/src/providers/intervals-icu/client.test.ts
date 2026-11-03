@@ -46,6 +46,16 @@ describe('IntervalsIcu client', () => {
     expect((init.headers as Record<string, string>)['Authorization']).toBe('Bearer tok');
   });
 
+  it('revokes an OAuth token at disconnect-app', async () => {
+    const fetchFn = fakeFetch(() => ({ status: 200 }));
+    const icu = new IntervalsIcu({ auth: { kind: 'bearer', token: 'tok' }, fetchFn, gate: fakeGate().gate });
+    await icu.disconnectApp();
+    const [url, init] = calls(fetchFn)[0]!;
+    expect(url).toBe('https://intervals.icu/api/v1/disconnect-app');
+    expect(init.method).toBe('DELETE');
+    expect((init.headers as Record<string, string>)['Authorization']).toBe('Bearer tok');
+  });
+
   it('paces every request through the gate, a second apart, with no read cache', async () => {
     const fetchFn = fakeFetch(() => ({ status: 200, body: [] }));
     const { gate, sleeps } = fakeGate(1000);

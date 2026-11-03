@@ -61,7 +61,7 @@ export function FullSyncBar({ progress }: { progress: FullSyncProgress }) {
       </div>
       <div className="text-xs text-muted">
         {progress.waitingUntil
-          ? 'Paused — intervals.icu asked us to slow down. It carries on with the next sync (within 15 min).'
+          ? 'Paused — intervals.icu asked us to slow down. It carries on with the next sync.'
           : `${fullSyncLine(progress)} · paced at one request a second`}
       </div>
     </div>

@@ -141,6 +141,11 @@ export class IntervalsIcu {
     return (text ? JSON.parse(text) : null) as T;
   }
 
+  /** Revoke this OAuth token: intervals.icu's terms ask for it on disconnect. It also stops its webhooks. */
+  async disconnectApp(): Promise<void> {
+    await this.send('DELETE', '/disconnect-app', {});
+  }
+
   // ── Training data (read by the sync) ──────────────────────────────────────
 
   async listActivities(start: IsoDate, end: IsoDate): Promise<Activity[]> {

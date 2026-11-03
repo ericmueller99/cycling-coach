@@ -85,7 +85,7 @@ try {
       const { session, cookies } = await (await auth.$context).test.login({ userId: user._id.toHexString() });
       const expires = Math.floor(Date.now() / 1000) + TTL_SEC;
       await db.collection('session').updateOne({ token: session.token }, { $set: { userAgent: DEV_AGENT, expiresAt: new Date(expires * 1000) } });
-      const out = cookies.map((c) => ({ ...c, domain: 'localhost', expires }));
+      const out = cookies.map((c) => ({ ...c, domain: new URL(env.APP_URL).hostname, expires }));
       await mkdir(DIR, { recursive: true });
       await writeFile(resolve(DIR, 'session.json'), `${JSON.stringify(out, null, 2)}\n`);
       await writeFile(

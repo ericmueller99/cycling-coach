@@ -88,6 +88,10 @@ const ATHLETE_EVERY_MS = 60 * 60 * 1000;
 /** No athlete has rides from before this; a full import never walks further back. */
 const HISTORY_FLOOR = '2000-01-01';
 
+/** intervals.icu refused the key or token, as opposed to failing. */
+const REJECTED = [401, 403];
+const isRejected = (status: number | undefined) => status !== undefined && REJECTED.includes(status);
+
 export interface SyncReport {
   pushed: number;
   imported: number;
@@ -175,7 +179,8 @@ export class IntervalsSync {
   async status(userId: string): Promise<IntegrationStatus> {
     if (!(await this.connected(userId))) return { status: 'not_configured' };
     const doc = await this.integration(userId);
-    const broken = !!doc?.lastError && !doc.lastSyncAt;
+    // A rejected key or token stays broken however well it once worked (DECISIONS #64).
+    const broken = !!doc?.lastError && (!doc.lastSyncAt || isRejected(doc.lastErrorStatus));
     return {
       status: broken ? 'error' : 'connected',
       ...(doc?.athlete?.athleteId ? { athleteId: doc.athlete.athleteId } : {}),
@@ -186,6 +191,19 @@ export class IntervalsSync {
       ...(doc?.lastFullSyncAt ? { lastFullSyncAt: doc.lastFullSyncAt.toISOString() } : {}),
       ...(doc?.fullSync ? { fullSync: progressOf(doc.fullSync) } : {}),
     };
+  }
+
+  /** intervals.icu says the athlete's settings changed: the next delta re-reads the athlete record. */
+  async markAthleteStale(userId: string): Promise<void> {
+    await this.update(userId, { athleteStale: true });
+  }
+
+  /** New credentials: a past rejection no longer applies, so don't show it while the first sync runs. */
+  async clearRejection(userId: string): Promise<void> {
+    await this.c.integrations.updateOne(
+      { userId, provider: 'intervals_icu', lastErrorStatus: { $in: REJECTED } },
+      { $unset: { lastError: '', lastErrorStatus: '' }, $set: { updatedAt: this.now() } },
+    );
   }
 
   /**
@@ -394,18 +412,19 @@ export class IntervalsSync {
       if (rides.changed || rides.removed || curvesStale || finishing) report.bests = await this.syncCurves(userId, now);
 
       // 7. The athlete record (Zwift connected, FTP), hourly.
-      if (!doc?.athlete || now.getTime() - doc.athlete.at.getTime() > ATHLETE_EVERY_MS) {
-        await this.update(userId, { athlete: { ...(await icu.athlete()), at: now } });
+      if (!doc?.athlete || doc.athleteStale || now.getTime() - doc.athlete.at.getTime() > ATHLETE_EVERY_MS) {
+        await this.update(userId, { athlete: { ...(await icu.athlete()), at: now } }, ['athleteStale']);
       }
 
       // 8. A few new rides' detected intervals (the full import does them all when it runs).
       if (full?.status !== 'running') report.details = await this.fetchDetails(userId, DETAILS_PER_RUN);
 
       const done = finishing ? (({ label: _l, waitingUntil: _w, error: _e, ...rest }) => ({ ...rest, status: 'done' as const, finishedAt: now.toISOString() }))(full) : null;
-      await this.update(userId, { lastSyncAt: now, ...(done ? { lastFullSyncAt: now, fullSync: done } : {}) }, ['lastError']);
+      await this.update(userId, { lastSyncAt: now, ...(done ? { lastFullSyncAt: now, fullSync: done } : {}) }, ['lastError', 'lastErrorStatus']);
       return report;
     } catch (err) {
-      await this.update(userId, { lastError: (err as Error).message });
+      const status = err instanceof IntervalsError ? err.status : undefined;
+      await this.update(userId, { lastError: (err as Error).message, ...(status ? { lastErrorStatus: status } : {}) }, status ? [] : ['lastErrorStatus']);
       throw err;
     }
   }
@@ -508,6 +527,8 @@ export class IntervalsSync {
    * resumes from the saved step once the job's lease runs out.
    */
   async fullRun(userId: string, sliceMs = FULL_SLICE_MS): Promise<Date | null> {
+    // Disconnected: not a failure to retry. The state stays, so a reconnect's delta resumes it.
+    if (!(await this.connected(userId))) return null;
     const profile = await getProfile(this.c, userId);
     const timezone = profile?.timezone ?? 'UTC';
     const until = this.now().getTime() + sliceMs;
