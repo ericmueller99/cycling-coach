@@ -73,16 +73,25 @@ export function registerJobs(jobs: JobRunner, d: JobDeps): JobRunner {
  */
 export async function ensureJobs(jobs: JobRunner, d: JobDeps): Promise<void> {
   const profiles = await d.c.profiles.find({}, { projection: { userId: 1 } }).toArray();
-  for (const { userId } of profiles) {
-    if (await d.sync.connected(userId)) await jobs.schedule(JOB.delta, userId);
-    else await jobs.remove(JOB.delta, userId);
-    if (await d.zwiftSync.connected(userId)) await jobs.schedule(JOB.zwiftMetrics, userId);
-    else await jobs.remove(JOB.zwiftMetrics, userId);
-  }
+  for (const { userId } of profiles) await ensureUserJobs(jobs, d, userId);
   const importing = await d.c.integrations
     .find({ provider: 'intervals_icu', 'fullSync.status': 'running' }, { projection: { userId: 1, fullSync: 1 } })
     .toArray();
   for (const doc of importing) if (doc.fullSync?.phase !== 'match') await jobs.schedule(JOB.full, doc.userId);
   await jobs.schedule(JOB.zwiftPublic, GLOBAL);
   await jobs.schedule(JOB.ensure, GLOBAL);
+}
+
+/**
+ * One athlete's per-user jobs, from their current connections: a delta job while intervals.icu is
+ * connected, a metrics job while they have a Zwift login. Returns what's connected.
+ */
+export async function ensureUserJobs(jobs: JobRunner, d: Pick<JobDeps, 'sync' | 'zwiftSync'>, userId: string): Promise<{ intervals: boolean; zwift: boolean }> {
+  const intervals = await d.sync.connected(userId);
+  if (intervals) await jobs.schedule(JOB.delta, userId);
+  else await jobs.remove(JOB.delta, userId);
+  const zwift = await d.zwiftSync.connected(userId);
+  if (zwift) await jobs.schedule(JOB.zwiftMetrics, userId);
+  else await jobs.remove(JOB.zwiftMetrics, userId);
+  return { intervals, zwift };
 }

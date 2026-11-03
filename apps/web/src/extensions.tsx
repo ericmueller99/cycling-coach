@@ -21,12 +21,14 @@ export interface NavItem {
 }
 
 /**
- * The text under a connection's name while the athlete isn't connected, and an optional control
- * (a Connect button) shown in that row while it isn't connected or the connection broke.
+ * A Connections row's deployment-specific parts. `hint` is the text under the name while the athlete
+ * isn't connected; `action` (a Connect button) shows while they aren't connected or the connection
+ * broke; `manage` (change login, disconnect) shows while a connection exists, working or broken.
  */
 export interface ConnectSlot {
   hint: ReactNode;
   action?: ReactNode;
+  manage?: ReactNode;
 }
 
 export interface Extensions {

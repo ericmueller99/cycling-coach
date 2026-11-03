@@ -48,14 +48,16 @@ export interface IntegrationResolverOptions {
  * Zwift asks here with a `userId`, never holds a client of its own — a single server-wide client is
  * how one athlete's key once synced into every account.
  *
- * Clients are cached per user so a Zwift token (and its "password rejected, don't retry" flag)
- * survives between calls. `invalidate` drops a user's client when their credentials change.
+ * Every lookup asks the credential source, and a user's client is reused only while their
+ * credentials are unchanged (DECISIONS #60). So a Zwift token (and its "password rejected, don't
+ * retry" flag) survives between calls, and a login changed in another process (the API, the worker,
+ * an admin script) takes effect on the next lookup everywhere. `invalidate` is the local fast path.
  */
 export class IntegrationResolver {
   readonly intervalsGate: RequestGate;
   readonly zwiftGate: RequestGate;
-  private readonly intervalsClients = new Map<string, Promise<IntervalsIcu | null>>();
-  private readonly zwiftClients = new Map<string, Promise<ZwiftClient | null>>();
+  private readonly intervalsClients = new Map<string, Cached<IntervalsIcu>>();
+  private readonly zwiftClients = new Map<string, Cached<ZwiftClient>>();
 
   constructor(
     private readonly source: CredentialSource,
@@ -65,25 +67,16 @@ export class IntegrationResolver {
     this.zwiftGate = opts.zwiftGate ?? new RequestGate({ minIntervalMs: ZWIFT_MIN_INTERVAL_MS });
   }
 
-  intervalsFor(userId: string): Promise<IntervalsIcu | null> {
-    return cached(this.intervalsClients, userId, async () => {
-      const creds = await this.source.intervals(userId);
-      if (!creds) return null;
-      const { athleteId, ...auth } = creds;
-      return new IntervalsIcu({
-        auth,
-        athleteId,
-        gate: this.intervalsGate,
-        ...(this.opts.fetchFn ? { fetchFn: this.opts.fetchFn } : {}),
-      });
-    });
+  async intervalsFor(userId: string): Promise<IntervalsIcu | null> {
+    const creds = await this.source.intervals(userId);
+    return reuse(this.intervalsClients, userId, creds, ({ athleteId, ...auth }) =>
+      new IntervalsIcu({ auth, athleteId, gate: this.intervalsGate, ...(this.opts.fetchFn ? { fetchFn: this.opts.fetchFn } : {}) }),
+    );
   }
 
-  zwiftFor(userId: string): Promise<ZwiftClient | null> {
-    return cached(this.zwiftClients, userId, async () => {
-      const creds = await this.source.zwift(userId);
-      return creds ? new ZwiftClient({ ...creds, gate: this.zwiftGate, ...(this.opts.fetchFn ? { fetchFn: this.opts.fetchFn } : {}) }) : null;
-    });
+  async zwiftFor(userId: string): Promise<ZwiftClient | null> {
+    const creds = await this.source.zwift(userId);
+    return reuse(this.zwiftClients, userId, creds, (c) => new ZwiftClient({ ...c, gate: this.zwiftGate, ...(this.opts.fetchFn ? { fetchFn: this.opts.fetchFn } : {}) }));
   }
 
   /** Forget a user's client(s) — after they connect, reconnect or disconnect. */
@@ -93,14 +86,28 @@ export class IntegrationResolver {
   }
 }
 
-/** A failed lookup isn't cached, so the next call tries again. */
-function cached<T>(map: Map<string, Promise<T>>, key: string, make: () => Promise<T>): Promise<T> {
-  const hit = map.get(key);
-  if (hit) return hit;
-  const p = make();
-  map.set(key, p);
-  p.catch(() => map.delete(key));
-  return p;
+interface Cached<C> {
+  /** The credentials the client was built from, serialized; in memory only. */
+  key: string;
+  client: C;
+}
+
+/**
+ * The cached client while `creds` match what it was built from, else a new one; none when not
+ * connected. Check and store happen in one tick after the lookup, so concurrent callers share a client.
+ * A failed lookup throws before this and caches nothing.
+ */
+function reuse<T extends object, C>(map: Map<string, Cached<C>>, userId: string, creds: T | null, make: (creds: T) => C): C | null {
+  if (!creds) {
+    map.delete(userId);
+    return null;
+  }
+  const key = JSON.stringify(creds);
+  const hit = map.get(userId);
+  if (hit?.key === key) return hit.client;
+  const client = make(creds);
+  map.set(userId, { key, client });
+  return client;
 }
 
 export interface EnvCredentialsOptions {

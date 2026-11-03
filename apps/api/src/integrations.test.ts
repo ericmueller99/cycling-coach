@@ -44,17 +44,37 @@ describe('IntegrationResolver', () => {
     };
   };
 
-  it('builds one client per athlete and caches it, including "not connected"', async () => {
+  it('reuses one client per athlete while their credentials are unchanged', async () => {
     const source = counting();
     const r = new IntegrationResolver(source);
     const a = await r.intervalsFor(OWNER);
     expect(a).not.toBeNull();
     expect(await r.intervalsFor(OWNER)).toBe(a);
     expect(await r.intervalsFor(OTHER)).toBeNull();
-    expect(await r.intervalsFor(OTHER)).toBeNull();
-    expect(source.calls.intervals).toBe(2);
+    // The source is asked every time — that's how a change made in another process is seen.
+    expect(source.calls.intervals).toBe(3);
     expect(await r.zwiftFor(OWNER)).toBe(await r.zwiftFor(OWNER));
-    expect(source.calls.zwift).toBe(1);
+  });
+
+  it('builds a new client when the credentials change, and drops it when they go away', async () => {
+    let creds: { username: string; password: string } | null = { username: 'u', password: 'old' };
+    const r = new IntegrationResolver({ intervals: async () => null, zwift: async () => creds });
+    const first = await r.zwiftFor(OWNER);
+    expect(await r.zwiftFor(OWNER)).toBe(first);
+    creds = { username: 'u', password: 'new' };
+    const second = await r.zwiftFor(OWNER);
+    expect(second).not.toBeNull();
+    expect(second).not.toBe(first);
+    creds = null;
+    expect(await r.zwiftFor(OWNER)).toBeNull();
+    creds = { username: 'u', password: 'new' };
+    expect(await r.zwiftFor(OWNER)).not.toBe(second);
+  });
+
+  it('gives concurrent first lookups the same client', async () => {
+    const r = new IntegrationResolver({ intervals: async () => null, zwift: async () => ({ username: 'u', password: 'p' }) });
+    const [a, b] = await Promise.all([r.zwiftFor(OWNER), r.zwiftFor(OWNER)]);
+    expect(a).toBe(b);
   });
 
   it('shares one gate per provider across athletes', async () => {

@@ -24,7 +24,7 @@ export class ApiError extends Error {
 }
 
 /** Statuses our routes return explicitly for failures. Plain `c.json(data)` is the success branch. */
-type ErrorStatus = 400 | 401 | 402 | 403 | 404 | 409 | 410 | 413 | 500 | 502 | 503;
+type ErrorStatus = 400 | 401 | 402 | 403 | 404 | 409 | 410 | 413 | 429 | 500 | 502 | 503;
 
 /** The success body out of a route's response union. */
 type Ok<R> = R extends ClientResponse<infer T, infer S, infer _F> ? (S extends ErrorStatus ? never : T) : never;

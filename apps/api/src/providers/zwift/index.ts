@@ -138,7 +138,7 @@ export class ZwiftClient {
     if (!res.ok || typeof body['access_token'] !== 'string') {
       this.token = null;
       if (params['grant_type'] === 'password' && (res.status === 400 || res.status === 401)) {
-        this.rejected = `Zwift rejected the login (${String(body['error_description'] ?? body['error'] ?? res.status)}) — check ZWIFT_USERNAME / ZWIFT_PASSWORD, then Sync now.`;
+        this.rejected = `Zwift rejected the login (${String(body['error_description'] ?? body['error'] ?? res.status)}) — check the username and password, then Sync now.`;
         throw new ZwiftError(this.rejected, 401);
       }
       throw new ZwiftError(`Zwift login failed (${res.status})`, res.status);

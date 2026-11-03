@@ -36,12 +36,13 @@ import {
 } from '@cycling-coach/db';
 import { sessionRideIds, todayIn } from '@cycling-coach/core';
 import type { IntegrationStatus, ZwiftStatus } from '@cycling-coach/shared';
+import type { Db } from 'mongodb';
 import { createApp, type AppServices } from './app';
 import { createAuth, type Auth, type AuthExtension } from './auth';
 import type { Env } from './lib/env';
 import { allowSpend, type SpendGuard } from './lib/spend';
 import { envCredentials, envFeatures, IntegrationResolver, memoOwner, type CredentialSource, type FeatureSource } from './integrations';
-import { ensureJobs, JOB, JobRunner, registerJobs, type JobDeps } from './jobs';
+import { ensureJobs, ensureUserJobs, JOB, JobRunner, registerJobs, type JobDeps } from './jobs';
 import { buildDashboard, withProgress } from './services/athlete';
 import { CalendarService } from './services/calendar';
 import { EnergyService } from './services/energy';
@@ -66,6 +67,8 @@ import { applyProposal, dismissProposal } from './services/proposals';
 /** What `createCore` hands the credential and feature factories. */
 export interface CoreContext {
   c: Collections;
+  /** The database itself, for a deployment's own collections (DECISIONS #60). */
+  db: Db;
   env: Env;
   /** The self-host owner (OWNER_EMAIL, else the oldest account); the hosted version ignores it. */
   ownerId: () => Promise<string | null>;
@@ -91,6 +94,7 @@ export interface CoreOptions {
 export interface Core {
   env: Env;
   c: Collections;
+  db: Db;
   auth: Auth;
   /** The API (no SPA): mount more routes beside it, then serve it. */
   app: ReturnType<typeof createApp>;
@@ -99,6 +103,12 @@ export interface Core {
   jobs: JobRunner;
   /** Create any missing jobs and run the job loop in this process (DECISIONS #56). */
   startJobs(): Promise<void>;
+  /**
+   * After a user's credentials were stored, changed or removed (DECISIONS #60): drop their cached
+   * clients here, schedule or remove their jobs, and sync intervals.icu now when it's connected (a
+   * first sync starts the full import). Works from any process — jobs are database documents.
+   */
+  credentialsChanged(userId: string): Promise<{ intervals: boolean; zwift: boolean }>;
   /** Hand back job leases and close the database. */
   close(): Promise<void>;
 }
@@ -146,7 +156,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
    * gate: one at a time, 2 s apart (DECISIONS #29).
    */
   const ownerId = memoOwner(() => ownerUserId(c, env.OWNER_EMAIL));
-  const ctx: CoreContext = { c, env, ownerId };
+  const ctx: CoreContext = { c, db: mongo.db, env, ownerId };
   const integrations = new IntegrationResolver(opts.credentials ? opts.credentials(ctx) : selfHostCredentials(ctx));
   const features = opts.features ? opts.features(ctx) : envFeatures(ownerId);
   if (!opts.credentials) {
@@ -432,6 +442,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   return {
     env,
     c,
+    db: mongo.db,
     auth,
     app,
     services,
@@ -440,6 +451,12 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     startJobs: async () => {
       await ensureJobs(jobs, jobDeps).catch((err: Error) => console.warn('jobs: ensure failed —', err.message));
       jobs.start();
+    },
+    credentialsChanged: async (userId) => {
+      integrations.invalidate(userId);
+      const connected = await ensureUserJobs(jobs, jobDeps, userId);
+      if (connected.intervals) await jobs.kick(JOB.delta, userId);
+      return connected;
     },
     close: async () => {
       // Hand back leases so another process can pick the jobs up at once.

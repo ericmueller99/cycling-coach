@@ -1284,3 +1284,30 @@ about hosted features.
 
 **Rejected.** *Keeping personal seed data behind a `--file` option*: not needed; it stays in private history.
 
+
+## 60. Credentials can change at runtime; deployments keep their own collections (Nov 3)
+
+**Decision.** A user's integration credentials may now change while the app runs (a deployment that stores
+them per user lets people connect, change and remove logins), so:
+- `IntegrationResolver` asks the `CredentialSource` on **every** lookup and keeps a user's client only while
+  the credentials are the same as when it was built (compared in memory). Unchanged → the same client, so a
+  Zwift token and its "rejected, don't retry" flag survive. Changed → a new client. `null` → none.
+  `invalidate` stays as the local fast path.
+- `Core.credentialsChanged(userId)` drops that user's cached clients, schedules or removes their per-user
+  jobs (`ensureUserJobs`, extracted from `ensureJobs`) and kicks an intervals.icu delta when connected. The
+  first delta starts the full import (#49). Jobs are database documents, so this works from any process,
+  including a one-off admin script.
+- `CoreContext` and `Core` expose `db`, so a deployment can keep its own collections beside the core's.
+- The web's `ConnectSlot` gains `manage`, shown while a connection exists (working or broken), next to
+  `action` for "not connected or broken" (#58).
+- The providers' rejection messages no longer name env vars ("check the username and password"), because
+  the credentials may not come from env at all. The README and `.env.example` keep the env-var guidance.
+
+**Why.** With a cache per process and no expiry, a login saved through the API would have left the worker
+process syncing with the old one until a restart. Asking the source each time costs one cheap lookup and
+needs no cross-process invalidation channel.
+
+**Rejected.**
+- *A TTL on cached clients*: every expiry would mean a fresh Zwift login, and a change would still lag.
+- *A change notification between processes* (a collection to poll, or pub/sub): more moving parts than
+  re-reading the source.

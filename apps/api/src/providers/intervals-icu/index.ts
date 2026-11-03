@@ -127,7 +127,7 @@ export class IntervalsIcu {
     }
     if (res.status === 401 || res.status === 403) throw new IntervalsError(
         this.opts.auth.kind === 'apiKey'
-          ? 'intervals.icu rejected the API key (check INTERVALS_ICU_KEY).'
+          ? 'intervals.icu rejected the API key — check it, then Sync now.'
           : 'intervals.icu rejected the connection — reconnect intervals.icu.',
         res.status,
       );

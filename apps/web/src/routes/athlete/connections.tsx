@@ -112,6 +112,7 @@ export function ConnectionsSection() {
           </Button>
         )}
         {s && !ok && intervalsConnect.action}
+        {s && s.status !== 'not_configured' && intervalsConnect.manage}
       </div>
       {importing && s.fullSync && <FullSyncBar progress={s.fullSync} />}
       {ok && !importing && (
@@ -204,6 +205,7 @@ function ZwiftConnection() {
           </Button>
         )}
         {s && s.status !== 'connected' && zwiftConnect.action}
+        {s && s.status !== 'not_configured' && zwiftConnect.manage}
       </div>
       <div className="text-xs text-muted">{ZWIFT_TOS_NOTICE}</div>
       {s?.lastError && <ErrorNote>Zwift: {s.lastError}</ErrorNote>}
