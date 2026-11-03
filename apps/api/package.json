@@ -1,0 +1,43 @@
+{
+  "name": "@cycling-coach/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file=../../.env src/server.ts",
+    "build": "tsup",
+    "start": "node dist/server.js",
+    "worker": "tsx --env-file=../../.env src/worker.ts",
+    "seed": "tsx --env-file=../../.env src/scripts/seed.ts",
+    "dev:session": "tsx --env-file=../../.env src/scripts/dev-session.ts",
+    "food:import-cnf": "tsx --env-file=../../.env src/scripts/import-cnf.ts",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit",
+    "coach:smoke": "tsx --env-file=../../.env src/scripts/coach-smoke.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.3.0",
+    "@aws-sdk/client-s3": "^3.899.0",
+    "@aws-sdk/s3-request-presigner": "^3.899.0",
+    "@cycling-coach/coach": "workspace:*",
+    "@cycling-coach/core": "workspace:*",
+    "@cycling-coach/db": "workspace:*",
+    "@cycling-coach/shared": "workspace:*",
+    "@hono/node-server": "^2.1.5",
+    "better-auth": "^1.7.14",
+    "hono": "^4.13.13",
+    "mongodb": "^7.7.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "mongodb-memory-server-core": "^11.3.0",
+    "tsup": "^9.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.2",
+    "vitest": "^5.0.5"
+  },
+  "exports": {
+    "./app": "./src/app.ts"
+  }
+}

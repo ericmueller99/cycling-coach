@@ -1,0 +1,465 @@
+import type {
+  CalendarEventInput,
+  CalendarEventPatch,
+  EventQuery,
+  SavedSearchInput,
+  GoalInput,
+  GoalPatch,
+  PowerBest,
+  Profile,
+  Proposal,
+  SessionFeedbackInput,
+} from '@cycling-coach/shared';
+import { addDays, daysBetween, weekStart } from '@cycling-coach/core';
+import { keepPreviousData, useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useRef } from 'react';
+import { api, ApiError, unwrap, updateName } from './api';
+
+export const keys = {
+  me: ['me'] as const,
+  dashboard: ['dashboard'] as const,
+  profile: ['profile'] as const,
+  weight: ['weight'] as const,
+  workouts: ['workouts'] as const,
+  workout: (id: string) => ['workouts', id] as const,
+  threads: ['threads'] as const,
+  thread: (id: string) => ['threads', id] as const,
+  calendar: (from: string, to: string) => ['calendar', from, to] as const,
+  intervals: ['intervals'] as const,
+  zwift: ['zwift'] as const,
+  usage: ['usage'] as const,
+  events: (q: Omit<EventQuery, 'offset' | 'limit'>) => ['events', q] as const,
+  eventsStatus: ['events', 'status'] as const,
+  eventSearches: ['events', 'searches'] as const,
+};
+
+export function useMe() {
+  return useQuery({
+    queryKey: keys.me,
+    queryFn: async () => {
+      const res = await api.api.me.$get();
+      // 401 is the normal signed-out state, not an error worth retrying.
+      if (res.status === 401) return null;
+      return unwrap(res);
+    },
+    retry: false,
+    staleTime: Infinity,
+  });
+}
+
+/** The Better Auth user's name (sidebar, coach). */
+export function useUpdateName() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: updateName,
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.me }),
+  });
+}
+
+export function useDashboard() {
+  return useQuery({ queryKey: keys.dashboard, queryFn: async () => unwrap(await api.api.dashboard.$get()) });
+}
+
+export function useProfile() {
+  return useQuery({ queryKey: keys.profile, queryFn: async () => unwrap(await api.api.profile.$get()) });
+}
+
+/** 90 days of weigh-ins with their trend, from intervals.icu. */
+export function useWeightHistory() {
+  return useQuery({ queryKey: keys.weight, queryFn: async () => unwrap(await api.api.weight.$get()) });
+}
+
+export function useWorkouts() {
+  return useQuery({ queryKey: keys.workouts, queryFn: async () => unwrap(await api.api.workouts.$get()) });
+}
+
+export function useWorkout(id: string, enabled = true) {
+  return useQuery({
+    queryKey: keys.workout(id),
+    queryFn: async () => unwrap(await api.api.workouts[':id'].$get({ param: { id } })),
+    enabled,
+  });
+}
+
+/** Remove a workout from the library (archived: cards and sessions that use it still render). */
+export function useArchiveWorkout() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => unwrap(await api.api.workouts[':id'].$delete({ param: { id } })),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: keys.workouts }),
+  });
+}
+
+export function useThreads() {
+  return useQuery({ queryKey: keys.threads, queryFn: async () => unwrap(await api.api.threads.$get()) });
+}
+
+export function useThread(id: string | undefined) {
+  return useQuery({
+    queryKey: keys.thread(id ?? 'none'),
+    queryFn: async () => unwrap(await api.api.threads[':id'].$get({ param: { id: id! } })),
+    enabled: !!id,
+  });
+}
+
+export function useProposal(id: string, initialData?: Proposal) {
+  return useQuery({
+    queryKey: ['proposals', id],
+    queryFn: async () => unwrap(await api.api.proposals[':id'].$get({ param: { id } })),
+    ...(initialData ? { initialData } : {}),
+  });
+}
+
+/**
+ * The scrolling calendar's range, fetched in fixed 4-week chunks from `start` (a Monday) so growing
+ * the range only loads the new chunks — each request reads rides from intervals.icu live.
+ */
+export const CALENDAR_CHUNK_WEEKS = 4;
+
+/**
+ * The chunk start holding `week`, on the grid both calendar layouts use (chunks counted from
+ * today's week), so paging the mobile agenda reads the same cache as the desktop grid.
+ */
+export function calendarChunkStart(today: string, week: string) {
+  const base = weekStart(today);
+  const days = CALENDAR_CHUNK_WEEKS * 7;
+  return addDays(base, Math.floor(daysBetween(base, week) / days) * days);
+}
+
+export function useCalendarRange(start: string, weeks: number) {
+  const chunks = Array.from({ length: Math.ceil(weeks / CALENDAR_CHUNK_WEEKS) }, (_, i) => {
+    const from = addDays(start, i * CALENDAR_CHUNK_WEEKS * 7);
+    return { from, to: addDays(from, CALENDAR_CHUNK_WEEKS * 7 - 1) };
+  });
+  return useQueries({
+    queries: chunks.map(({ from, to }) => ({
+      queryKey: keys.calendar(from, to),
+      queryFn: async () => unwrap(await api.api.calendar.$get({ query: { from, to } })),
+    })),
+    combine: (results) => ({
+      events: results.flatMap((r) => r.data?.events ?? []),
+      activities: results.flatMap((r) => r.data?.activities ?? []),
+      feedback: results.flatMap((r) => r.data?.feedback ?? []),
+      error: results.find((r) => r.error)?.error ?? null,
+      pending: results.some((r) => r.isPending),
+    }),
+  });
+}
+
+/** intervals.icu status; polls every 3 s while a full import runs so its progress bar moves. */
+export function useIntervals() {
+  return useQuery({
+    queryKey: keys.intervals,
+    queryFn: async () => unwrap(await api.api.integrations.intervals.$get()),
+    refetchInterval: (q) => (q.state.data?.fullSync?.status === 'running' ? 3000 : false),
+  });
+}
+
+/** Everything that reads synced rides, wellness or curves — refreshed after a sync. */
+function invalidateSynced(qc: ReturnType<typeof useQueryClient>) {
+  void qc.invalidateQueries({ queryKey: keys.dashboard });
+  void qc.invalidateQueries({ queryKey: keys.profile });
+  void qc.invalidateQueries({ queryKey: keys.weight });
+  void qc.invalidateQueries({ queryKey: ['calendar'] });
+  void qc.invalidateQueries({ queryKey: ['energy'] });
+}
+
+/**
+ * Watches a running full import (mounted once, in the shell): while it runs, the screens that show
+ * rides refresh every half minute as history fills in, and once more when it finishes.
+ */
+export function useFullSyncRefresh() {
+  const qc = useQueryClient();
+  const { data } = useIntervals();
+  const running = data?.fullSync?.status === 'running';
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    if (wasRunning.current && !running) invalidateSynced(qc);
+    wasRunning.current = running;
+    if (!running) return;
+    const timer = setInterval(() => invalidateSynced(qc), 30_000);
+    return () => clearInterval(timer);
+  }, [running, qc]);
+  return data?.fullSync;
+}
+
+export function useZwift() {
+  return useQuery({ queryKey: keys.zwift, queryFn: async () => unwrap(await api.api.integrations.zwift.$get()) });
+}
+
+export function useUsage() {
+  return useQuery({ queryKey: keys.usage, queryFn: async () => unwrap(await api.api.usage.$get()) });
+}
+
+/** Anything that changes the calendar or profile can change the right rail and the coach context. */
+function useInvalidateTraining() {
+  const qc = useQueryClient();
+  return () => {
+    void qc.invalidateQueries({ queryKey: ['calendar'] });
+    // Planned sessions feed the calorie budget (and the calendar's food layer).
+    void qc.invalidateQueries({ queryKey: ['energy', 'budget'] });
+    void qc.invalidateQueries({ queryKey: ['energy', 'days'] });
+    void qc.invalidateQueries({ queryKey: keys.dashboard });
+    void qc.invalidateQueries({ queryKey: keys.profile });
+  };
+}
+
+export function useCalendarMutations() {
+  const invalidate = useInvalidateTraining();
+  return {
+    create: useMutation({
+      mutationFn: async (input: CalendarEventInput) => unwrap(await api.api.calendar.$post({ json: input })),
+      onSuccess: invalidate,
+    }),
+    patch: useMutation({
+      mutationFn: async ({ id, patch }: { id: string; patch: CalendarEventPatch }) =>
+        unwrap(await api.api.calendar[':id'].$patch({ param: { id }, json: patch })),
+      onSuccess: invalidate,
+    }),
+    remove: useMutation({
+      mutationFn: async (id: string) => unwrap(await api.api.calendar[':id'].$delete({ param: { id } })),
+      onSuccess: invalidate,
+    }),
+    /** Retry a push to intervals.icu that failed. */
+    resync: useMutation({
+      mutationFn: async (id: string) => unwrap(await api.api.calendar[':id'].sync.$post({ param: { id } })),
+      onSuccess: invalidate,
+    }),
+    /** The matched ride wasn't this session: unpair them for good. */
+    unlink: useMutation({
+      mutationFn: async (id: string) => unwrap(await api.api.calendar[':id'].unlink.$post({ param: { id } })),
+      onSuccess: invalidate,
+    }),
+    /** Group a same-day ride into a session (a long ride split across activities). */
+    addRide: useMutation({
+      mutationFn: async ({ id, activityId }: { id: string; activityId: string }) =>
+        unwrap(await api.api.calendar[':id'].rides.$post({ param: { id }, json: { activityId } })),
+      onSuccess: invalidate,
+    }),
+    /** Take a ride back out of a session; it shows as its own ride again. */
+    removeRide: useMutation({
+      mutationFn: async ({ id, activityId }: { id: string; activityId: string }) =>
+        unwrap(await api.api.calendar[':id'].rides[':activityId'].$delete({ param: { id, activityId } })),
+      onSuccess: invalidate,
+    }),
+  };
+}
+
+/** A completed session's ride and its reps against the plan (read live from intervals.icu). */
+export function useSessionResult(eventId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['calendar', 'result', eventId],
+    queryFn: async () => unwrap(await api.api.calendar[':id'].result.$get({ param: { id: eventId } })),
+    enabled,
+    retry: false,
+  });
+}
+
+/** Save a ride rating (RPE + note). Only the calendar shows it, so only the calendar refetches. */
+export function useSaveFeedback() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: SessionFeedbackInput) => unwrap(await api.api.feedback.$put({ json: input })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['calendar'], predicate: (q) => q.queryKey[1] !== 'result' }),
+  });
+}
+
+export function useProposalMutations(threadId: string) {
+  const qc = useQueryClient();
+  const invalidate = useInvalidateTraining();
+  const after = (_: unknown, vars: { id: string }) => {
+    invalidate();
+    void qc.invalidateQueries({ queryKey: keys.thread(threadId) });
+    void qc.invalidateQueries({ queryKey: ['proposals', vars.id] });
+  };
+  return {
+    apply: useMutation({
+      mutationFn: async ({ id, indexes }: { id: string; indexes?: number[] }) =>
+        unwrap(await api.api.proposals[':id'].apply.$post({ param: { id }, json: indexes ? { indexes } : {} })),
+      onSuccess: after,
+    }),
+    dismiss: useMutation({
+      mutationFn: async ({ id, indexes }: { id: string; indexes?: number[] }) =>
+        unwrap(await api.api.proposals[':id'].dismiss.$post({ param: { id }, json: indexes ? { indexes } : {} })),
+      onSuccess: after,
+    }),
+  };
+}
+
+export function useProfileMutations() {
+  const qc = useQueryClient();
+  const invalidate = () => {
+    void qc.invalidateQueries({ queryKey: keys.profile });
+    void qc.invalidateQueries({ queryKey: keys.dashboard });
+    // A weight goal or weight change moves the calorie budget.
+    void qc.invalidateQueries({ queryKey: ['energy', 'budget'] });
+  };
+  return {
+    saveProfile: useMutation({
+      mutationFn: async (profile: Profile) => unwrap(await api.api.profile.$put({ json: profile })),
+      onSuccess: invalidate,
+    }),
+    savePowerBests: useMutation({
+      mutationFn: async (bests: PowerBest[]) => unwrap(await api.api['power-bests'].$put({ json: { bests } })),
+      onSuccess: invalidate,
+    }),
+    createGoal: useMutation({
+      mutationFn: async (input: GoalInput) => unwrap(await api.api.goals.$post({ json: input })),
+      onSuccess: invalidate,
+    }),
+    updateGoal: useMutation({
+      mutationFn: async ({ id, patch }: { id: string; patch: GoalPatch }) =>
+        unwrap(await api.api.goals[':id'].$patch({ param: { id }, json: patch })),
+      onSuccess: invalidate,
+    }),
+    deleteGoal: useMutation({
+      mutationFn: async (id: string) => unwrap(await api.api.goals[':id'].$delete({ param: { id } })),
+      onSuccess: invalidate,
+    }),
+    createMemory: useMutation({
+      mutationFn: async (text: string) => unwrap(await api.api.memories.$post({ json: { text } })),
+      onSuccess: invalidate,
+    }),
+    updateMemory: useMutation({
+      mutationFn: async ({ id, text }: { id: string; text: string }) =>
+        unwrap(await api.api.memories[':id'].$patch({ param: { id }, json: { text } })),
+      onSuccess: invalidate,
+    }),
+    deleteMemory: useMutation({
+      mutationFn: async (id: string) => unwrap(await api.api.memories[':id'].$delete({ param: { id } })),
+      onSuccess: invalidate,
+    }),
+    restoreMemory: useMutation({
+      mutationFn: async (id: string) => unwrap(await api.api.memories[':id'].restore.$post({ param: { id } })),
+      onSuccess: invalidate,
+    }),
+  };
+}
+
+export function useIntervalsSync() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => unwrap(await api.api.integrations.intervals.sync.$post()),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.intervals });
+      invalidateSynced(qc);
+    },
+  });
+}
+
+/** Start a full import of all intervals.icu history (DECISIONS #49); it runs in the background. */
+export function useIntervalsFullSync() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => unwrap(await api.api.integrations.intervals['full-sync'].$post()),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: keys.intervals }),
+  });
+}
+
+/** Pull zFTP, zMAP, weight and FTP from Zwift; a failure comes back as the status's lastError. */
+export function useZwiftSync() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => unwrap(await api.api.integrations.zwift.sync.$post()),
+    onSuccess: (status) => {
+      qc.setQueryData(keys.zwift, status);
+      void qc.invalidateQueries({ queryKey: keys.dashboard });
+      void qc.invalidateQueries({ queryKey: keys.profile });
+    },
+  });
+}
+
+// ── Zwift events (DECISIONS #29) ────────────────────────────────────────────
+
+const EVENTS_PAGE = 100;
+
+/** Pages of the filtered event list; the list fetches the next page as it scrolls. */
+export function useEvents(q: Omit<EventQuery, 'offset' | 'limit'>) {
+  return useInfiniteQuery({
+    queryKey: keys.events(q),
+    queryFn: async ({ pageParam }) => unwrap(await api.api.events.query.$post({ json: { ...q, offset: pageParam, limit: EVENTS_PAGE } })),
+    initialPageParam: 0,
+    getNextPageParam: (last, pages) => {
+      const loaded = pages.reduce((n, p) => n + p.items.length, 0);
+      return loaded < last.total ? loaded : undefined;
+    },
+    placeholderData: keepPreviousData,
+    // Our own API, never Zwift: events that start while the page is open drop off "Upcoming only".
+    refetchInterval: 60_000,
+  });
+}
+
+/** Feed status. Polls our API (not Zwift) every 2 s only while "Get more events" runs. */
+export function useEventsStatus() {
+  const qc = useQueryClient();
+  return useQuery({
+    queryKey: keys.eventsStatus,
+    queryFn: async () => {
+      const s = await unwrap(await api.api.events.status.$get());
+      const prev = qc.getQueryData<typeof s>(keys.eventsStatus);
+      // New events landed: a page of the walk, the end of it, or an hourly sync.
+      if (prev && (prev.count !== s.count || prev.lastPublicSyncAt !== s.lastPublicSyncAt || prev.extended?.events !== s.extended?.events)) {
+        void qc.invalidateQueries({ queryKey: ['events'], predicate: (query) => query.queryKey[1] !== 'status' && query.queryKey[1] !== 'searches' });
+      }
+      return s;
+    },
+    refetchInterval: (query) => (query.state.data?.extended?.state === 'running' ? 2000 : 60_000),
+  });
+}
+
+export function useRefreshEvents() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => unwrap(await api.api.events.refresh.$post()),
+    onSuccess: (status) => {
+      qc.setQueryData(keys.eventsStatus, status);
+      void qc.invalidateQueries({ queryKey: ['events'] });
+    },
+  });
+}
+
+/** "Get more events": starts the one logged-in walk; refused (409) inside the 6 h cooldown. */
+export function useExtendEvents() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => unwrap(await api.api.events.extend.$post()),
+    onSuccess: (status) => qc.setQueryData(keys.eventsStatus, status),
+    onSettled: () => void qc.invalidateQueries({ queryKey: keys.eventsStatus }),
+  });
+}
+
+export function useEventSearches() {
+  const qc = useQueryClient();
+  const list = useQuery({ queryKey: keys.eventSearches, queryFn: async () => unwrap(await api.api.events.searches.$get()) });
+  const invalidate = () => void qc.invalidateQueries({ queryKey: keys.eventSearches });
+  return {
+    list,
+    create: useMutation({
+      mutationFn: async (input: SavedSearchInput) => unwrap(await api.api.events.searches.$post({ json: input })),
+      onSuccess: invalidate,
+    }),
+    remove: useMutation({
+      mutationFn: async (id: string) => unwrap(await api.api.events.searches[':id'].$delete({ param: { id } })),
+      onSuccess: invalidate,
+    }),
+  };
+}
+
+/** Add an event to the calendar (through `services/calendar.ts`, like any session). */
+export function useAddEventToCalendar() {
+  const qc = useQueryClient();
+  const invalidate = useInvalidateTraining();
+  return useMutation({
+    mutationFn: async (input: CalendarEventInput) => unwrap(await api.api.calendar.$post({ json: input })),
+    onSuccess: () => {
+      invalidate();
+      void qc.invalidateQueries({ queryKey: ['events'] });
+    },
+  });
+}
+
+export function errorMessage(err: unknown): string {
+  if (err instanceof ApiError) return err.message;
+  if (err instanceof Error) return err.message;
+  return 'Something went wrong.';
+}

@@ -1,0 +1,131 @@
+@import "tailwindcss";
+/* Scan this folder wherever the app is built from: a parent workspace reaches it through a
+   node_modules symlink, which Tailwind's automatic detection skips (DECISIONS #51). */
+@source ".";
+
+/* One breakpoint. Below 800 px the app gets a top app bar + bottom tab bar. Layouts
+   that differ in structure switch in JS (lib/useIsMobile.ts) on the same query. */
+@custom-variant mobile (@media (width < 800px));
+@custom-variant desktop (@media (width >= 800px));
+
+/* Design tokens. Session-type and zone colours are data-driven and live in
+   src/lib/session.ts and packages/core/src/zones.ts. */
+@theme {
+  --color-bg: #f6f7f9;
+  --color-surface: #ffffff;
+  --color-surface-2: #f3f4f6;
+  --color-surface-alt: #fafbfc;
+  --color-hover: #eef0f3;
+  --color-track: #e5e8ec;
+  --color-line: #e3e6eb;
+  --color-line-strong: #d5d9e0;
+  --color-divider: #edeff2;
+  --color-ink: #15181e;
+  --color-muted: #5b6472;
+  --color-faint: #6b7280;
+  --color-accent: #c8f25a;
+  --color-on-accent: #0e1014;
+  --color-accent-ink: #3f6212;
+  --color-accent-ink-hover: #1a2e05;
+  --color-accent-ring: #7da30a;
+  --color-accent-tint: #f4fadf;
+  --color-accent-tint-2: #f1f8dc;
+  --color-accent-line: #d6e8a6;
+  --color-user-bubble: #e6eef9;
+  --color-success: #15803d;
+  /* Training-data chips and connection card (intervals.icu). */
+  --color-data: #1d5bbf;
+  --color-data-tint: #e8f0fd;
+  --color-danger: #b42318;
+
+  --font-sans: Inter, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+@layer base {
+  html,
+  body {
+    background: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    /* Home-screen app (DECISIONS #43): no grey tap flash, no rubber-band behind the fixed tab
+       bar, no font inflation on rotate. */
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: none;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+  a {
+    color: var(--color-accent-ink);
+  }
+  a:hover {
+    color: var(--color-accent-ink-hover);
+  }
+  h1,
+  h2,
+  h3 {
+    font-weight: 600;
+  }
+  button {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: default;
+    opacity: 0.55;
+  }
+}
+
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Unlayered, so it beats Tailwind's text-size utilities: 16px inputs stop iOS zoom-on-focus. */
+@media (width < 800px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
+/* Coach prose (markdown). Kept small and quiet. */
+.prose-coach p {
+  margin: 0 0 0.75em;
+}
+.prose-coach p:last-child {
+  margin-bottom: 0;
+}
+.prose-coach ul,
+.prose-coach ol {
+  margin: 0 0 0.75em;
+  padding-left: 1.25em;
+}
+.prose-coach ul {
+  list-style: disc;
+}
+.prose-coach ol {
+  list-style: decimal;
+}
+.prose-coach strong {
+  font-weight: 600;
+}
+.prose-coach code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+.prose-coach table {
+  border-collapse: collapse;
+  margin: 0 0 0.75em;
+  font-size: 13px;
+}
+.prose-coach th,
+.prose-coach td {
+  border: 1px solid var(--color-divider);
+  padding: 4px 8px;
+  text-align: left;
+}

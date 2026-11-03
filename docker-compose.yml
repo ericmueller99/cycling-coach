@@ -1,0 +1,44 @@
+# Self-host stack and local dev database (docs/DECISIONS.md #44).
+#
+#   docker compose up -d --build                      # the whole app at http://localhost:8787
+#   docker compose run --rm app node dist/seed.js     # once: your login + profile (README, "What the seed does")
+#   pnpm db:up                                        # dev only: starts just `mongo` for `pnpm dev`
+services:
+  mongo:
+    image: mongo:7
+    # A single-node replica set: Better Auth uses transactions, which a standalone mongod rejects
+    # ("Transaction numbers are only allowed on a replica set member").
+    command: ["--replSet", "rs0", "--bind_ip_all", "--port", "27017"]
+    ports:
+      - "27017:27017"
+    healthcheck:
+      test: echo "try { rs.status() } catch (err) { rs.initiate({_id:'rs0',members:[{_id:0,host:'localhost:27017'}]}) }" | mongosh --port 27017 --quiet
+      interval: 5s
+      timeout: 30s
+      retries: 30
+    volumes:
+      - mongo-data:/data/db
+
+  app:
+    build: .
+    image: cycling-coach:local
+    container_name: cycling-coach-local
+    env_file: .env
+    environment:
+      # Always the bundled Mongo, whatever MONGO_DB_URI says in .env (dev may point it elsewhere).
+      # directConnection skips replica-set discovery, so the member's `localhost` name doesn't matter.
+      MONGO_DB_URI: mongodb://mongo:27017/?directConnection=true
+      NODE_ENV: production
+      # One origin: the container serves the SPA and the API. Set PUBLIC_URL when the app sits
+      # behind your own https proxy; it must match the address in the browser.
+      BETTER_AUTH_URL: ${PUBLIC_URL:-http://localhost:8787}
+      APP_URL: ${PUBLIC_URL:-http://localhost:8787}
+    ports:
+      - "${APP_PORT:-8787}:8787"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  mongo-data:

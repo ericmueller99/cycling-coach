@@ -1,0 +1,23 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`strict tool schemas > keeps the tool list in a fixed order (it is the cached prompt prefix) 1`] = `
+[
+  "get_recent_activities",
+  "search_activities",
+  "get_activity_detail",
+  "get_power_curve",
+  "get_fitness",
+  "get_calendar",
+  "get_ride_feedback",
+  "propose_plan",
+  "propose_calendar_changes",
+  "propose_profile_update",
+  "propose_goal",
+  "create_workout",
+  "remember",
+  "forget",
+  "find_events",
+  "suggest_meals",
+  "build_recipe",
+]
+`;

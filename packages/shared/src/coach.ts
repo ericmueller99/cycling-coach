@@ -1,0 +1,175 @@
+import { z } from 'zod';
+import { calendarEventInputSchema, calendarEventPatchSchema, calendarEventSchema } from './calendar';
+import { isoDateSchema } from './common';
+import { goalMeasureSchema } from './profile';
+
+/**
+ * Coach output the UI renders as cards. The API stores the verbatim Anthropic transcript and derives
+ * these blocks from it, so the transcript stays the single source of truth (docs/DECISIONS.md #6).
+ */
+
+/** One row of a Plan card. Same shape as a calendar event, so "Add" is a straight copy. */
+export const planItemSchema = calendarEventInputSchema;
+export type PlanItem = z.infer<typeof planItemSchema>;
+
+export const proposalItemStatuses = ['pending', 'applied', 'dismissed'] as const;
+export type ProposalItemStatus = (typeof proposalItemStatuses)[number];
+
+export const calendarChangeSchema = z.discriminatedUnion('op', [
+  z.object({ op: z.literal('add'), event: calendarEventInputSchema }),
+  z.object({ op: z.literal('move'), eventId: z.string(), toDate: isoDateSchema }),
+  z.object({
+    op: z.literal('update'),
+    eventId: z.string(),
+    // From the unrefined fields: Zod can't .partial() a refined object.
+    patch: calendarEventPatchSchema.omit({ status: true, unset: true }),
+  }),
+  z.object({ op: z.literal('remove'), eventId: z.string() }),
+]);
+export type CalendarChange = z.infer<typeof calendarChangeSchema>;
+
+export const profileUpdateSchema = z.object({
+  ftpZwift: z.number().int().min(50).max(700).optional(),
+  /** The monthly Zwift baseline. The real weight syncs from intervals.icu and isn't proposed. */
+  zwiftWeightKg: z.number().min(30).max(200).optional(),
+  powerBests: z
+    .array(
+      z.object({
+        period: z.enum(['90d', 'season', 'allTime']),
+        durationSec: z.number().int().positive(),
+        watts: z.number().int().min(0).max(3000),
+        date: isoDateSchema.optional(),
+        source: z.string().max(160).optional(),
+      }),
+    )
+    .optional(),
+  reason: z.string().max(300).optional(),
+});
+export type ProfileUpdate = z.infer<typeof profileUpdateSchema>;
+
+/** Add a goal (no goalId) or replace an existing goal's fields (goalId). */
+export const goalProposalSchema = z.object({
+  goalId: z.string().optional(),
+  horizon: z.enum(['long', 'short']),
+  title: z.string().min(1).max(120),
+  detail: z.string().max(500).optional(),
+  targetLabel: z.string().max(40).optional(),
+  targetDate: isoDateSchema.optional(),
+  measure: goalMeasureSchema.optional(),
+  target: z.number().optional(),
+  primary: z.boolean().optional(),
+});
+export type GoalProposal = z.infer<typeof goalProposalSchema>;
+
+export const proposalSchema = z.discriminatedUnion('kind', [
+  z.object({
+    id: z.string(),
+    threadId: z.string(),
+    kind: z.literal('plan'),
+    title: z.string(),
+    subtitle: z.string().optional(),
+    items: z.array(planItemSchema),
+    itemStatus: z.array(z.enum(proposalItemStatuses)),
+  }),
+  z.object({
+    id: z.string(),
+    threadId: z.string(),
+    kind: z.literal('calendar_changes'),
+    title: z.string(),
+    items: z.array(calendarChangeSchema),
+    /**
+     * The events as they were when the coach proposed the changes, parallel to `items` — null for
+     * an add, or an id that didn't resolve. A snapshot, so an applied change still shows its "before".
+     * Absent on proposals made before it existed.
+     */
+    before: z.array(calendarEventSchema.nullable()).optional(),
+    itemStatus: z.array(z.enum(proposalItemStatuses)),
+  }),
+  z.object({
+    id: z.string(),
+    threadId: z.string(),
+    kind: z.literal('profile_update'),
+    title: z.string(),
+    items: z.array(profileUpdateSchema).length(1),
+    itemStatus: z.array(z.enum(proposalItemStatuses)).length(1),
+  }),
+  z.object({
+    id: z.string(),
+    threadId: z.string(),
+    kind: z.literal('goal'),
+    title: z.string(),
+    items: z.array(goalProposalSchema).length(1),
+    itemStatus: z.array(z.enum(proposalItemStatuses)).length(1),
+  }),
+]);
+export type Proposal = z.infer<typeof proposalSchema>;
+
+/** A tool chip: what the coach fetched, collapsed to one line, expandable to rows. */
+export interface ToolChipBlock {
+  type: 'tool';
+  toolUseId: string;
+  name: string;
+  status: 'running' | 'ok' | 'error' | 'expired';
+  /** e.g. "Pulled 16 rides from intervals.icu · Oct 20 – 28 · 5 races, 10.1 h" */
+  summary: string;
+  /** Training-data tools (intervals.icu) get the data icon. */
+  source: 'data' | 'app';
+  rows?: string[] | undefined;
+}
+
+export type UiBlock =
+  | { type: 'text'; text: string }
+  | ToolChipBlock
+  | { type: 'proposal'; proposalId: string; kind: Proposal['kind'] }
+  | { type: 'workout'; workoutId: string }
+  | { type: 'memory'; memoryId: string; action: 'remember' | 'forget'; text: string }
+  /** Meal idea cards; the ideas live in `meal_ideas`. */
+  | { type: 'meal_ideas'; ideasId: string }
+  /** A generated recipe; it opens in the recipe pane and lives in `recipe_drafts`. */
+  | { type: 'recipe_ref'; draftId: string };
+
+export interface UiMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  blocks: UiBlock[];
+  createdAt: string;
+}
+
+export const threadTags = ['food'] as const;
+export type ThreadTag = (typeof threadTags)[number];
+
+export interface ThreadSummary {
+  id: string;
+  title: string;
+  createdAt: string;
+  lastMessageAt: string;
+  /** `food` once the coach has suggested meals or built a recipe in it. */
+  tags: ThreadTag[];
+}
+
+export const sendMessageSchema = z.object({
+  text: z.string().min(1).max(8000),
+  /** The Coach food strip's meal and day, when the user is planning food. */
+  food: z.object({ slot: z.string().trim().min(1).max(30), date: isoDateSchema }).optional(),
+});
+export type SendMessageInput = z.infer<typeof sendMessageSchema>;
+
+export interface CoachUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
+/**
+ * The SSE stream for one coach turn. The client appends `text_delta`s to the current text block and
+ * replaces/inserts other blocks by identity (`toolUseId`, `proposalId`, ...).
+ */
+export type CoachEvent =
+  | { type: 'turn_start'; messageId: string }
+  | { type: 'text_delta'; text: string }
+  | { type: 'thinking'; active: boolean }
+  | { type: 'block'; block: Exclude<UiBlock, { type: 'text' }> }
+  | { type: 'thread_title'; title: string }
+  | { type: 'done'; usage: CoachUsage }
+  | { type: 'error'; message: string; retryable: boolean };

@@ -1,0 +1,33 @@
+{
+  "name": "cycling-coach",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "preinstall": "node scripts/only-pnpm.mjs",
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "db:up": "docker compose up -d --wait mongo",
+    "db:down": "docker compose down",
+    "db:seed": "pnpm --filter @cycling-coach/api seed",
+    "dev:session": "pnpm --filter @cycling-coach/api dev:session",
+    "food:import-cnf": "pnpm --filter @cycling-coach/api food:import-cnf",
+    "dev:stop": "lsof -tnP -iTCP:8787 -sTCP:LISTEN | xargs -r kill; lsof -tnP -iTCP:5173 -sTCP:LISTEN | xargs -r kill; echo 'dev ports cleared'"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "eslint": "^9.17.0",
+    "globals": "^15.14.0",
+    "turbo": "^2.11.10",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.72.1",
+    "vitest": "^5.0.5"
+  }
+}

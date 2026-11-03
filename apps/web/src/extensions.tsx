@@ -1,0 +1,76 @@
+import type { LinkOptions } from '@tanstack/react-router';
+import { createContext, useContext, useMemo, type ComponentType, type ReactNode } from 'react';
+import { ClaudeUsageRow } from './components/ClaudeUsageRow';
+import { CalendarIcon, ChatIcon, FlagIcon, LibraryIcon, TargetIcon } from './components/icons';
+
+/**
+ * The places where an app built on this one (DECISIONS #58) puts its own pieces: extra navigation,
+ * its name, what sits under the sign-in form, how an athlete connects intervals.icu or Zwift, the
+ * usage row and extra Account cards. Every slot has a default, which is the self-hosted app.
+ */
+
+/** A sidebar and tab bar destination. */
+export interface NavItem {
+  to: NonNullable<LinkOptions['to']>;
+  label: string;
+  /** The tab bar label, where space is short. */
+  short: string;
+  icon: ComponentType<{ size?: number; className?: string }>;
+  /** Whether the item is the current page. */
+  match: (pathname: string) => boolean;
+}
+
+/**
+ * The text under a connection's name while the athlete isn't connected, and an optional control
+ * (a Connect button) shown in that row while it isn't connected or the connection broke.
+ */
+export interface ConnectSlot {
+  hint: ReactNode;
+  action?: ReactNode;
+}
+
+export interface Extensions {
+  /** The product name: sidebar, sign-in page, share links. */
+  brand: string;
+  /** Sidebar and tab bar items, given the core five. */
+  navItems: (core: readonly NavItem[]) => readonly NavItem[];
+  /** Under the sign-in form ("Create an account", "Forgot password?"). */
+  loginFooter: ReactNode;
+  /** The intervals.icu row on Connections while this athlete isn't connected. */
+  intervalsConnect: ConnectSlot;
+  /** The Zwift row on Connections while this athlete has no Zwift login. */
+  zwiftConnect: ConnectSlot;
+  /** The usage row on Connections (the self-hosted app shows Claude API spend); `null` hides it. */
+  usageCard: ComponentType | null;
+  /** Extra cards at the end of the Account page. */
+  accountCards: ReactNode;
+}
+
+/** The core destinations. */
+export const CORE_NAV: readonly NavItem[] = [
+  { to: '/', label: 'Coach', short: 'Coach', icon: ChatIcon, match: (p) => p === '/' || p.startsWith('/c/') },
+  { to: '/calendar', label: 'Calendar', short: 'Calendar', icon: CalendarIcon, match: (p) => p.startsWith('/calendar') },
+  { to: '/events', label: 'Zwift Events', short: 'Zwift Events', icon: FlagIcon, match: (p) => p.startsWith('/events') },
+  { to: '/library', label: 'Library', short: 'Library', icon: LibraryIcon, match: (p) => p.startsWith('/library') },
+  { to: '/athlete', label: 'Athlete', short: 'Athlete', icon: TargetIcon, match: (p) => p.startsWith('/athlete') },
+];
+
+/** The self-hosted app: credentials come from the server's env and apply to the owner account only (DECISIONS #53). */
+export const defaultExtensions: Extensions = {
+  brand: 'Coach',
+  navItems: (core) => core,
+  loginFooter: null,
+  intervalsConnect: { hint: 'Set INTERVALS_ICU_KEY on the server — it connects the owner account only' },
+  zwiftConnect: { hint: 'Set ZWIFT_USERNAME and ZWIFT_PASSWORD on the server (owner account only), or enter zFTP by hand' },
+  usageCard: ClaudeUsageRow,
+  accountCards: null,
+};
+
+const ExtensionsContext = createContext<Extensions>(defaultExtensions);
+
+export function ExtensionsProvider({ value, children }: { value: Partial<Extensions> | undefined; children: ReactNode }) {
+  const merged = useMemo(() => ({ ...defaultExtensions, ...value }), [value]);
+  return <ExtensionsContext.Provider value={merged}>{children}</ExtensionsContext.Provider>;
+}
+
+export const useExtensions = (): Extensions => useContext(ExtensionsContext);

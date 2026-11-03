@@ -1,0 +1,539 @@
+import {
+  describeMainSet,
+  describeTargets,
+  formatDayLabel,
+  formatLongDay,
+  formatWorkoutDuration,
+  previewCalendarChange,
+  workoutMetrics,
+  type ChangePreview,
+  type PreviewField,
+  type SessionPreview,
+} from '@cycling-coach/core';
+import type { CalendarChange, Proposal, ProposalItemStatus, ToolChipBlock, UiBlock, Workout } from '@cycling-coach/shared';
+import { createContext, useContext, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import { CalendarAddIcon, CheckIcon, ChevronDown, MemoryIcon, PlusIcon, PulseIcon, XIcon } from '../../components/icons';
+import { Button, Card, ErrorNote, SessionTag } from '../../components/ui';
+import { ScheduleControl } from '../../components/ScheduleControl';
+import { ZoneChart } from '../../components/ZoneChart';
+import { downloadZwo } from '../../lib/api';
+import { describeMeasure, measureUnit } from '../../lib/goals';
+import { durationText, kindLabel, SESSION_STYLE } from '../../lib/session';
+import {
+  errorMessage,
+  useDashboard,
+  useProfileMutations,
+  useProposal,
+  useProposalMutations,
+  useWorkout,
+} from '../../lib/queries';
+
+export function TextBlock({ text }: { text: string }) {
+  return (
+    <div className="prose-coach">
+      <ReactMarkdown>{text}</ReactMarkdown>
+    </div>
+  );
+}
+
+/** "Pulled 16 rides from intervals.icu · Oct 20 – 28 · 5 races, 10.1 h", expandable to the rows. */
+export function ToolChip({ block }: { block: ToolChipBlock }) {
+  const [open, setOpen] = useState(false);
+  const running = block.status === 'running';
+  const expandable = block.status === 'ok' && !!block.rows?.length;
+  return (
+    <div className="flex flex-col gap-2 self-start">
+      <button
+        type="button"
+        onClick={() => expandable && setOpen((o) => !o)}
+        aria-expanded={expandable ? open : undefined}
+        className="flex min-h-10 items-center gap-2.5 rounded-[10px] border border-line-strong bg-surface px-3.5 text-left text-[13px] text-muted mobile:min-h-[44px]"
+      >
+        <PulseIcon className={block.source === 'data' ? 'shrink-0 text-data' : 'shrink-0 text-muted'} />
+        <span className={running ? 'animate-pulse' : ''}>
+          {block.status === 'error' ? <span className="text-danger">{block.summary}</span> : block.summary}
+        </span>
+        {expandable && <ChevronDown className={`shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />}
+      </button>
+      {open && block.rows && (
+        <div className="max-h-64 overflow-auto rounded-[10px] border border-line bg-surface-alt px-3.5 py-2 font-mono text-xs text-muted">
+          {block.rows.map((r, i) => (
+            <div key={i} className="border-b border-divider py-1 last:border-0">
+              {r}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StatusButton({
+  status,
+  label,
+  onAdd,
+  busy,
+}: {
+  status: ProposalItemStatus;
+  label: string;
+  onAdd: () => void;
+  busy: boolean;
+}) {
+  if (status === 'applied') {
+    return (
+      <span className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-accent-tint-2 text-success mobile:h-[44px] mobile:w-[44px]" aria-label="Added">
+        <CheckIcon />
+      </span>
+    );
+  }
+  if (status === 'dismissed') return <span className="w-9 flex-none text-center text-xs text-faint mobile:w-[44px]">—</span>;
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      onClick={onAdd}
+      disabled={busy}
+      className="flex h-9 w-9 flex-none items-center justify-center rounded-lg border border-line-strong bg-transparent text-ink mobile:h-[44px] mobile:w-[44px] mobile:border-0"
+    >
+      <PlusIcon />
+    </button>
+  );
+}
+
+const COLLAPSED_ROWS = 8;
+
+function PlanCard({ proposal, threadId }: { proposal: Extract<Proposal, { kind: 'plan' }>; threadId: string }) {
+  const { apply } = useProposalMutations(threadId);
+  const [expanded, setExpanded] = useState(false);
+  const pending = proposal.itemStatus.filter((s) => s === 'pending').length;
+  const rows = expanded ? proposal.items : proposal.items.slice(0, COLLAPSED_ROWS);
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-line px-4 py-3.5">
+        <div>
+          <div className="font-semibold">{proposal.title}</div>
+          {proposal.subtitle && <div className="text-xs text-muted">{proposal.subtitle}</div>}
+        </div>
+        <Button variant="primary" disabled={pending === 0 || apply.isPending} onClick={() => apply.mutate({ id: proposal.id })}>
+          <CalendarAddIcon />
+          {pending === 0 ? 'On your calendar' : <>Add all<span className="mobile:hidden"> to calendar</span></>}
+        </Button>
+      </div>
+      {/* Mobile rows are compact: colour bar, title, "day · duration", a 44px "+". */}
+      {rows.map((item, i) => (
+        <div
+          key={i}
+          className={`flex items-center gap-3.5 border-b border-divider px-4 py-2.5 mobile:gap-2.5 mobile:py-2 mobile:pr-1.5 mobile:pl-3.5 ${proposal.itemStatus[i] === 'dismissed' ? 'opacity-50' : ''}`}
+        >
+          <span className="hidden w-1 flex-none self-stretch rounded-sm mobile:block" style={{ background: SESSION_STYLE[item.type].dot }} />
+          <div className="w-16 flex-none font-mono text-xs text-muted mobile:hidden">{formatDayLabel(item.date)}</div>
+          <div className="w-[86px] flex-none mobile:hidden">
+            <SessionTag type={item.type} tentative={item.tentative} />
+          </div>
+          <div className="min-w-0 flex-auto">
+            <div className="mobile:truncate mobile:text-[13px] mobile:font-semibold">{item.title}</div>
+            <div className="hidden font-mono text-[11px] text-muted mobile:block">{[formatDayLabel(item.date), durationText(item)].filter(Boolean).join(' · ')}</div>
+            {(item.kind !== 'ride' || item.startTime) && <div className="text-xs font-medium text-muted mobile:hidden">{kindLabel(item)}</div>}
+            {item.coachNote && <div className="text-xs text-muted mobile:hidden">{item.coachNote}</div>}
+          </div>
+          <div className="w-[70px] flex-none text-right font-mono text-xs text-muted mobile:hidden">{durationText(item)}</div>
+          <StatusButton
+            status={proposal.itemStatus[i] ?? 'pending'}
+            label={`Add ${formatDayLabel(item.date)} to calendar`}
+            busy={apply.isPending}
+            onAdd={() => apply.mutate({ id: proposal.id, indexes: [i] })}
+          />
+        </div>
+      ))}
+      {proposal.items.length > COLLAPSED_ROWS && (
+        <div className="px-4 py-2.5 text-[13px]">
+          <button type="button" className="border-0 bg-transparent p-0 text-accent-ink" onClick={() => setExpanded((e) => !e)}>
+            {expanded ? 'Show fewer' : `Show ${proposal.items.length - COLLAPSED_ROWS} more days`}
+          </button>
+        </div>
+      )}
+      {apply.error && (
+        <div className="px-4 pb-3">
+          <ErrorNote>{errorMessage(apply.error)}</ErrorNote>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+const OP_MARK: Record<CalendarChange['op'], string> = { add: '+', move: '→', update: '~', remove: '−' };
+
+const FIELD_LABEL: Record<PreviewField, string> = {
+  date: 'Date',
+  title: 'Title',
+  type: 'Type',
+  kind: 'Kind',
+  duration: 'Duration',
+  startTime: 'Start',
+  priority: 'Priority',
+  workoutId: 'Workout',
+  tentative: 'Tentative',
+  meta: 'Details',
+  coachNote: 'Note',
+};
+
+function fieldText(e: SessionPreview, f: PreviewField): string {
+  switch (f) {
+    case 'date':
+      return formatLongDay(e.date);
+    case 'duration':
+      return durationText(e) || '—';
+    case 'tentative':
+      return e.tentative ? 'yes' : 'no';
+    case 'type':
+      return SESSION_STYLE[e.type].label;
+    default:
+      return e[f] ?? '—';
+  }
+}
+
+/** The fields an update or move changes, as "Duration 73m → 60m". Workout and note swaps show when expanded. */
+function changeSummary(p: ChangePreview): string {
+  if (!p.before || !p.after) return '';
+  return p.changed
+    .filter((f) => f !== 'workoutId' && f !== 'coachNote' && f !== 'meta' && f !== 'title')
+    .map((f) => `${FIELD_LABEL[f]} ${fieldText(p.before!, f)} → ${fieldText(p.after!, f)}`)
+    .concat(p.changed.includes('workoutId') ? ['new workout'] : [])
+    .join(' · ');
+}
+
+/** A library workout's profile and main set, compact, for a change row. */
+function WorkoutPreview({ id, label }: { id: string; label?: string | undefined }) {
+  const { data: workout } = useWorkout(id);
+  if (!workout) return <div className="h-10 animate-pulse rounded bg-surface-2" />;
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="text-xs text-muted">
+        {label ? `${label}: ` : ''}
+        <span className="font-medium text-ink">{workout.name}</span> · {describeMainSet(workout.segments)} ·{' '}
+        {formatWorkoutDuration(workoutMetrics(workout.segments).totalSec)}
+      </div>
+      <ZoneChart segments={workout.segments} height={40} />
+    </div>
+  );
+}
+
+function ChangeDetail({ preview }: { preview: ChangePreview }) {
+  const { before, after, changed } = preview;
+  const oldWorkout = before?.workoutId;
+  const newWorkout = after?.workoutId;
+  const workoutChanged = !!before && !!after && changed.includes('workoutId');
+  const textChanges = before && after ? changed.filter((f) => f === 'title' || f === 'meta' || f === 'coachNote') : [];
+  const note = after?.coachNote ?? before?.coachNote;
+  return (
+    <div className="flex flex-col gap-2.5 bg-surface-alt px-4 py-3 text-[13px]">
+      {textChanges.map((f) => (
+        <div key={f}>
+          <span className="text-muted">{FIELD_LABEL[f]}: </span>
+          <span className="text-muted line-through">{fieldText(before!, f)}</span> → {fieldText(after!, f)}
+        </div>
+      ))}
+      {workoutChanged && oldWorkout && <WorkoutPreview id={oldWorkout} label="Was" />}
+      {newWorkout && <WorkoutPreview id={newWorkout} label={workoutChanged ? 'Now' : undefined} />}
+      {!newWorkout && oldWorkout && !after && <WorkoutPreview id={oldWorkout} />}
+      {note && !textChanges.includes('coachNote') && <div className="text-muted">{note}</div>}
+      {after && !newWorkout && !oldWorkout && !note && !textChanges.length && (
+        <div className="text-muted">{after.meta ?? kindLabel(after)}</div>
+      )}
+    </div>
+  );
+}
+
+function ChangeRow({
+  change,
+  preview,
+  status,
+  busy,
+  onApply,
+  onSkip,
+}: {
+  change: CalendarChange;
+  preview: ChangePreview;
+  status: ProposalItemStatus;
+  busy: boolean;
+  onApply: () => void;
+  onSkip: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const session = preview.after ?? preview.before;
+  const removed = change.op === 'remove';
+  // No session means a card stored before snapshots existed: its title already says it all.
+  const sub = preview.missing
+    ? 'Session not found — this change will fail'
+    : !session
+      ? ''
+      : change.op === 'move'
+        ? `Moved from ${formatLongDay((preview.before ?? session).date)}`
+        : change.op === 'update'
+          ? changeSummary(preview) || 'Details only'
+          : change.op === 'add'
+            ? kindLabel(session)
+            : 'Removed from your calendar';
+  const expandable = !!session && !preview.missing;
+  return (
+    <div className={`border-b border-divider last:border-0 ${status === 'dismissed' ? 'opacity-50' : ''}`}>
+      <div className="flex items-center gap-3 px-4 py-2.5">
+        <button
+          type="button"
+          onClick={() => expandable && setOpen((o) => !o)}
+          aria-expanded={expandable ? open : undefined}
+          className="flex min-w-0 flex-auto items-center gap-3 border-0 bg-transparent p-0 text-left text-ink"
+        >
+          <span className="w-3 flex-none text-center font-mono text-muted" aria-label={change.op}>
+            {OP_MARK[change.op]}
+          </span>
+          <span className="w-14 flex-none font-mono text-xs text-muted">{session ? formatDayLabel(session.date) : '—'}</span>
+          <span className="w-[86px] flex-none">{session && <SessionTag type={session.type} tentative={session.tentative} />}</span>
+          <span className="min-w-0 flex-auto">
+            <span className={removed ? 'line-through' : ''}>{session?.title ?? describeFallback(change)}</span>
+            {sub && <span className={`block text-xs ${preview.missing ? 'text-danger' : 'text-muted'}`}>{sub}</span>}
+          </span>
+          <span className="w-[54px] flex-none text-right font-mono text-xs text-muted">{session ? durationText(session) : ''}</span>
+          {expandable && <ChevronDown className={`shrink-0 text-muted transition-transform ${open ? 'rotate-180' : ''}`} />}
+        </button>
+        {status === 'pending' && (
+          <button
+            type="button"
+            aria-label="Skip this change"
+            onClick={onSkip}
+            disabled={busy}
+            className="flex h-9 w-9 flex-none items-center justify-center rounded-lg border-0 bg-transparent text-muted"
+          >
+            <XIcon />
+          </button>
+        )}
+        <StatusButton status={status} label="Apply this change" busy={busy} onAdd={onApply} />
+      </div>
+      {open && <ChangeDetail preview={preview} />}
+    </div>
+  );
+}
+
+/** For proposals stored before "before" snapshots existed. */
+function describeFallback(change: CalendarChange): string {
+  switch (change.op) {
+    case 'add':
+      return change.event.title;
+    case 'move':
+      return `Move session to ${formatLongDay(change.toDate)}`;
+    case 'update':
+      return `Update session${change.patch.title ? `: ${change.patch.title}` : ''}`;
+    case 'remove':
+      return 'Remove session';
+  }
+}
+
+/** Opens the composer to ask the coach for a revised card. Provided by the chat page. */
+export const RequestChangesContext = createContext<((title: string) => void) | null>(null);
+
+function ChangesCard({ proposal, threadId }: { proposal: Extract<Proposal, { kind: 'calendar_changes' }>; threadId: string }) {
+  const { apply, dismiss } = useProposalMutations(threadId);
+  const requestChanges = useContext(RequestChangesContext);
+  const pending = proposal.itemStatus.some((s) => s === 'pending');
+  const busy = apply.isPending || dismiss.isPending;
+  const previews = proposal.items.map((change, i) => previewCalendarChange(change, proposal.before ? proposal.before[i] : undefined));
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-line px-4 py-3.5">
+        <div className="font-semibold">{proposal.title}</div>
+        {pending ? (
+          <div className="flex flex-wrap gap-2">
+            {requestChanges && (
+              <Button size="sm" variant="ghost" onClick={() => requestChanges(proposal.title)}>
+                Request changes
+              </Button>
+            )}
+            <Button size="sm" disabled={busy} onClick={() => dismiss.mutate({ id: proposal.id })}>
+              Dismiss
+            </Button>
+            <Button variant="primary" size="sm" disabled={busy} onClick={() => apply.mutate({ id: proposal.id })}>
+              Apply all
+            </Button>
+          </div>
+        ) : (
+          <span className="text-xs text-muted">
+            {proposal.itemStatus.some((s) => s === 'applied') ? 'Applied' : 'Dismissed'}
+          </span>
+        )}
+      </div>
+      {proposal.items.map((change, i) => (
+        <ChangeRow
+          key={i}
+          change={change}
+          preview={previews[i]!}
+          status={proposal.itemStatus[i] ?? 'pending'}
+          busy={busy}
+          onApply={() => apply.mutate({ id: proposal.id, indexes: [i] })}
+          onSkip={() => dismiss.mutate({ id: proposal.id, indexes: [i] })}
+        />
+      ))}
+      {apply.data?.failed.length ? (
+        <div className="px-4 pb-3">
+          <ErrorNote>{apply.data.failed.length} change(s) referred to sessions that no longer exist.</ErrorNote>
+        </div>
+      ) : null}
+      {(apply.error || dismiss.error) && (
+        <div className="px-4 pb-3">
+          <ErrorNote>{errorMessage(apply.error ?? dismiss.error)}</ErrorNote>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function ProfileUpdateCard({ proposal, threadId }: { proposal: Extract<Proposal, { kind: 'profile_update' }>; threadId: string }) {
+  const { apply, dismiss } = useProposalMutations(threadId);
+  const u = proposal.items[0]!;
+  const status = proposal.itemStatus[0];
+  const lines = [
+    u.ftpZwift && `FTP → ${u.ftpZwift} W`,
+    u.zwiftWeightKg && `Zwift weight → ${u.zwiftWeightKg} kg`,
+    ...(u.powerBests ?? []).map((b) => `${b.durationSec < 60 ? `${b.durationSec} s` : `${b.durationSec / 60} min`} best → ${b.watts} W`),
+  ].filter(Boolean);
+  return (
+    <Card className="flex flex-col gap-2 p-4">
+      <div className="font-semibold">Update your numbers?</div>
+      <ul className="m-0 pl-5 text-[13px]">
+        {lines.map((l) => (
+          <li key={l as string}>{l}</li>
+        ))}
+      </ul>
+      {u.reason && <div className="text-xs text-muted">{u.reason}</div>}
+      <div className="flex gap-2">
+        {status === 'pending' ? (
+          <>
+            <Button variant="primary" size="sm" disabled={apply.isPending} onClick={() => apply.mutate({ id: proposal.id })}>
+              Update profile
+            </Button>
+            <Button size="sm" disabled={dismiss.isPending} onClick={() => dismiss.mutate({ id: proposal.id })}>
+              Not now
+            </Button>
+          </>
+        ) : (
+          <span className="text-xs text-muted">{status === 'applied' ? 'Profile updated.' : 'Dismissed.'}</span>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+function GoalCard({ proposal, threadId }: { proposal: Extract<Proposal, { kind: 'goal' }>; threadId: string }) {
+  const { apply, dismiss } = useProposalMutations(threadId);
+  const g = proposal.items[0]!;
+  const status = proposal.itemStatus[0];
+  return (
+    <Card className="flex flex-col gap-2 p-4">
+      <div className="text-xs font-semibold tracking-[0.06em] text-muted uppercase">
+        {g.goalId ? 'Update goal' : 'New goal'} · {g.horizon === 'long' ? 'long term' : 'short term'}
+        {g.targetLabel ? ` · ${g.targetLabel}` : ''}
+      </div>
+      <div className="font-semibold">{g.title}</div>
+      {g.detail && <div className="text-[13px] text-muted">{g.detail}</div>}
+      {g.measure && g.target !== undefined && (
+        <div className="font-mono text-[13px]">
+          {describeMeasure(g.measure)} → {g.target} {measureUnit(g.measure)}
+        </div>
+      )}
+      <div className="flex gap-2">
+        {status === 'pending' ? (
+          <>
+            <Button variant="primary" size="sm" disabled={apply.isPending} onClick={() => apply.mutate({ id: proposal.id })}>
+              {g.goalId ? 'Update goal' : 'Add goal'}
+            </Button>
+            <Button size="sm" disabled={dismiss.isPending} onClick={() => dismiss.mutate({ id: proposal.id })}>
+              Not now
+            </Button>
+          </>
+        ) : (
+          <span className="text-xs text-muted">{status === 'applied' ? 'Saved to your goals.' : 'Dismissed.'}</span>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+export function ProposalBlock({ id, threadId, initial }: { id: string; threadId: string; initial?: Proposal | undefined }) {
+  const { data, error } = useProposal(id, initial);
+  if (error) return <ErrorNote>{errorMessage(error)}</ErrorNote>;
+  if (!data) return <Card className="h-24 animate-pulse">{null}</Card>;
+  switch (data.kind) {
+    case 'plan':
+      return <PlanCard proposal={data} threadId={threadId} />;
+    case 'calendar_changes':
+      return <ChangesCard proposal={data} threadId={threadId} />;
+    case 'profile_update':
+      return <ProfileUpdateCard proposal={data} threadId={threadId} />;
+    case 'goal':
+      return <GoalCard proposal={data} threadId={threadId} />;
+  }
+}
+
+/** Workout card: summary line, profile chart, Download .zwo, Schedule. */
+export function WorkoutCard({ workout }: { workout: Workout }) {
+  const { data: dashboard } = useDashboard();
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const ftp = dashboard?.snapshot.ftpZwift;
+  const { totalSec } = workoutMetrics(workout.segments);
+  return (
+    <Card className="flex flex-col gap-3 p-4">
+      <div className="flex flex-wrap justify-between gap-2">
+        <div className="min-w-0">
+          <div className="font-semibold">{workout.name}</div>
+          <div className="text-xs text-muted">
+            {describeMainSet(workout.segments)} · {formatWorkoutDuration(totalSec)}
+            {ftp ? ` · ${describeTargets(workout.segments, ftp)}` : ''}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => downloadZwo(workout.id).catch((e) => setDownloadError(errorMessage(e)))}
+          >
+            Download .zwo
+          </Button>
+          <ScheduleControl workout={workout} today={dashboard?.today} />
+        </div>
+      </div>
+      <ZoneChart segments={workout.segments} />
+      {workout.description && <div className="text-[13px] text-muted">{workout.description}</div>}
+      {downloadError && <ErrorNote>{downloadError}</ErrorNote>}
+    </Card>
+  );
+}
+
+export function WorkoutBlock({ id, initial }: { id: string; initial?: Workout | undefined }) {
+  const { data } = useWorkout(id, !initial);
+  const workout = initial ?? data;
+  if (!workout) return <Card className="h-28 animate-pulse">{null}</Card>;
+  return <WorkoutCard workout={workout} />;
+}
+
+export function MemoryChip({ block }: { block: Extract<UiBlock, { type: 'memory' }> }) {
+  const { deleteMemory, restoreMemory } = useProfileMutations();
+  const [undone, setUndone] = useState(false);
+  const undo = () => {
+    const m = block.action === 'remember' ? deleteMemory : restoreMemory;
+    m.mutate(block.memoryId, { onSuccess: () => setUndone(true) });
+  };
+  return (
+    <div className="flex items-center gap-2 self-start rounded-[10px] border border-accent-line bg-accent-tint px-3 py-2 text-[13px]">
+      <MemoryIcon className="shrink-0 text-accent-ink" />
+      <span>
+        {undone ? 'Undone: ' : block.action === 'remember' ? 'Saved to memory: ' : 'Forgot: '}
+        <span className="text-muted">{block.text}</span>
+      </span>
+      {!undone && (
+        <button type="button" onClick={undo} className="ml-1 border-0 bg-transparent p-0 text-[13px] text-accent-ink">
+          Undo
+        </button>
+      )}
+    </div>
+  );
+}
