@@ -454,3 +454,4 @@ export type { AuthExtension } from './auth';
 export type { AiUse, SpendGuard } from './lib/spend';
 export { JobRunner } from './jobs';
 export { serveSpa } from './lib/spa';
+export { loadEnv, webOrigins, type Env } from './lib/env';
