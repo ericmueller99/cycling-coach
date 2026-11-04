@@ -5,7 +5,7 @@ import {
   usageKey,
   type Loggable,
 } from '@cycling-coach/core';
-import type { Food, FoodLibrary, FoodLogEntry, FoodSource, Meal, Nutrients, Recipe } from '@cycling-coach/shared';
+import type { Food, FoodLibrary, FoodLogEntry, FoodSource, Meal, NutrientKey, Nutrients, Recipe } from '@cycling-coach/shared';
 
 /** Source tags: Label blue, Photo purple, CNF green, Meal/Recipe orange, Manual grey. */
 export const SOURCE_STYLE: Record<FoodSource | 'recipe' | 'meal', { label: string; bg: string; fg: string }> = {
@@ -86,3 +86,20 @@ export function fmtTime(t: string): string {
   const [h, m] = t.split(':').map(Number) as [number, number];
   return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
 }
+
+/** Canadian Nutrition Facts order. */
+export const NUTRIENT_ROWS: { key: NutrientKey; label: string; unit: string; sub?: boolean; required?: boolean }[] = [
+  { key: 'kcal', label: 'Calories', unit: 'kcal', required: true },
+  { key: 'fat', label: 'Fat', unit: 'g', required: true },
+  { key: 'satFat', label: 'Saturated', unit: 'g', sub: true },
+  { key: 'transFat', label: 'Trans', unit: 'g', sub: true },
+  { key: 'carbs', label: 'Carbohydrate', unit: 'g', required: true },
+  { key: 'fibre', label: 'Fibre', unit: 'g', sub: true },
+  { key: 'sugars', label: 'Sugars', unit: 'g', sub: true },
+  { key: 'protein', label: 'Protein', unit: 'g', required: true },
+  { key: 'cholesterolMg', label: 'Cholesterol', unit: 'mg' },
+  { key: 'sodiumMg', label: 'Sodium', unit: 'mg' },
+  { key: 'potassiumMg', label: 'Potassium', unit: 'mg' },
+  { key: 'calciumMg', label: 'Calcium', unit: 'mg' },
+  { key: 'ironMg', label: 'Iron', unit: 'mg' },
+];

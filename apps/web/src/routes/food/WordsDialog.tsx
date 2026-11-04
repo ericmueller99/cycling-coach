@@ -1,9 +1,9 @@
 import { formatLongDay, sumNutrients } from '@cycling-coach/core';
 import type { FoodLibrary, IsoDate, Nutrients } from '@cycling-coach/shared';
 import { useMutation } from '@tanstack/react-query';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { Dialog } from '../../components/Dialog';
-import { Button, ErrorNote, Spinner, inputCls } from '../../components/ui';
+import { Button, ErrorNote, Spinner, errorContent, inputCls } from '../../components/ui';
 import { fmtKcal, macroLine, nowTime } from '../../lib/food';
 import { useFoodMutations } from '../../lib/foodQueries';
 import { errorMessage } from '../../lib/queries';
@@ -39,7 +39,7 @@ export function WordsDialog({
   const [pickedTime, setTime] = useState<string | null>(null);
   const time = pickedTime ?? lib.settings.slots.find((x) => x.name === slot)?.time ?? nowTime();
   const [change, setChange] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ReactNode>(null);
   const [said, setSaid] = useState<string[]>([phrase]);
   const { find, addFood } = useFind(lib);
   const parse = useMutation({ mutationFn: (body: { phrase: string; draft?: Line[] }) => parseWords({ ...body, date: viewedDate, slot }) });
@@ -56,7 +56,7 @@ export function WordsDialog({
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    parse.mutate({ phrase }, { onSuccess: apply, onError: (e) => setError(errorMessage(e)) });
+    parse.mutate({ phrase }, { onSuccess: apply, onError: (e) => setError(errorContent(e)) });
   }, [parse, phrase]);
 
   const refine = () => {
@@ -69,7 +69,7 @@ export function WordsDialog({
           setSaid([...said, change.trim()]);
           setChange('');
         },
-        onError: (e) => setError(errorMessage(e)),
+        onError: (e) => setError(errorContent(e)),
       },
     );
   };

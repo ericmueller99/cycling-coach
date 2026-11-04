@@ -489,6 +489,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
       barcode: (userId, code) => foodAi.barcode(userId, code),
       imageUrls: (userId, id) => foodAi.imageUrls(userId, id),
       parse: (userId, input) => foodAi.parse(userId, input),
+      adjust: (userId, input) => foodAi.adjust(userId, input),
     },
 
     energy: {

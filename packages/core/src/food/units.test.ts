@@ -95,6 +95,8 @@ describe('formatting', () => {
   it('pluralises', () => {
     expect(formatPortion(2, 'cup')).toBe('2 cups');
     expect(formatPortion(1.5, 'bagel')).toBe('1½ bagels');
+    expect(formatPortion(1.5, 'sandwich')).toBe('1½ sandwiches');
+    expect(formatPortion(2, 'quiche')).toBe('2 quiches');
     expect(formatPortion(150, 'g')).toBe('150 g');
     expect(formatPortion(1, 'fl_oz')).toBe('1 fl oz');
   });

@@ -2,6 +2,7 @@ import {
   bodyScanInputSchema,
   bodyScanPatchSchema,
   energyPatchSchema,
+  foodAdjustInputSchema,
   foodInputSchema,
   foodLogBulkSchema,
   foodLogCopySchema,
@@ -19,6 +20,8 @@ import {
   stapleQuerySchema,
   stapleSources,
   type BarcodeLookup,
+  type FoodAdjustInput,
+  type FoodAdjustment,
   type FoodParseInput,
   type FoodParseResult,
   type PhotoReadInput,
@@ -96,6 +99,8 @@ export interface FoodServices {
   barcode(userId: string, code: string): Promise<BarcodeLookup | ServiceFailure>;
   /** "Log with words": a draft to confirm, matched to the user's foods. Nothing is logged. */
   parse(userId: string, input: FoodParseInput): Promise<FoodParseResult | ServiceFailure>;
+  /** "Adjust with AI": how much a food's values move. A proposal; nothing is saved. */
+  adjust(userId: string, input: FoodAdjustInput): Promise<FoodAdjustment | ServiceFailure>;
   /** Signed links to a food's stored photos. */
   imageUrls(userId: string, foodId: string): Promise<{ key: string; kind: string; url: string }[] | ServiceFailure>;
 }
@@ -120,6 +125,9 @@ const isFailure = (r: object): r is ServiceFailure => 'error' in r && 'status' i
 const notFound = { error: 'Not found' } as const;
 
 /** `/api/food/*` — mounted behind the auth guard. Chained, so the typed client sees every route. */
+/** The AI routes can be refused by the spend guard, and the refusal's way forward has to reach the app. */
+const refusal = ({ error, action }: ServiceFailure) => ({ error, ...(action ? { action } : {}) });
+
 export function foodRoutes(food: FoodServices) {
   return (
     new Hono<Vars>()
@@ -149,12 +157,16 @@ export function foodRoutes(food: FoodServices) {
         json(photoReadInputSchema),
         async (c) => {
           const r = await food.readPhoto(c.get('user')!.id, c.req.valid('json'));
-          return isFailure(r) ? c.json({ error: r.error }, r.status) : c.json(r);
+          return isFailure(r) ? c.json(refusal(r), r.status) : c.json(r);
         },
       )
       .post('/parse', json(foodParseInputSchema), async (c) => {
         const r = await food.parse(c.get('user')!.id, c.req.valid('json'));
-        return isFailure(r) ? c.json({ error: r.error }, r.status) : c.json(r);
+        return isFailure(r) ? c.json(refusal(r), r.status) : c.json(r);
+      })
+      .post('/adjust', json(foodAdjustInputSchema), async (c) => {
+        const r = await food.adjust(c.get('user')!.id, c.req.valid('json'));
+        return isFailure(r) ? c.json(refusal(r), r.status) : c.json(r);
       })
       .get('/barcode/:code', async (c) => {
         const r = await food.barcode(c.get('user')!.id, c.req.param('code'));

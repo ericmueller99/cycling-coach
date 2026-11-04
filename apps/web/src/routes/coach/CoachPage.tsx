@@ -12,7 +12,7 @@ import { useExtensions } from '../../extensions';
 import { api, unwrap } from '../../lib/api';
 import { useFoodLibrary } from '../../lib/foodQueries';
 import { modelName } from '../../lib/models';
-import { useDashboard, useThread, useThreads, useUsage } from '../../lib/queries';
+import { keys, useCoachCheck, useDashboard, useThread, useThreads, useUsage } from '../../lib/queries';
 import { abortTurn, clearDoneTurn, patchTurn, setWatching, startTurn, useLiveTurn, type LiveTurn, type TurnError as TurnErrorInfo, type TurnOrigin } from '../../lib/coachTurn';
 import { useIsMobile } from '../../lib/useIsMobile';
 import { MemoryChip, ProposalBlock, RequestChangesContext, TextBlock, ToolChip, WorkoutBlock } from './blocks';
@@ -83,6 +83,20 @@ function MessageRow({ message, view, cards }: { message: UiMessage; view: Thread
         <AssistantBlocks blocks={message.blocks} threadId={view?.thread.id ?? ''} cards={cards} />
         {message.model && <div className="font-mono text-[11px] text-muted">{modelName(message.model)}</div>}
       </div>
+    </div>
+  );
+}
+
+/** In place of the composer while the coach can't take a message, so nobody writes one only to be refused (DECISIONS #76). */
+function CoachLocked({ refusal }: { refusal: { message: string; action?: { label: string; href: string } | undefined } }) {
+  return (
+    <div role="status" className="flex flex-col items-start gap-3 rounded-[14px] border border-line bg-surface p-4 text-[14px]">
+      <p className="m-0">{refusal.message}</p>
+      {refusal.action && (
+        <a href={refusal.action.href} className="rounded-[10px] bg-accent px-4 py-2.5 font-semibold text-on-accent no-underline">
+          {refusal.action.label}
+        </a>
+      )}
     </div>
   );
 }
@@ -298,6 +312,12 @@ export function CoachPage({
   }, [threadId, loaded]);
 
   const streaming = !!live && !live.done;
+  // Fails open: a check that can't be read leaves the composer, and the server still refuses.
+  const blocked = useCoachCheck().data?.refused ?? null;
+  // A turn just spent money, which may have been the last of it.
+  useEffect(() => {
+    if (!streaming) void qc.invalidateQueries({ queryKey: keys.coachCheck });
+  }, [streaming, qc]);
   // "Make this" pressed: that card says "Writing recipe…" and the right column waits for the recipe.
   const makingKey = streaming && live?.origin?.kind === 'make' ? live.origin.ideaKey : undefined;
   const writingRecipe = !!makingKey && !live?.readyRecipe && !mobile;
@@ -462,7 +482,7 @@ export function CoachPage({
             </>
           )}
           {lateError && live && <TurnError error={lateError} onRetry={() => void send(live.userText)} />}
-          {refused && <TurnError error={refused} onRetry={() => {}} />}
+          {refused && !blocked && <TurnError error={refused} onRetry={() => {}} />}
         </div>
         </RequestChangesContext>
         </CoachFoodContext>
@@ -470,63 +490,69 @@ export function CoachPage({
         {/* Pinned above the tab bar on mobile, with the chips scrolling sideways. */}
         <div className="sticky bottom-0 mx-auto box-border flex w-full max-w-[860px] flex-col gap-2.5 bg-bg px-7 pt-2 pb-6 mobile:bottom-[calc(64px+env(safe-area-inset-bottom))] mobile:gap-2 mobile:border-t mobile:border-line mobile:px-3 mobile:pb-2.5">
           {CoachNotice && <CoachNotice />}
-          {isFood && <FoodStrip slot={foodSlot} date={foodDate} today={today} onChange={(slot, date) => setFoodPick({ slot, date })} />}
-          <div className="flex flex-wrap gap-2 mobile:scrollbar-none mobile:flex-nowrap mobile:gap-1.5 mobile:overflow-x-auto">
-            {buildModel && (
-              <button
-                type="button"
-                aria-pressed={forBuild}
-                title={`Send this one message to ${modelName(buildModel)}`}
-                onClick={() => setForBuild(!forBuild)}
-                className={`min-h-9 shrink-0 rounded-full border px-3 text-[13px] whitespace-nowrap mobile:min-h-[36px] ${
-                  forBuild ? 'border-accent bg-accent text-on-accent' : 'border-line-strong bg-surface text-ink'
-                }`}
-              >
-                Use {modelName(buildModel)}
-              </button>
-            )}
-            {quickPrompts.map((p) => (
-              <button
-                key={p}
-                type="button"
-                disabled={streaming}
-                onClick={() => void send(p)}
-                className="min-h-9 shrink-0 rounded-full border border-line-strong bg-surface px-3 text-[13px] whitespace-nowrap text-ink mobile:min-h-[36px]"
-              >
-                {p}
-              </button>
-            ))}
-          </div>
-          <div className="flex items-end gap-2.5 rounded-[14px] border border-[#CDD2DA] bg-surface py-2.5 pr-2.5 pl-4 mobile:gap-2 mobile:rounded-[22px] mobile:py-1.5 mobile:pr-1.5 mobile:pl-3.5">
-            <label htmlFor="msg" className="sr-only">
-              Message your coach
-            </label>
-            <textarea
-              ref={inputRef}
-              id="msg"
-              rows={mobile ? 1 : 2}
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={onKeyDown}
-              placeholder={mobile ? 'Message your coach' : "Ask your coach — e.g. I'm racing Wednesday after all, adjust the rest of the week"}
-              className="min-w-0 flex-auto resize-none border-0 bg-transparent py-1.5 text-ink outline-none"
-            />
-            {streaming ? (
-              <Button variant="ghost" className="h-11" onClick={() => abortTurn(threadId)}>
-                Stop
-              </Button>
-            ) : (
-              <button
-                type="button"
-                aria-label="Send"
-                disabled={!draft.trim()}
-                onClick={() => void send(draft)}
-                className="flex h-11 w-11 flex-none items-center justify-center rounded-[10px] border-0 bg-accent text-on-accent mobile:h-[40px] mobile:w-[40px] mobile:rounded-full"
-              >
-                {mobile ? <ArrowUpIcon /> : <SendIcon />}
-              </button>
-            )}
-          </div>
+          {blocked ? (
+            <CoachLocked refusal={blocked} />
+          ) : (
+            <>
+              {isFood && <FoodStrip slot={foodSlot} date={foodDate} today={today} onChange={(slot, date) => setFoodPick({ slot, date })} />}
+              <div className="flex flex-wrap gap-2 mobile:scrollbar-none mobile:flex-nowrap mobile:gap-1.5 mobile:overflow-x-auto">
+                {buildModel && (
+                  <button
+                    type="button"
+                    aria-pressed={forBuild}
+                    title={`Send this one message to ${modelName(buildModel)}`}
+                    onClick={() => setForBuild(!forBuild)}
+                    className={`min-h-9 shrink-0 rounded-full border px-3 text-[13px] whitespace-nowrap mobile:min-h-[36px] ${
+                      forBuild ? 'border-accent bg-accent text-on-accent' : 'border-line-strong bg-surface text-ink'
+                    }`}
+                  >
+                    Use {modelName(buildModel)}
+                  </button>
+                )}
+                {quickPrompts.map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    disabled={streaming}
+                    onClick={() => void send(p)}
+                    className="min-h-9 shrink-0 rounded-full border border-line-strong bg-surface px-3 text-[13px] whitespace-nowrap text-ink mobile:min-h-[36px]"
+                  >
+                    {p}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-end gap-2.5 rounded-[14px] border border-[#CDD2DA] bg-surface py-2.5 pr-2.5 pl-4 mobile:gap-2 mobile:rounded-[22px] mobile:py-1.5 mobile:pr-1.5 mobile:pl-3.5">
+                <label htmlFor="msg" className="sr-only">
+                  Message your coach
+                </label>
+                <textarea
+                  ref={inputRef}
+                  id="msg"
+                  rows={mobile ? 1 : 2}
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={onKeyDown}
+                  placeholder={mobile ? 'Message your coach' : "Ask your coach — e.g. I'm racing Wednesday after all, adjust the rest of the week"}
+                  className="min-w-0 flex-auto resize-none border-0 bg-transparent py-1.5 text-ink outline-none"
+                />
+                {streaming ? (
+                  <Button variant="ghost" className="h-11" onClick={() => abortTurn(threadId)}>
+                    Stop
+                  </Button>
+                ) : (
+                  <button
+                    type="button"
+                    aria-label="Send"
+                    disabled={!draft.trim()}
+                    onClick={() => void send(draft)}
+                    className="flex h-11 w-11 flex-none items-center justify-center rounded-[10px] border-0 bg-accent text-on-accent mobile:h-[40px] mobile:w-[40px] mobile:rounded-full"
+                  >
+                    {mobile ? <ArrowUpIcon /> : <SendIcon />}
+                  </button>
+                )}
+              </div>
+            </>
+          )}
         </div>
       </section>
       <CoachFoodContext value={foodActions}>

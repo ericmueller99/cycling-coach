@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { nutritionReadingSchema, phraseParseSchema, type NutritionReading, type PhotoReadInput, type PhraseParse } from '@cycling-coach/shared';
+import { foodAdjustmentSchema, nutritionReadingSchema, phraseParseSchema, type FoodAdjustInput, type FoodAdjustment, type NutritionReading, type PhotoReadInput, type PhraseParse } from '@cycling-coach/shared';
 import { z } from 'zod';
 import type { CallUsage } from './engine';
 import { priceUsage } from './pricing';
@@ -29,10 +29,23 @@ Report the values for ONE serving exactly as the source defines it — not per 1
 - "Calories" is kcal. If energy is only given in kJ, convert it (kJ ÷ 4.184) and mark it low confidence.
 - Fat, saturated, trans, carbohydrate, fibre, sugars and protein are grams; cholesterol, sodium, potassium, calcium and iron are milligrams. When only a % Daily Value is printed for a nutrient, use null — don't convert percentages.
 - A nutrient that isn't shown is null with high confidence. Use low confidence when a digit is blurry, cut off, glared, or you had to infer it.
-- servingMeasures lists everything the serving is stated to equal, with each amount as a number: "3/4 cup (175 g)" is 0.75 cup and 175 g; "1 bar (40 g)" is 1 bar and 40 g; a grande drink is 1 grande (add its ml if shown).
+- servingMeasures lists everything the serving is stated to equal, with each amount as a number: "3/4 cup (175 g)" is 0.75 cup and 175 g; "1 bar (40 g)" is 1 bar and 40 g; a grande drink is 1 grande (add its ml if shown); a single item with no weight shown, like a coffee-shop sandwich, is 1 sandwich.
 - name is short and specific, the way someone would find it in their own food list. brand only when visible.
 - imageType says what the photo is: a nutrition label or packaging, an app or website screenshot, or something else.
 - found is false when there is no calorie or nutrition information in the image; then return null values.`;
+
+const ADJUST_SYSTEM = `You help someone correct a food's nutrition values for their personal food log in Canada, before they save it. The values came from a label or an app screen and describe the standard item. They tell you how theirs was different: "no whipped cream", "oat milk instead", "extra shot".
+
+Work out how much that changes ONE serving, from what you know of typical ingredients and portions. These are estimates, never official figures, and the reply says so.
+
+- changes lists only the nutrients that move, as a delta: negative for less, positive for more. Never give the new total; the app does the sums. Only use nutrients that have a value in the current list.
+- Cover every listed nutrient the change really affects, and keep them consistent: saturated and trans fat are part of fat, sugars and fibre are part of carbohydrate, and the calories should fit the macros (9 per gram of fat, 4 per gram of carbohydrate or protein).
+- The current values already include anything marked as applied. A change marked as not applied isn't in them. Never repeat a change unless they ask for more.
+- reply is two or three plain sentences: what you assumed, and about how much it changes. If one missing detail would really change the estimate, ask that one question instead and leave changes empty.
+- If you can't estimate it, or it isn't about this food, say so and leave changes empty. Never invent numbers.
+- A different amount of the same food ("I only had half") isn't a change to the food. Leave changes empty and say to set the portion when logging it.
+- name is the food's name with the change in it, kept short, only when changes isn't empty; otherwise empty.
+- note is one short line for the food's notes, like "No whipped cream: about 80 kcal less (estimate)", only when changes isn't empty; otherwise empty.`;
 
 const PARSE_SYSTEM = `You turn a short food-logging phrase into items from the person's own food list, for their food log.
 
@@ -181,6 +194,31 @@ export class FoodAi {
       schema: ingredientMatchSchema,
       effort: 'low',
       maxTokens: 6000,
+    });
+  }
+
+  /**
+   * "No whipped cream" → how much a food's values move. Text only: the form already holds what the
+   * photo said. The caller shows it as a proposal; nothing applies until the user says so.
+   */
+  adjustFood(input: FoodAdjustInput): Promise<FoodAiResult<FoodAdjustment>> {
+    const { food, turns, message } = input;
+    const lines = [
+      `Food: ${food.name}${food.brand ? ` (${food.brand})` : ''}`,
+      ...(food.servingLabel ? [`One serving: ${food.servingLabel}`] : []),
+      ...(food.notes ? [`Notes: ${food.notes}`] : []),
+      `Current values per serving:\n${Object.entries(food.nutrients)
+        .map(([k, v]) => `- ${k}: ${v}`)
+        .join('\n')}`,
+      ...(turns.length ? [`Conversation so far:\n${turns.map((t) => `${t.role === 'user' ? 'They said' : 'You said'}: ${t.text}`).join('\n')}`] : []),
+      `They say: ${message}`,
+    ];
+    return this.structured({
+      system: ADJUST_SYSTEM,
+      content: [{ type: 'text', text: lines.join('\n\n') }],
+      schema: foodAdjustmentSchema,
+      effort: 'medium',
+      maxTokens: 4000,
     });
   }
 

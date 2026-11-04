@@ -2,7 +2,9 @@ import {
   canonicalUnit,
   computePortion,
   duplicateMeasureUnits,
+  isStandardUnit,
   MASS_UNITS,
+  measureFromServingLabel,
   roundTo,
   unitsFor,
   VOLUME_UNITS,
@@ -22,27 +24,11 @@ import {
 import { useId, useMemo, useState, type ReactNode } from 'react';
 import { Dialog } from '../../components/Dialog';
 import { TrashIcon, XIcon } from '../../components/icons';
-import { Button, ErrorNote, Field, inputCls } from '../../components/ui';
-import { fmtKcal, SOURCE_LINE } from '../../lib/food';
+import { Button, ErrorNote, Field, inputCls, Segmented } from '../../components/ui';
+import { fmtKcal, NUTRIENT_ROWS, SOURCE_LINE } from '../../lib/food';
 import { useFoodImages, useFoodMutations } from '../../lib/foodQueries';
 import { errorMessage } from '../../lib/queries';
-
-/** Canadian Nutrition Facts order. */
-const NUTRIENT_ROWS: { key: NutrientKey; label: string; unit: string; sub?: boolean; required?: boolean }[] = [
-  { key: 'kcal', label: 'Calories', unit: 'kcal', required: true },
-  { key: 'fat', label: 'Fat', unit: 'g', required: true },
-  { key: 'satFat', label: 'Saturated', unit: 'g', sub: true },
-  { key: 'transFat', label: 'Trans', unit: 'g', sub: true },
-  { key: 'carbs', label: 'Carbohydrate', unit: 'g', required: true },
-  { key: 'fibre', label: 'Fibre', unit: 'g', sub: true },
-  { key: 'sugars', label: 'Sugars', unit: 'g', sub: true },
-  { key: 'protein', label: 'Protein', unit: 'g', required: true },
-  { key: 'cholesterolMg', label: 'Cholesterol', unit: 'mg' },
-  { key: 'sodiumMg', label: 'Sodium', unit: 'mg' },
-  { key: 'potassiumMg', label: 'Potassium', unit: 'mg' },
-  { key: 'calciumMg', label: 'Calcium', unit: 'mg' },
-  { key: 'ironMg', label: 'Iron', unit: 'mg' },
-];
+import { AdjustWithAi, withAdjustment } from './AdjustWithAi';
 
 const UNIT_SUGGESTIONS = [...MASS_UNITS, ...VOLUME_UNITS.filter((u) => u !== 'fl_oz'), 'piece', 'slice', 'bar', 'scoop', 'bottle', 'can', 'packet'];
 
@@ -118,14 +104,16 @@ export function draftFromReading(r: NutritionReading, kind: PhotoKind, images: F
     if (v.confidence === 'low') flags.add(k);
   }
   const measures = r.servingMeasures.filter((m) => m.amount > 0 && m.unit.trim()).map((m) => ({ unit: canonicalUnit(m.unit), amount: str(m.amount) }));
+  const servingLabel = r.servingText.replace(/^(per|pour)\s+/i, '').trim();
+  const fromLabel = measureFromServingLabel(servingLabel);
   const code = r.barcode.replace(/\D/g, '') || barcode || '';
   if (!code) flags.add('barcode');
   return {
     draft: {
       ...emptyDraft(r.name),
       brand: r.brand,
-      servingLabel: r.servingText.replace(/^(per|pour)\s+/i, '').trim(),
-      measures: measures.length ? measures : [{ unit: 'g', amount: '' }],
+      servingLabel,
+      measures: measures.length ? measures : fromLabel ? [{ unit: fromLabel.unit, amount: str(fromLabel.amount) }] : [{ unit: 'g', amount: '' }],
       nutrients,
       aliases: r.aliases.join(', '),
       barcodes: code,
@@ -155,12 +143,14 @@ export function draftToInput(d: FoodDraft): { input: FoodInput } | { error: stri
   if (!d.name.trim()) return { error: 'Give it a name.' };
   const measures = [];
   for (const m of d.measures) {
-    if (!m.unit.trim() && !m.amount.trim()) continue;
+    // An untouched row (the form starts on a blank "g") isn't a serving size. A typed label unit is.
+    if (!m.amount.trim() && (!m.unit.trim() || isStandardUnit(canonicalUnit(m.unit)))) continue;
     const amount = num(m.amount);
     if (!m.unit.trim() || amount == null || !(amount > 0)) return { error: 'Each serving size needs an amount and a unit.' };
     measures.push({ unit: canonicalUnit(m.unit), amount });
   }
-  if (!measures.length) return { error: 'Add at least one serving size (e.g. 85 g).' };
+  // Not everything has a weight: "1 sandwich" is the serving, and failing that it's just one serving.
+  if (!measures.length) measures.push(measureFromServingLabel(d.servingLabel) ?? { unit: 'serving', amount: 1 });
   const dups = duplicateMeasureUnits(measures);
   if (dups.length) return { error: `Two serving sizes use ${dups.join(', ')}.` };
   const nutrients: Partial<Nutrients> = {};
@@ -285,7 +275,7 @@ export function FoodForm({
           <input id={`${id}-sl`} value={draft.servingLabel} placeholder="3/4 cup (175 g)" onChange={(e) => set('servingLabel', e.target.value)} className={`${inputCls} ${flagCls('servingLabel')}`} />
         </Field>
         <div className="flex flex-col gap-1.5">
-          <div className="text-xs text-muted">Everything one serving equals — weight, volume, pieces. Add as many as the label shows.</div>
+          <div className="text-xs text-muted">Everything one serving equals — weight, volume, pieces. Add as many as the label shows. No weight on the label? Leave it blank.</div>
           {draft.measures.map((m, i) => (
             <div key={i} className="flex items-center gap-2">
               <span className="w-20 flex-none text-[13px] whitespace-nowrap text-muted">{i === 0 ? '1 serving =' : 'or ='}</span>
@@ -426,9 +416,13 @@ export function FoodFormDialog({
 }) {
   const m = useFoodMutations();
   const [draft, setDraft] = useState(initial);
+  const [checks, setChecks] = useState<ReadonlySet<string> | undefined>(flags);
+  const [tab, setTab] = useState<'details' | 'ai'>('details');
   const [error, setError] = useState<string | null>(null);
   const [confirmArchive, setConfirmArchive] = useState(false);
   const busy = m.createFood.isPending || m.updateFood.isPending;
+  // Something has to be there to adjust. Stays once open, so clearing the value doesn't drop the tab.
+  const canAdjust = !!draft.nutrients.kcal?.trim() || tab === 'ai';
 
   const save = (log: boolean) => {
     const parsed = draftToInput(draft);
@@ -449,7 +443,24 @@ export function FoodFormDialog({
       width={760}
       tall
       onClose={onClose}
-      header={editing ? <div className="text-xs text-muted">{SOURCE_LINE[editing.source]}</div> : undefined}
+      header={
+        editing || canAdjust ? (
+          <div className="flex flex-col gap-2">
+            {editing && <div className="text-xs text-muted">{SOURCE_LINE[editing.source]}</div>}
+            {canAdjust && (
+              <Segmented
+                label="Edit by hand or with AI"
+                value={tab}
+                onChange={setTab}
+                options={[
+                  { key: 'details', label: 'Details' },
+                  { key: 'ai', label: 'Adjust with AI' },
+                ]}
+              />
+            )}
+          </div>
+        ) : undefined
+      }
       footer={
         <div className="flex flex-col gap-2">
           {error && <ErrorNote>{error}</ErrorNote>}
@@ -490,7 +501,20 @@ export function FoodFormDialog({
     >
       {banner}
       {editing && <FoodPhotos food={editing} />}
-      <FoodForm draft={draft} onChange={setDraft} flags={flags} />
+      {/* Both stay mounted, so switching tabs keeps the conversation and anything half typed. */}
+      <div hidden={tab !== 'details'}>
+        <FoodForm draft={draft} onChange={setDraft} flags={checks} />
+      </div>
+      <div hidden={tab !== 'ai'}>
+        <AdjustWithAi
+          draft={draft}
+          onApply={(adjustment) => {
+            const next = withAdjustment(draft, adjustment);
+            setDraft(next.draft);
+            setChecks(new Set([...(checks ?? []), ...next.changed]));
+          }}
+        />
+      </div>
     </Dialog>
   );
 }

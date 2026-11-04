@@ -1,5 +1,7 @@
 import type { SessionType } from '@cycling-coach/shared';
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import { ApiError } from '../lib/api';
+import { errorMessage } from '../lib/queries';
 import { SESSION_STYLE, TENTATIVE } from '../lib/session';
 
 type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'neutral' | 'danger';
@@ -99,6 +101,19 @@ export function PageHeader({ title, subtitle, children }: { title: ReactNode; su
 
 export function ErrorNote({ children }: { children: ReactNode }) {
   return <div className="rounded-[10px] border border-[#F3C4C0] bg-[#FEF3F2] px-3 py-2 text-[13px] text-danger">{children}</div>;
+}
+
+/** A failed request's message, with the way forward when the server gave one (a refusal from the spend guard). */
+export function errorContent(err: unknown): ReactNode {
+  if (!(err instanceof ApiError) || !err.action) return errorMessage(err);
+  return (
+    <>
+      {err.message}{' '}
+      <a href={err.action.href} className="font-semibold text-inherit">
+        {err.action.label}
+      </a>
+    </>
+  );
 }
 
 export function Spinner({ label = 'Loading…' }: { label?: string }) {

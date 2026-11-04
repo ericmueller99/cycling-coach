@@ -96,13 +96,15 @@ function FoodDetail({ food, lib, today, flows, slot, onDeleted }: { food: Food; 
 
       <Section title="Serving sizes">
         <div className="text-[13px]">
-          One serving{food.servingLabel ? ` (${food.servingLabel})` : ''} ={' '}
-          {food.measures.map((x, i) => (
-            <span key={`${x.unit}-${i}`}>
-              {i > 0 && ' = '}
-              <span className="font-mono">{formatPortion(x.amount, x.unit)}</span>
-            </span>
-          ))}
+          One serving{food.servingLabel ? ` (${food.servingLabel})` : ''}
+          {food.measures
+            .filter((x) => x.unit !== 'serving')
+            .map((x, i) => (
+              <span key={`${x.unit}-${i}`}>
+                {' = '}
+                <span className="font-mono">{formatPortion(x.amount, x.unit)}</span>
+              </span>
+            ))}
         </div>
         <div className="text-xs text-muted">Default portion: {formatPortion(food.defaultPortion.quantity, food.defaultPortion.unit)}</div>
       </Section>

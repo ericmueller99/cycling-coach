@@ -1,5 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk';
-import { nutritionReadingSchema, phraseParseSchema, type NutritionReading } from '@cycling-coach/shared';
+import { foodAdjustmentSchema, nutritionReadingSchema, phraseParseSchema, type NutritionReading } from '@cycling-coach/shared';
 import { describe, expect, it } from 'vitest';
 import { FoodAi, jsonFormat } from './food';
 
@@ -58,6 +58,7 @@ describe('FoodAi.readNutrition', () => {
           Object.values(s as Record<string, unknown>).reduce<number>((n, v) => n + count(v), 0);
     expect(count(jsonFormat(nutritionReadingSchema).schema)).toBeLessThanOrEqual(16);
     expect(count(jsonFormat(phraseParseSchema).schema)).toBeLessThanOrEqual(16);
+    expect(count(jsonFormat(foodAdjustmentSchema).schema)).toBeLessThanOrEqual(16);
   });
 
   it('sends the images with a strict JSON schema to the small model', async () => {
@@ -114,5 +115,24 @@ describe('FoodAi.parsePhrase', () => {
     expect(call.system[1]).toMatchObject({ text: expect.stringContaining('f1 | Blueberry bagel | bagel | bagel, g | 1 bagel'), cache_control: { type: 'ephemeral' } });
     expect(call.output_config.effort).toBe('low');
     expect(call.messages[0]!.content[0]!.text).toContain('Current list:\n- f1 | "bagel" | 1 bagel\n\nChange: make it half a bagel');
+  });
+});
+
+describe('FoodAi.adjustFood', () => {
+  const answer = { reply: 'Whipped cream is about 80 kcal (an estimate).', changes: [{ nutrient: 'kcal', delta: -80 }], name: 'Mocha, no whip', note: 'No whip: about 80 kcal less (estimate)' };
+  const food = { name: 'Mocha', brand: 'Starbucks', servingLabel: 'Grande 473 ml', nutrients: { kcal: 370, fat: 15 } };
+
+  it('sends the current values and the conversation, and returns the checked answer', async () => {
+    const { client, calls } = fake({ content: [{ type: 'text', text: JSON.stringify(answer) }], stop_reason: 'end_turn' });
+    const res = await new FoodAi({ apiKey: 'x' }, client).adjustFood({ food, turns: [{ role: 'user', text: 'no drizzle' }, { role: 'assistant', text: 'About 15 kcal less.' }], message: 'no whipped cream' });
+    expect(res).toMatchObject({ ok: true, value: answer });
+    const text = JSON.stringify(calls[0]!['messages']);
+    for (const part of ['Mocha (Starbucks)', 'Grande 473 ml', 'kcal: 370', 'They said: no drizzle', 'You said: About 15 kcal less.', 'They say: no whipped cream']) expect(text).toContain(part);
+    expect(text).not.toContain('"image"');
+  });
+
+  it('turns down a nutrient the app does not have', async () => {
+    const { client } = fake({ content: [{ type: 'text', text: JSON.stringify({ ...answer, changes: [{ nutrient: 'caffeine', delta: -1 }] }) }], stop_reason: 'end_turn' });
+    expect((await new FoodAi({ apiKey: 'x' }, client).adjustFood({ food, turns: [], message: 'no whip' })).ok).toBe(false);
   });
 });

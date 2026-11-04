@@ -598,6 +598,38 @@ export const photoReadInputSchema = z.object({
 });
 export type PhotoReadInput = z.infer<typeof photoReadInputSchema>;
 
+// ── Adjusting a food with AI ──────────────────────────────────────────────
+
+/**
+ * What the small model proposes when told how a food differs from its label ("no whipped cream").
+ * Changes are deltas: `core.applyNutrientChanges` does the sums on whatever the form holds at the
+ * time, and nothing happens until the user applies them.
+ */
+export const foodAdjustmentSchema = z.object({
+  reply: z.string().describe('Two or three plain sentences: what was assumed and about how much it changes. Or one question, with no changes.'),
+  changes: z
+    .array(z.object({ nutrient: z.enum(nutrientKeys), delta: z.number().describe('Negative for less, positive for more. Never the new total.') }))
+    .describe('Only the nutrients that move, per ONE serving; empty when asking a question or unable to estimate.'),
+  name: z.string().describe('The name with the change in it, e.g. "Caffè mocha, grande, no whip"; empty when nothing changes.'),
+  note: z.string().describe('One short line for the notes, e.g. "No whipped cream: about 80 kcal less (estimate)"; empty when nothing changes.'),
+});
+export type FoodAdjustment = z.infer<typeof foodAdjustmentSchema>;
+
+export const foodAdjustInputSchema = z.object({
+  /** The form as it stands, saved or not: the model works from these values, not the photo. */
+  food: z.object({
+    name: z.string().trim().max(200),
+    brand: z.string().trim().max(200).optional(),
+    servingLabel: z.string().trim().max(200).optional(),
+    notes: z.string().trim().max(2000).optional(),
+    nutrients: nutrientsSchema.partial(),
+  }),
+  /** The conversation so far. It lives in the dialog and isn't stored. */
+  turns: z.array(z.object({ role: z.enum(['user', 'assistant']), text: z.string().max(2000) })).max(12),
+  message: z.string().trim().min(2).max(500),
+});
+export type FoodAdjustInput = z.infer<typeof foodAdjustInputSchema>;
+
 export interface PhotoReadResult {
   reading: NutritionReading;
   /** The photos as stored (S3), to attach to the food when it's saved. Empty when storage is off. */

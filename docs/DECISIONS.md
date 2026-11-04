@@ -1589,3 +1589,56 @@ permanent. A faster poll simply runs first, so a 15-minute install sees no chang
 **Rejected.**
 - *Retrying a push on its own timer*: a second retry path beside the delta, which already re-pushes.
 - *A shorter retry*: a permanent failure, such as a deleted library workout, would repeat at that pace forever.
+
+## 76. The coach says it can't reply before anyone writes to it (Nov 4)
+
+**Decision.** The Coach page reads `/coach/check` on load and after each turn. When the spend guard refuses, its message and action
+replace the composer and quick prompts. Past conversations stay readable. Food's AI dialogs show a refusal's action too, through
+`errorContent` in `components/ui`. The food routes dropped `action` on the way out, so `/food/parse` and `/food/photo` now pass it on.
+
+**Why.** A deployment can refuse AI for reasons that last, such as a plan ending (#57, #67). The composer stayed open, so people wrote
+a message only to have it handed back. Self-hosted installs never refuse, so nothing changes for them.
+
+The check fails open: if it can't be read the composer stays, and the server still refuses.
+
+**Rejected.**
+- *A new extension slot for the lock*: the guard's refusal already carries the words and the link, and it's generic.
+- *Hiding the AI buttons on the food pages*: people wouldn't know the feature exists, and a refusal with a link says why.
+
+## 77. A serving doesn't need a weight (Nov 4)
+
+**2026-11-04** · A food can be saved with no weight or volume. Coffee-shop apps print "1 sandwich" and nothing else, so the form's
+blank `g` row made those foods impossible to save without inventing a number.
+
+- An untouched row (blank amount, blank or standard unit) no longer counts as a serving size. A label unit with no amount
+  ("sandwich", blank) is still an error, because the user started typing it.
+- With no rows left, the measure comes from the printed serving (`core.measureFromServingLabel`: "1 sandwich" → 1 sandwich), and
+  failing that it's `1 serving`. A photo reading with no `servingMeasures` fills the row the same way, so it can be checked.
+- The model didn't change (#33): a count is already a measure and `grams` was already optional. No migration. Such a food logs
+  in servings or its own unit only, until the user adds a weight.
+
+**Rejected.**
+- *Letting `measures` be empty*: every reader would need a case for it, and `serving` already resolves.
+- *Estimating a weight*: a made-up number would flow into logs and recipes as if it were measured.
+
+## 78. Adjust a food with AI before saving it (Nov 4)
+
+**2026-11-04** · A label gives the standard item, and people's orders differ: a mocha with no whipped cream. The food dialog now has
+an **Adjust with AI** tab beside Details, whenever the form has a calorie value. The user says what was different, the small model
+proposes a change, and **Apply** puts it on the form. Nothing is saved until Save, as in #33 and #34.
+
+- **The model gives deltas, code does the sums.** `core.applyNutrientChanges` applies them to the form as it stands, so a value
+  edited after the proposal is kept and two proposals can stack. Nothing goes below 0, and a blank nutrient stays blank.
+- **Applied values are estimates and look like it.** They go amber with the "check" tag, the name takes the change, and a line goes in
+  Notes. The prompt says to call them estimates and never official figures.
+- **The chat isn't stored.** Turns live in the dialog and each send carries them, like refining in "Log with AI". Assistant turns say
+  whether their proposal was applied, because the model only sees current values.
+- **Text only, on the `small` route.** The form already holds what the photo said, so no image is resent. A turn cost about $0.0006 on
+  Haiku. It has its own `ai_calls` purpose and `AiUse`, `food_adjust`.
+- **A portion isn't an adjustment.** "I only had half" gets a reply saying to set it when logging, and no change.
+
+**Rejected.**
+- *The model returning new totals*: it would overwrite a manual edit, and the arithmetic belongs in code.
+- *Applying straight to the form*: an estimate would replace a label value without a look (rule 5).
+- *Resending the photo*: costs far more per turn and adds nothing the form doesn't hold.
+- *Using the coach thread*: heavier and far dearer for a one-food question, and it would leave a thread behind.

@@ -52,6 +52,15 @@ export function parsePortionLabel(label: string): ParsedPortion | null {
   return { quantity, unit: canonicalUnit(rest), isMass: false };
 }
 
+/**
+ * What a printed serving says it equals, for a food with no measures of its own: "1 sandwich" → 1
+ * sandwich, "175 g" → 175 g. Null with no leading number ("grande") or a unit too long to store.
+ */
+export function measureFromServingLabel(label: string): Measure | null {
+  const parsed = parsePortionLabel(label.replace(/^(per|pour)\s+/i, ''));
+  return parsed && parsed.unit.length <= 30 ? { unit: parsed.unit, amount: parsed.quantity } : null;
+}
+
 /** The best everyday default among the portions: a "medium"/"large" piece, then any single piece, else 100 g. */
 export function defaultPortionIndex(portions: readonly { label: string }[]): number {
   const parsed = portions.map((p) => parsePortionLabel(p.label));

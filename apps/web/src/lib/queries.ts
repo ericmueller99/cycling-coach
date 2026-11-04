@@ -21,6 +21,7 @@ import { api, ApiError, unwrap, updateName } from './api';
 
 export const keys = {
   me: ['me'] as const,
+  coachCheck: ['coach', 'check'] as const,
   authConfig: ['auth-config'] as const,
   onboarding: ['onboarding'] as const,
   dashboard: ['dashboard'] as const,
@@ -502,6 +503,11 @@ export function useAddEventToCalendar() {
       void qc.invalidateQueries({ queryKey: ['events'] });
     },
   });
+}
+
+/** Whether the coach can take a message right now, and if not, what to say instead (DECISIONS #76). */
+export function useCoachCheck() {
+  return useQuery({ queryKey: keys.coachCheck, queryFn: async () => unwrap(await api.api.coach.check.$get()) });
 }
 
 export function errorMessage(err: unknown): string {

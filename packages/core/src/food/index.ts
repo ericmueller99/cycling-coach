@@ -1,3 +1,4 @@
+export * from './adjust';
 export * from './barcode';
 export * from './energy';
 export * from './nutrients';

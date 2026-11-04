@@ -438,7 +438,7 @@ export interface AiCallDoc {
   _id?: ObjectId;
   userId: string;
   threadId?: ObjectId;
-  purpose: 'coach' | 'title' | 'food_parse' | 'food_vision' | 'food_match';
+  purpose: 'coach' | 'title' | 'food_parse' | 'food_vision' | 'food_match' | 'food_adjust';
   model: string;
   inputTokens: number;
   outputTokens: number;

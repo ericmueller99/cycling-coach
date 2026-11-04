@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { CallUsage, FoodAi } from '@cycling-coach/coach';
 import { buildCatalog, formatLongDay, normalizeBarcode, resolveWords } from '@cycling-coach/core';
 import { findFoodByBarcode, getFood, recordAiCall, type Collections } from '@cycling-coach/db';
-import type { BarcodeLookup, FoodImageRef, FoodLibrary, FoodParseInput, FoodParseResult, PhotoReadInput, PhotoReadResult } from '@cycling-coach/shared';
+import type { BarcodeLookup, FoodAdjustInput, FoodAdjustment, FoodImageRef, FoodLibrary, FoodParseInput, FoodParseResult, PhotoReadInput, PhotoReadResult } from '@cycling-coach/shared';
 import type { ServiceFailure as Failure } from '../app';
 import { OpenFoodFactsError, type OpenFoodFacts } from '../providers/openfoodfacts';
 import { userImagePrefix, type PhotoStore } from '../providers/storage/s3';
@@ -63,7 +63,17 @@ export class FoodAiService {
     return resolveWords(result.value, refs, lib, { viewedDate: input.date, slot: input.slot });
   }
 
-  private async record(userId: string, purpose: 'food_vision' | 'food_parse', u: CallUsage | undefined) {
+  /** "No whipped cream" → how much the form's values move. A proposal: the form applies it, or doesn't. */
+  async adjust(userId: string, input: FoodAdjustInput): Promise<FoodAdjustment | Failure> {
+    if (!this.ai) return { error: 'Adjusting with AI needs CLAUDE_API_KEY on the server. Change the values by hand instead.', status: 503 };
+    const decision = await this.spendGuard(userId, 'food_adjust');
+    if (!decision.allow) return refusal(decision);
+    const result = await this.ai.adjustFood(input);
+    await this.record(userId, 'food_adjust', result.usage);
+    return result.ok ? result.value : { error: result.error, status: 502 };
+  }
+
+  private async record(userId: string, purpose: 'food_vision' | 'food_parse' | 'food_adjust', u: CallUsage | undefined) {
     if (!u) return;
     await recordAiCall(this.c, {
       userId,

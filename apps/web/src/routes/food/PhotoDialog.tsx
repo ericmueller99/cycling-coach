@@ -1,8 +1,8 @@
 import type { FoodImageRef, NutritionReading } from '@cycling-coach/shared';
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { Dialog } from '../../components/Dialog';
 import { CameraIcon, XIcon } from '../../components/icons';
-import { Button, ErrorNote } from '../../components/ui';
+import { Button, ErrorNote, errorContent } from '../../components/ui';
 import { useReadPhoto } from '../../lib/foodQueries';
 import { preparePhoto, type PreparedPhoto } from '../../lib/photo';
 import { errorMessage } from '../../lib/queries';
@@ -19,7 +19,7 @@ export interface PhotoRead {
  */
 export function usePhotoCapture({ onRead }: { onRead: (r: PhotoRead) => void }) {
   const [photos, setPhotos] = useState<PreparedPhoto[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ReactNode>(null);
   const [preparing, setPreparing] = useState(false);
   const mutation = useReadPhoto();
 
@@ -51,7 +51,7 @@ export function usePhotoCapture({ onRead }: { onRead: (r: PhotoRead) => void }) 
           if (!r.reading.found) return setError('No calorie information found in that photo. Try a clearer shot of the label, or enter it by hand.');
           onRead({ reading: r.reading, images: r.images, previews: photos.map((p) => p.preview) });
         },
-        onError: (e) => setError(errorMessage(e)),
+        onError: (e) => setError(errorContent(e)),
       },
     );
   };

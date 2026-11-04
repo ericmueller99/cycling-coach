@@ -2,6 +2,7 @@ import type {
   BodyScanInput,
   BodyScanPatch,
   EnergyPatch,
+  FoodAdjustInput,
   FoodInput,
   FoodLogInput,
   FoodLogPatch,
@@ -146,6 +147,11 @@ export function useFoodMutations() {
 /** Read a label / screenshot with the small model (nothing is saved — the result is reviewed). */
 export function useReadPhoto() {
   return useMutation({ mutationFn: async (input: PhotoReadInput) => unwrap(await api.api.food.photo.$post({ json: input })) });
+}
+
+/** Ask how much a food's values move (nothing is saved — the form applies the answer, or doesn't). */
+export function useAdjustFood() {
+  return useMutation({ mutationFn: async (input: FoodAdjustInput) => unwrap(await api.api.food.adjust.$post({ json: input })) });
 }
 
 /** One of the user's foods for a barcode, else an Open Food Facts product to review. */

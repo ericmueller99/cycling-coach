@@ -1,6 +1,6 @@
 import type { StapleDetail } from '@cycling-coach/shared';
 import { describe, expect, it } from 'vitest';
-import { defaultPortionIndex, foodFromStaple, parsePortionLabel } from './reference';
+import { defaultPortionIndex, foodFromStaple, measureFromServingLabel, parsePortionLabel } from './reference';
 import { computePortion } from './portions';
 
 describe('parsePortionLabel', () => {
@@ -40,6 +40,23 @@ const egg: StapleDetail = {
     { label: '2 large eggs', grams: 105.22 },
   ],
 };
+
+describe('measureFromServingLabel', () => {
+  it('reads a count with no weight', () => {
+    expect(measureFromServingLabel('1 sandwich')).toEqual({ unit: 'sandwich', amount: 1 });
+    expect(measureFromServingLabel('2 cookies')).toEqual({ unit: 'cookies', amount: 2 });
+    expect(measureFromServingLabel('Per 1 sandwich')).toEqual({ unit: 'sandwich', amount: 1 });
+  });
+  it('reads a plain weight or volume', () => {
+    expect(measureFromServingLabel('175 g')).toEqual({ unit: 'g', amount: 175 });
+    expect(measureFromServingLabel('3/4 cup (175 g)')).toEqual({ unit: 'cup', amount: 0.75 });
+  });
+  it('gives up on no number, or a unit too long to store', () => {
+    expect(measureFromServingLabel('grande')).toBeNull();
+    expect(measureFromServingLabel('')).toBeNull();
+    expect(measureFromServingLabel('1 sandwich on a toasted everything croissant')).toBeNull();
+  });
+});
 
 describe('foodFromStaple', () => {
   it('keeps 100 g as the reference and one measure per unit', () => {

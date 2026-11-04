@@ -159,7 +159,8 @@ export function formatPortion(quantity: number, unit: string): string {
   let label: string;
   if (UNIT_LABELS[u]) label = UNIT_LABELS[u][plural ? 1 : 0];
   else if (isMassUnit(u) || isVolumeUnit(u)) label = u;
-  else label = plural && /[a-z]$/.test(u) && !u.endsWith('s') && !u.includes('(') ? `${u}s` : u;
+  else if (plural && /[a-z]$/.test(u) && !u.endsWith('s') && !u.includes('(')) label = /(ch|sh|x)$/.test(u) ? `${u}es` : `${u}s`;
+  else label = u;
   return `${formatQuantity(quantity)} ${label}`;
 }
 

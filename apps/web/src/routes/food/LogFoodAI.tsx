@@ -3,7 +3,7 @@ import type { FoodLibrary, IsoDate, Nutrients } from '@cycling-coach/shared';
 import { useMutation } from '@tanstack/react-query';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { CameraIcon, ChevronLeft, SparkleIcon } from '../../components/icons';
-import { Button, ErrorNote, Spinner } from '../../components/ui';
+import { Button, ErrorNote, Spinner, errorContent } from '../../components/ui';
 import { fmtKcal, macroLine, nowTime } from '../../lib/food';
 import { useEnergyBudget, useFoodLog, useFoodMutations } from '../../lib/foodQueries';
 import { errorMessage } from '../../lib/queries';
@@ -56,7 +56,7 @@ export function LogFoodAI({
   const [parsed, setParsed] = useState<Parsed | null>(null);
   const [said, setSaid] = useState('');
   const [reviewing, setReviewing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ReactNode>(null);
   const [recent] = useState(readRecentPhrases);
   const { find, addFood } = useFind(lib);
   const parse = useMutation({ mutationFn: parseWords });
@@ -81,7 +81,7 @@ export function LogFoodAI({
           setSaid(phrase);
           setReviewing(true);
         },
-        onError: (e) => setError(errorMessage(e)),
+        onError: (e) => setError(errorContent(e)),
       },
     );
   };
