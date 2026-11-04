@@ -174,6 +174,8 @@ export interface AppServices {
   intervals: {
     /** Our sync bookkeeping, including a running full import's progress. */
     status(userId: string): Promise<IntegrationStatus>;
+    /** When "Sync now" or "Full sync" may run again, or null if it may now (DECISIONS #75). */
+    retryAt(status: IntegrationStatus, kind: 'sync' | 'fullSync'): Date | null;
     /** The delta sync ("Sync now"): push, calendar, rides and wellness since the last sync. */
     sync(userId: string): Promise<SyncSummary>;
     /** Start a full import of all history in the background (DECISIONS #49). */
@@ -492,12 +494,18 @@ export function createApp(deps: AppDeps) {
     .get('/integrations/intervals', async (c) => c.json<IntegrationStatus>(await services.intervals.status(c.get('user')!.id)))
     .post('/integrations/intervals/sync', async (c) => {
       const userId = c.get('user')!.id;
-      if ((await services.intervals.status(userId)).status === 'not_configured') return c.json({ error: 'intervals.icu is not connected' }, 503);
+      const status = await services.intervals.status(userId);
+      if (status.status === 'not_configured') return c.json({ error: 'intervals.icu is not connected' }, 503);
+      const retryAt = services.intervals.retryAt(status, 'sync');
+      if (retryAt) return c.json({ error: 'Synced a few minutes ago. Try again shortly.', retryAt: retryAt.toISOString() }, 409);
       return c.json(await services.intervals.sync(userId));
     })
     .post('/integrations/intervals/full-sync', async (c) => {
       const userId = c.get('user')!.id;
-      if ((await services.intervals.status(userId)).status === 'not_configured') return c.json({ error: 'intervals.icu is not connected' }, 503);
+      const status = await services.intervals.status(userId);
+      if (status.status === 'not_configured') return c.json({ error: 'intervals.icu is not connected' }, 503);
+      const retryAt = services.intervals.retryAt(status, 'fullSync');
+      if (retryAt) return c.json({ error: 'A full sync ran in the last day. Try again tomorrow.', retryAt: retryAt.toISOString() }, 409);
       return c.json(await services.intervals.fullSync(userId), 202);
     })
 

@@ -1,6 +1,6 @@
 import type { CalendarEvent } from '@cycling-coach/shared';
-import { describe, expect, it } from 'vitest';
-import { normalisePatch } from './calendar';
+import { describe, expect, it, vi } from 'vitest';
+import { CalendarService, normalisePatch } from './calendar';
 
 const race: CalendarEvent = {
   id: 'e1',
@@ -15,6 +15,26 @@ const race: CalendarEvent = {
   status: 'planned',
   source: 'manual',
 };
+
+describe('a failed push (DECISIONS #75)', () => {
+  const session = { id: 'x', kind: 'workout' } as unknown as CalendarEvent;
+  const service = (icu: object | null, onPushFailed: (userId: string) => Promise<void>) =>
+    new CalendarService({} as never, { intervalsFor: async () => icu as never }, async () => 'A Rider', () => new Date(), undefined, onPushFailed);
+
+  it('asks for a retry, so it never waits for a slow poll', async () => {
+    const failed = vi.fn(async () => {});
+    // No library workout, so building the event throws.
+    await service({}, failed).push('u1', session);
+    expect(failed).toHaveBeenCalledWith('u1');
+  });
+
+  it('asks for nothing when there was nothing to push', async () => {
+    const failed = vi.fn(async () => {});
+    await service(null, failed).push('u1', session);
+    await service({}, failed).push('u1', { ...session, kind: 'ride' });
+    expect(failed).not.toHaveBeenCalled();
+  });
+});
 
 describe('normalisePatch', () => {
   // Regression: a move (or clearing the start time) reset an A race to B and a Garmin race to Zwift.

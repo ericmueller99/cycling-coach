@@ -1559,3 +1559,33 @@ tool would change the prefix for everyone, and the athlete block would re-send w
 **Decision.** `Extensions` gains `extraConnections` (rows above the usage row on Connections) and `athleteBodyCards` (above the
 budget on Athlete › Body & energy), both empty by default. Generic on purpose: a deployment's own sources shouldn't need a named
 slot here, as intervals.icu and Zwift have.
+
+## 74. A deployment can supply the small logo (Nov 4)
+
+**Decision.** `Extensions` gains `logoMark`, a square image shown wherever the lime tile appears, through a new `BrandTile`
+component. Default null, so self-host keeps its tile.
+
+**Why.** `logo` (#70) only covers the places that show a full logo. The coach avatar and the welcome pages show a small tile, and
+a deployment with its own brand had no way to change it.
+
+**Rejected.**
+- *Making `logo` carry both*: the two are different shapes, and many deployments will only have one.
+
+## 75. Manual sync limits, and failed pushes don't wait for the poll (Nov 4)
+
+**Decision.**
+- **`createCore({ intervalsManualLimits: { syncMs, fullSyncMs } })`:** how soon an athlete can repeat "Sync now" and "Full sync".
+  Inside the limit the route answers 409 with `retryAt`, as `/events/refresh` does. Default: no limit, so self-host is unchanged.
+- **The limit counts from the last finished run** (`lastSyncAt`, `lastFullSyncAt`), so a failed run can always be retried.
+- **`CalendarService` takes an `onPushFailed` callback**, wired to `kickSoon` on the delta at 2 hours.
+
+**Why.** A deployment on webhooks can poll rarely (#64), and every athlete shares one OAuth app's allowance (#53), so a repeated
+Full sync costs everyone. A failed push only records an error and waits for the next delta: on a daily poll, a workout could miss
+the session it was meant for.
+
+The retry is bounded. `kickSoon` uses `$min`, so a failure costs at most one extra run per 2 hours, even if the failure is
+permanent. A faster poll simply runs first, so a 15-minute install sees no change.
+
+**Rejected.**
+- *Retrying a push on its own timer*: a second retry path beside the delta, which already re-pushes.
+- *A shorter retry*: a permanent failure, such as a deleted library workout, would repeat at that pace forever.

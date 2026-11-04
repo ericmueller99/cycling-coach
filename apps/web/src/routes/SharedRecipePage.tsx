@@ -1,7 +1,8 @@
 import { useNavigate } from '@tanstack/react-router';
 import { useState } from 'react';
 import { BrandLogo } from '../components/BrandLogo';
-import { ExpandIcon, LogoIcon } from '../components/icons';
+import { BrandTile } from '../components/BrandTile';
+import { ExpandIcon } from '../components/icons';
 import { useExtensions } from '../extensions';
 import { CookMode } from '../components/recipe/CookMode';
 import { RecipeBody } from '../components/recipe/RecipeBody';
@@ -31,9 +32,7 @@ export function SharedRecipePage({ token, cookFor }: { token: string; cookFor?: 
             <BrandLogo logo={logo} alt={brand} height={34} />
           ) : (
             <>
-              <span className="flex h-7 w-7 items-center justify-center rounded-[8px] bg-accent text-on-accent">
-                <LogoIcon size={14} />
-              </span>
+              <BrandTile size={28} radius={8} />
               <span className="font-semibold">{brand}</span>
             </>
           )}

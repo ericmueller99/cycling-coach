@@ -7,7 +7,8 @@ import { fullSyncFraction } from '../routes/athlete/connections';
 import { Avatar } from './Avatar';
 import { BrandLogo } from './BrandLogo';
 import { CORE_NAV, useExtensions, type NavItem } from '../extensions';
-import { ChevronRight, LogoIcon, XIcon } from './icons';
+import { BrandTile } from './BrandTile';
+import { ChevronRight, XIcon } from './icons';
 import { VerifyEmailBanner } from './VerifyEmailBanner';
 
 /** The same destinations on the sidebar and the phone tab bar: the core five plus any an extension adds. */
@@ -176,9 +177,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         ) : (
           <div className="flex items-center gap-2.5 px-2.5 pt-1.5 pb-5">
-            <div className="flex h-[34px] w-[34px] items-center justify-center rounded-[9px] bg-accent text-on-accent">
-              <LogoIcon />
-            </div>
+            <BrandTile size={34} radius={9} />
             <div>
               <div className="text-base font-bold">{brand}</div>
               {ftp}

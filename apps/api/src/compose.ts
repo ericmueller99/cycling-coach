@@ -59,7 +59,7 @@ import { photoStoreFromEnv } from './providers/storage/s3';
 import { UsdaClient } from './providers/usda';
 import { getThreadView, sendMessage, startThread, type CoachContext, type CoachDeps } from './services/coach';
 import { CoachFoodService } from './services/coach-food';
-import { IntervalsSync } from './services/intervals-sync';
+import { IntervalsSync, manualRetryAt } from './services/intervals-sync';
 import { MATCH_DAYS, settleRides } from './services/rides';
 import { TrainingData } from './services/training-data';
 import { weightHistory } from './services/weight';
@@ -105,6 +105,8 @@ export interface CoreOptions {
   eventNameSuffix?: string;
   /** How often each athlete's intervals.icu delta runs. Default 15 min; less with webhooks (DECISIONS #64). */
   intervalsSyncEveryMs?: number | undefined;
+  /** How soon an athlete can repeat "Sync now" and "Full sync". Default: no limit (DECISIONS #75). */
+  intervalsManualLimits?: { syncMs: number; fullSyncMs: number } | undefined;
   /** Another intervals.icu, for a local stand-in. */
   intervalsBaseUrl?: string | undefined;
   now?: () => Date;
@@ -148,6 +150,8 @@ export interface Core {
 
 /** A ride fires several webhooks about a minute apart; this makes each burst one or two syncs. */
 const WEBHOOK_DEBOUNCE_MS = 60_000;
+/** A failed push retries at this pace at the slowest, however slow the poll (DECISIONS #75). */
+const PUSH_RETRY_MS = 2 * 60 * 60_000;
 
 /** Self-host: INTERVALS_ICU_KEY and ZWIFT_* belong to the owner account. */
 function selfHostCredentials({ env, ownerId }: CoreContext): CredentialSource {
@@ -210,7 +214,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
 
   /** Rides, wellness and curves as synced from intervals.icu (DECISIONS #49) — what every screen reads. */
   const training = new TrainingData(c, integrations, now);
-  const calendar = new CalendarService(c, integrations, authorName, now, opts.eventNameSuffix);
+  const calendar = new CalendarService(c, integrations, authorName, now, opts.eventNameSuffix, (userId) => jobs.kickSoon(JOB.delta, userId, PUSH_RETRY_MS));
   const feedback = new FeedbackService(c, training, now);
   const onboarding = new OnboardingService(c, calendar, now);
   const food = new FoodService(c, now);
@@ -438,6 +442,10 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
 
     intervals: {
       status: intervalsStatus,
+      retryAt: (status, kind) =>
+        kind === 'sync'
+          ? manualRetryAt(status.lastSyncAt, opts.intervalsManualLimits?.syncMs, now())
+          : manualRetryAt(status.lastFullSyncAt, opts.intervalsManualLimits?.fullSyncMs, now()),
       // "Sync now" holds the athlete's delta-job lease: never beside a scheduled run in any process.
       sync: (userId) => jobs.runNow(JOB.delta, userId, () => sync.run(userId)),
       fullSync: (userId) => sync.startFullSync(userId),

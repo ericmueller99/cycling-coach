@@ -4,7 +4,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { AppBar, IconButton } from '../../components/AppBar';
-import { ArrowUpIcon, ComposeIcon, LogoIcon, MenuIcon, SendIcon } from '../../components/icons';
+import { BrandTile } from '../../components/BrandTile';
+import { ArrowUpIcon, ComposeIcon, MenuIcon, SendIcon } from '../../components/icons';
 import { Sheet } from '../../components/Sheet';
 import { Button, ErrorNote, PageHeader } from '../../components/ui';
 import { useExtensions } from '../../extensions';
@@ -39,11 +40,7 @@ type ThreadFilter = 'all' | 'training' | 'food';
 
 /** Mobile drops the avatar so coach messages run full width. */
 function CoachAvatar() {
-  return (
-    <div className="flex h-8 w-8 flex-none items-center justify-center rounded-[9px] bg-accent text-on-accent mobile:hidden">
-      <LogoIcon size={16} />
-    </div>
-  );
+  return <BrandTile size={32} radius={9} className="mobile:hidden" />;
 }
 
 function AssistantBlocks({ blocks, threadId, cards }: { blocks: UiBlock[]; threadId: string; cards: CardData }) {

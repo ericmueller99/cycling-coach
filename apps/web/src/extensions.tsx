@@ -39,6 +39,8 @@ export interface Extensions {
    * Self-host: none.
    */
   logo: { light: string; dark: string } | null;
+  /** A square logo image, shown instead of the lime tile wherever the tile appears (DECISIONS #74). Self-host: none. */
+  logoMark: string | null;
   /** Sidebar and tab bar items, given the core five. */
   navItems: (core: readonly NavItem[]) => readonly NavItem[];
   /** Under the sign-in form, for anything extra (sign-up and reset links come from the server's auth config). */
@@ -79,6 +81,7 @@ export const CORE_NAV: readonly NavItem[] = [
 export const defaultExtensions: Extensions = {
   brand: 'Coach',
   logo: null,
+  logoMark: null,
   navItems: (core) => core,
   loginFooter: null,
   legalLinks: null,

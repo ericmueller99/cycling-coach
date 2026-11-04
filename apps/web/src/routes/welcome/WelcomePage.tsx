@@ -10,7 +10,8 @@ import {
 } from '@cycling-coach/shared';
 import { Navigate, useNavigate, useRouterState } from '@tanstack/react-router';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { CheckIcon, ChevronLeft, LogoIcon, MemoryIcon, PlusIcon, XIcon } from '../../components/icons';
+import { BrandTile } from '../../components/BrandTile';
+import { CheckIcon, ChevronLeft, MemoryIcon, PlusIcon, XIcon } from '../../components/icons';
 import { ErrorNote, Spinner } from '../../components/ui';
 import { VerifyEmailBanner } from '../../components/VerifyEmailBanner';
 import { ZoneChart } from '../../components/ZoneChart';
@@ -202,9 +203,7 @@ function Wizard({ initial }: { initial: OnboardingState }) {
     <div className="flex min-h-dvh flex-col bg-bg text-ink">
       <header className="flex items-center justify-between gap-3 border-b border-line bg-surface px-7 py-4 max-[640px]:px-5">
         <div className="flex items-center gap-2.5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-[9px] bg-accent text-on-accent">
-            <LogoIcon size={17} />
-          </div>
+          <BrandTile size={32} radius={9} />
           <span className="text-base font-bold">{brand}</span>
         </div>
         <span className="text-[13px] text-muted">{done ? 'Setup complete' : `Step ${step + 1} of 5`}</span>
@@ -234,9 +233,7 @@ function Wizard({ initial }: { initial: OnboardingState }) {
             )}
             {error && <ErrorNote>{error}</ErrorNote>}
             <div className="flex items-start gap-2.5 rounded-xl border border-accent-line bg-accent-tint px-3.5 py-3">
-              <span className="flex h-[26px] w-[26px] flex-none items-center justify-center rounded-[7px] bg-accent text-on-accent">
-                <LogoIcon size={13} />
-              </span>
+              <BrandTile size={26} radius={7} />
               <span className="text-sm text-[#2C3A12]">{tip}</span>
             </div>
           </div>

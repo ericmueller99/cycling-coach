@@ -130,6 +130,16 @@ export interface SyncJobs {
 /** How long one `intervals.full` job run keeps stepping before it yields (and is picked up again at once). */
 export const FULL_SLICE_MS = 4 * 60_000;
 
+/**
+ * When a manual sync may run again: null if it may now, or if there's no limit (DECISIONS #75).
+ * `last` is the last finished run, so a failed one never blocks a retry.
+ */
+export function manualRetryAt(last: string | undefined, everyMs: number | undefined, now: Date): Date | null {
+  if (!last || !everyMs) return null;
+  const next = new Date(last).getTime() + everyMs;
+  return next > now.getTime() ? new Date(next) : null;
+}
+
 export class IntervalsSync {
   /**
    * Delta runs, one at a time per athlete in this process. Across processes the `intervals.delta` job

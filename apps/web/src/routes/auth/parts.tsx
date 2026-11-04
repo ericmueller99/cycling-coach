@@ -1,7 +1,8 @@
 import { Link } from '@tanstack/react-router';
 import { useId, useState, type InputHTMLAttributes, type ReactNode } from 'react';
 import { BrandLogo } from '../../components/BrandLogo';
-import { ChevronLeft, LogoIcon } from '../../components/icons';
+import { BrandTile } from '../../components/BrandTile';
+import { ChevronLeft } from '../../components/icons';
 import { useExtensions } from '../../extensions';
 import { passwordMeter } from '../../lib/password';
 import { useIsMobile } from '../../lib/useIsMobile';
@@ -18,9 +19,7 @@ export function BrandMark({ size = 34, text = 16, tone = 'light' }: { size?: num
   if (logo) return <BrandLogo logo={logo} alt={brand} height={size + 6} tone={tone} />;
   return (
     <div className="flex items-center gap-2.5">
-      <div className="flex items-center justify-center rounded-[9px] bg-accent text-on-accent" style={{ width: size, height: size }}>
-        <LogoIcon size={Math.round(size * 0.53)} />
-      </div>
+      <BrandTile size={size} radius={9} />
       <div className="font-bold" style={{ fontSize: text }}>
         {brand}
       </div>
@@ -213,11 +212,7 @@ export function SubmitButton({ busy, children, busyLabel, disabled }: { busy: bo
 }
 
 function CoachTile({ size }: { size: number }) {
-  return (
-    <div className="flex flex-none items-center justify-center rounded-lg bg-accent text-on-accent" style={{ width: size, height: size }}>
-      <LogoIcon size={Math.round(size * 0.53)} />
-    </div>
-  );
+  return <BrandTile size={size} radius={8} />;
 }
 
 const panel = 'box-border m-3 flex min-w-0 flex-[1.25_1_520px] flex-col justify-center gap-8 rounded-[20px] bg-ink px-12 py-14 text-white';

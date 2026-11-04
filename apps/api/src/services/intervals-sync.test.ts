@@ -5,7 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import type { Activity } from '@cycling-coach/shared';
 import { IntervalsError, UNSHARED_STATUS, type IntervalsIcu } from '../providers/intervals-icu';
 import type { CalendarService } from './calendar';
-import { IntervalsSync } from './intervals-sync';
+import { IntervalsSync, manualRetryAt } from './intervals-sync';
 
 let server: MongoMemoryServer;
 let client: MongoClient;
@@ -56,6 +56,20 @@ function syncWith(icu: Partial<Record<keyof IntervalsIcu, unknown>> | null, jobs
   const integrations = { intervalsFor: async () => icu as IntervalsIcu | null };
   return new IntervalsSync(c, integrations, { eventNameSuffix: '' } as unknown as CalendarService, jobs, () => NOW);
 }
+
+describe('manual sync limits (DECISIONS #75)', () => {
+  const MIN = 60_000;
+  it('waits out the limit after a finished run', () => {
+    expect(manualRetryAt('2026-11-03T11:58:00Z', 5 * MIN, NOW)).toEqual(new Date('2026-11-03T12:03:00Z'));
+  });
+  it('allows a run once the limit has passed', () => {
+    expect(manualRetryAt('2026-11-03T11:55:00Z', 5 * MIN, NOW)).toBeNull();
+  });
+  it('allows a run with no limit, or with nothing finished yet', () => {
+    expect(manualRetryAt('2026-11-03T11:59:00Z', undefined, NOW)).toBeNull();
+    expect(manualRetryAt(undefined, 5 * MIN, NOW)).toBeNull();
+  });
+});
 
 describe('a rejected key or token (DECISIONS #64)', () => {
   const rejected = () => ({ ...quiet(), listEvents: vi.fn(async () => Promise.reject(new IntervalsError('intervals.icu rejected the connection', 401))) });

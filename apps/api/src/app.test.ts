@@ -1,7 +1,38 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createApp, type AppServices } from './app';
 import { authConfig, type Auth } from './auth';
 import { loadEnv } from './lib/env';
+
+describe('manual intervals.icu syncs (DECISIONS #75)', () => {
+  const auth = { api: { getSession: async () => ({ user: { id: 'u1' }, session: {} }) }, handler: () => new Response(null, { status: 404 }) } as unknown as Auth;
+  const env = loadEnv({ MONGO_DB_URI: 'mongodb://x', BETTER_AUTH_SECRET: 'x'.repeat(32) });
+  const make = (retryAt: Date | null) => {
+    const sync = vi.fn(async () => ({}));
+    const fullSync = vi.fn(async () => ({}));
+    const services = { intervals: { status: async () => ({ status: 'connected' }), retryAt: () => retryAt, sync, fullSync } } as unknown as AppServices;
+    return { app: createApp({ auth, authConfig: authConfig(), env, services }), sync, fullSync };
+  };
+  const post = (app: ReturnType<typeof make>['app'], path: string) => app.request(`/api/integrations/intervals/${path}`, { method: 'POST' });
+
+  it('runs when the limit allows', async () => {
+    const { app, sync, fullSync } = make(null);
+    expect((await post(app, 'sync')).status).toBe(200);
+    expect((await post(app, 'full-sync')).status).toBe(202);
+    expect(sync).toHaveBeenCalledOnce();
+    expect(fullSync).toHaveBeenCalledOnce();
+  });
+
+  it('refuses inside the limit, says when, and spends nothing', async () => {
+    const at = new Date('2026-11-03T12:05:00Z');
+    const { app, sync, fullSync } = make(at);
+    const res = await post(app, 'sync');
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { retryAt: string }).retryAt).toBe(at.toISOString());
+    expect((await post(app, 'full-sync')).status).toBe(409);
+    expect(sync).not.toHaveBeenCalled();
+    expect(fullSync).not.toHaveBeenCalled();
+  });
+});
 
 /** The share page's API answers without a session; everything else under /api still needs one. */
 describe('public routes', () => {

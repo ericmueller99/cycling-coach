@@ -75,6 +75,8 @@ export class CalendarService {
     private readonly now: () => Date = () => new Date(),
     /** Appended to pushed workout names; the sync strips it from names it reads back (DECISIONS #63). */
     readonly eventNameSuffix?: string,
+    /** After a failed push, so a retry doesn't have to wait for a slow poll (DECISIONS #75). */
+    private readonly onPushFailed?: (userId: string) => Promise<void>,
   ) {}
 
   async create(
@@ -213,7 +215,9 @@ export class CalendarService {
     } catch (err) {
       const message = (err as Error).message;
       const sync = event.intervals ? { intervals: { ...event.intervals, error: message } } : { syncError: message };
-      return (await setEventSync(this.c, userId, event.id, sync, now)) ?? event;
+      const saved = await setEventSync(this.c, userId, event.id, sync, now);
+      await this.onPushFailed?.(userId);
+      return saved ?? event;
     }
   }
 
