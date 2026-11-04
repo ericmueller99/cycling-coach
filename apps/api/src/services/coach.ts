@@ -51,6 +51,9 @@ import type { TrainingData } from './training-data';
 import type { SpendDecision, SpendGuard } from '../lib/spend';
 import type { ZwiftEventsService } from './zwift-events';
 
+/** What a deployment wants the coach to know today, or null for nothing. */
+export type CoachContext = (userId: string, today: IsoDate) => Promise<string | null>;
+
 export interface CoachDeps {
   c: Collections;
   engine: CoachEngine | null;
@@ -62,6 +65,8 @@ export interface CoachDeps {
   events: Pick<ZwiftEventsService, 'query'>;
   /** Asked before every coach turn; a message refuses it (hosted quotas, DECISIONS #57). */
   spendGuard?: SpendGuard;
+  /** Extra text for the turn's context, from the deployment (DECISIONS #72). */
+  coachContext?: CoachContext;
   /** Food log, budget and the meal tools. */
   food: { food: FoodService; energy: EnergyService; coachFood: CoachFoodService };
   now: () => Date;
@@ -281,6 +286,11 @@ export async function* sendMessage(
   const calendarBlock = renderCalendarBlock(windowEvents, window.from, window.to, windowFeedback);
   const athleteBlock = renderAthleteBlock(athlete);
   const food = await foodContext(deps, userId, today, profile.timezone, input.food);
+  // Nice to have: a failure costs the coach this line, never the turn.
+  const extra = await deps.coachContext?.(userId, today).catch((err: Error) => {
+    console.warn('coach context failed', err.message);
+    return null;
+  });
   await appendMessage(c, {
     threadId: tid,
     userId,
@@ -304,6 +314,7 @@ export async function* sendMessage(
           calendarBlock,
           athleteBlock,
           food,
+          extra: extra ?? undefined,
           seen: thread.seen,
           ...(decision.coachNote ? { coachNote: decision.coachNote } : {}),
         }),
@@ -361,7 +372,7 @@ export async function* sendMessage(
       // and "unchanged" on the retry would point at something it never received.
       if (m.kind === 'assistant' && !replied) {
         replied = true;
-        await updateThread(c, tid, { seen: { calendar: calendarBlock, athlete: athleteBlock } });
+        await updateThread(c, tid, { seen: { calendar: calendarBlock, athlete: athleteBlock, ...(extra ? { extra } : {}) } });
       }
       if (m.kind === 'assistant') textBefore = assistantText.length;
     },

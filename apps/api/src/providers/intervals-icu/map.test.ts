@@ -1,6 +1,6 @@
 import { STARTER_WORKOUTS, buildZwo } from '@cycling-coach/core';
 import { describe, expect, it } from 'vitest';
-import { buildRaceEvent, buildWorkoutEvent, mapActivity, mapCurvePoints, mapInterval, mapPowerCurves, mapRemoteEvent, mapWellnessDays, withNameSuffix, withoutNameSuffix } from './map';
+import { buildRaceEvent, buildWorkoutEvent, hiddenActivityIds, mapActivity, mapCurvePoints, mapInterval, mapPowerCurves, mapRemoteEvent, mapWellnessDays, withNameSuffix, withoutNameSuffix } from './map';
 
 // Shapes as returned by the live API on 2026-10-30 (trimmed).
 const activity = {
@@ -60,6 +60,13 @@ describe('mapActivity', () => {
       mapActivity({ id: 'i1', start_date_local: '2026-09-28T09:00:00', source: 'STRAVA', icu_athlete_id: 'i000001', _note: 'STRAVA activities are not available via the API' }),
     ).toBeNull();
   });
+});
+
+it('lists the placeholders in a listing, so stored rides survive being hidden', () => {
+  const hidden = { id: 'i1', start_date_local: '2026-09-28T09:00:00', _note: 'Garmin activities are not available via the API' };
+  const shared = { id: 'i2', start_date_local: '2026-09-28T09:00:00', moving_time: 3600 };
+  expect(hiddenActivityIds([hidden, shared])).toEqual(['i1']);
+  expect(hiddenActivityIds(null)).toEqual([]);
 });
 
 it('maps detected intervals', () => {

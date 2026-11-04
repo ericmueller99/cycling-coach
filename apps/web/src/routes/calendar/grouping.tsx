@@ -91,9 +91,13 @@ export function SessionRideList({ event, rides }: { event: CalendarEvent; rides:
               <strong className="truncate">{rideName(a)}</strong>
               <span className="text-xs text-muted">
                 {ridesMeta([a])} ·{' '}
-                <a href={intervalsUrl(a.id)} target="_blank" rel="noreferrer">
-                  view ↗
-                </a>
+                {a.provider ? (
+                  a.sourceLabel
+                ) : (
+                  <a href={intervalsUrl(a.id)} target="_blank" rel="noreferrer">
+                    view ↗
+                  </a>
+                )}
               </span>
             </span>
             <Button

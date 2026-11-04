@@ -207,8 +207,10 @@ export interface TurnContextInput {
   athleteBlock: string;
   /** Today's food against the budget, when the food module has data. */
   food?: FoodTurnContext | undefined;
+  /** Anything else the deployment knows about the athlete today (DECISIONS #72). */
+  extra?: string | undefined;
   /** What the coach has already been shown in this API context. */
-  seen: { calendar?: string | undefined; athlete: string };
+  seen: { calendar?: string | undefined; athlete: string; extra?: string | undefined };
 }
 
 export interface FoodTurnContext {
@@ -279,6 +281,8 @@ export function renderTurnContext(input: TurnContextInput): string {
     );
   }
   if (input.food) parts.push(renderFoodLine(input.food));
+  // Only when it changed: the coach already has it, and each copy stays in the transcript.
+  if (input.extra && input.extra !== input.seen.extra) parts.push(input.extra);
   parts.push(
     sameCalendar(input.seen.calendar, input.calendarBlock)
       ? 'Calendar: unchanged since the previous context message.'

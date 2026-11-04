@@ -1,6 +1,6 @@
 import type { Activity } from '@cycling-coach/shared';
 import { describe, expect, it } from 'vitest';
-import { activityFingerprint, deltaWindow, diffActivities, fitnessDays, previousQuarter, quarterOf, stepDays, weighInsFrom, yearWindows } from './sync';
+import { activityFingerprint, deltaWindow, diffActivities, fitnessDays, isSameRide, previousQuarter, quarterOf, shadowedRides, stepDays, weighInsFrom, yearWindows } from './sync';
 
 const ride = (id: string, over: Partial<Activity> = {}): Activity => ({
   id,
@@ -56,8 +56,33 @@ describe('diffActivities', () => {
     expect(changed.map((a) => a.id)).toEqual(['b', 'new']);
     expect(removed).toEqual(['gone']);
   });
+  it('keeps a ride intervals.icu lists but no longer shares', () => {
+    const stored = [{ id: 'hidden', fingerprint: 'x' }, { id: 'gone', fingerprint: 'y' }];
+    expect(diffActivities(stored, [], ['hidden']).removed).toEqual(['gone']);
+  });
   it('sees a reprocessed ride (new FTP) as changed', () => {
     expect(activityFingerprint(ride('a', { ftp: 280 }))).not.toBe(activityFingerprint(ride('a', { ftp: 285 })));
+  });
+});
+
+describe('the same ride from two sources', () => {
+  const at = (startLocal: string, elapsedSec = 3600) => ({ startLocal, elapsedSec });
+
+  it('allows a little drift in start and length', () => {
+    expect(isSameRide(at('2026-11-03T09:00:00'), at('2026-11-03T09:04:00', 3400))).toBe(true);
+  });
+  it('tells two rides apart', () => {
+    expect(isSameRide(at('2026-11-03T09:00:00'), at('2026-11-03T09:06:00'))).toBe(false);
+    expect(isSameRide(at('2026-11-03T09:00:00'), at('2026-11-03T09:00:00', 2000))).toBe(false);
+  });
+
+  it('finds the second-source copy, never the intervals.icu one', () => {
+    const rides = [
+      { id: 'i1', ...at('2026-11-03T09:00:00') },
+      { id: 'garmin:1', provider: 'garmin', ...at('2026-11-03T09:01:00') },
+      { id: 'garmin:2', provider: 'garmin', ...at('2026-11-03T17:00:00') },
+    ];
+    expect(shadowedRides(rides)).toEqual([{ id: 'garmin:1', twinId: 'i1' }]);
   });
 });
 

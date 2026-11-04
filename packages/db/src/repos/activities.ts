@@ -4,9 +4,12 @@ import type { ActivityDoc, Collections } from '../collections';
 import { compact } from './util';
 
 /**
- * Rides synced from intervals.icu (DECISIONS #49). Only the intervals.icu sync writes them;
- * screens and the coach read them here.
+ * Rides (DECISIONS #49): written by the intervals.icu sync and, for a deployment's own ride source,
+ * by `Core.rides` (#71). Screens and the coach read them here.
  */
+
+/** Only intervals.icu's rides: the sync must never compare, fetch or delete another source's. */
+const FROM_INTERVALS = { provider: { $exists: false } } as const;
 
 const toActivity = (doc: ActivityDoc): Activity => {
   const { _id, userId: _u, fingerprint: _f, intervals: _i, detailAt: _d, powerCurve: _p, syncedAt: _s, ...activity } = doc;
@@ -25,7 +28,7 @@ export async function listActivities(c: Collections, userId: string, from: IsoDa
 /** Ids and fingerprints of the stored rides in a window — what a sync compares against. */
 export async function storedRideRefs(c: Collections, userId: string, from: IsoDate, to: IsoDate): Promise<{ id: string; fingerprint: string }[]> {
   return c.activities
-    .find({ userId, startLocal: range(from, to) }, { projection: { _id: 0, id: 1, fingerprint: 1 } })
+    .find({ userId, ...FROM_INTERVALS, startLocal: range(from, to) }, { projection: { _id: 0, id: 1, fingerprint: 1 } })
     .toArray() as Promise<{ id: string; fingerprint: string }[]>;
 }
 
@@ -77,6 +80,11 @@ export async function saveActivityDetail(c: Collections, userId: string, activit
   );
 }
 
+/** A ride intervals.icu no longer shares has no detail to fetch: stop asking, and keep it (DECISIONS #71). */
+export async function markDetailUnavailable(c: Collections, userId: string, id: string, now: Date): Promise<void> {
+  await c.activities.updateOne({ userId, id }, { $set: { detailAt: now } });
+}
+
 export async function saveActivityCurve(c: Collections, userId: string, id: string, powerCurve: readonly PowerPoint[]): Promise<void> {
   await c.activities.updateOne({ userId, id }, { $set: { powerCurve: [...powerCurve] } });
 }
@@ -84,7 +92,7 @@ export async function saveActivityCurve(c: Collections, userId: string, id: stri
 /** Rides still waiting for their detected intervals, newest first. */
 export async function ridesNeedingDetail(c: Collections, userId: string, limit: number): Promise<string[]> {
   const docs = await c.activities
-    .find({ userId, detailAt: { $exists: false } }, { projection: { _id: 0, id: 1 } })
+    .find({ userId, ...FROM_INTERVALS, detailAt: { $exists: false } }, { projection: { _id: 0, id: 1 } })
     .sort({ startLocal: -1 })
     .limit(limit)
     .toArray();
@@ -92,7 +100,7 @@ export async function ridesNeedingDetail(c: Collections, userId: string, limit: 
 }
 
 export async function countActivities(c: Collections, userId: string, opts: { needingDetail?: boolean } = {}): Promise<number> {
-  return c.activities.countDocuments({ userId, ...(opts.needingDetail ? { detailAt: { $exists: false } } : {}) });
+  return c.activities.countDocuments({ userId, ...FROM_INTERVALS, ...(opts.needingDetail ? { detailAt: { $exists: false } } : {}) });
 }
 
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

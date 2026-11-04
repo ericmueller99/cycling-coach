@@ -54,6 +54,10 @@ export interface Extensions {
   intervalsConnect: ConnectSlot;
   /** The Zwift row on Connections while this athlete has no Zwift login. */
   zwiftConnect: ConnectSlot;
+  /** More rows on Connections, above the usage row, for sources only this deployment has (DECISIONS #73). */
+  extraConnections: ReactNode;
+  /** Extra cards on Athlete › Body & energy, above the budget (DECISIONS #73). */
+  athleteBodyCards: ReactNode;
   /** The usage row on Connections (the self-hosted app shows Claude API spend); `null` hides it. */
   usageCard: ComponentType | null;
   /** Extra cards at the end of the Account page. */
@@ -81,6 +85,8 @@ export const defaultExtensions: Extensions = {
   signUpClosed: 'Sign-up is closed on this server. Ask whoever runs it for an account.',
   intervalsConnect: { hint: 'Set INTERVALS_ICU_KEY on the server — it connects the owner account only' },
   zwiftConnect: { hint: 'Set ZWIFT_USERNAME and ZWIFT_PASSWORD on the server (owner account only), or enter zFTP by hand' },
+  extraConnections: null,
+  athleteBodyCards: null,
   usageCard: ClaudeUsageRow,
   accountCards: null,
   coachNotice: null,

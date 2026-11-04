@@ -37,6 +37,8 @@ read-only, opt-in, DECISIONS #23, #29, #52). **Every Zwift request goes through 
 `RequestGate`** (one at a time, 2 s apart), and the logged-in event feed runs only when the user clicks
 "Get more events" — never on a timer, at boot or from the coach.
 
+A deployment may add rides of its own through `Core.rides` (DECISIONS #71); the sync never touches them.
+
 **Every calendar write goes through `apps/api/src/services/calendar.ts`** — it pushes workouts and
 races to intervals.icu (DECISIONS #16). Writing `calendar_events` directly skips the sync; only the
 sync job itself (importing from intervals.icu, done/missed status) may. The coach never writes

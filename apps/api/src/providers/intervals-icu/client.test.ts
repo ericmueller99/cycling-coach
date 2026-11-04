@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { RequestGate } from '../gate';
-import { IntervalsError, IntervalsIcu, isTransient, retryAfterMs } from './index';
+import { IntervalsError, IntervalsIcu, isTransient, retryAfterMs, UNSHARED_STATUS } from './index';
 
 type Reply = { status: number; body?: unknown; headers?: Record<string, string> };
 
@@ -97,6 +97,12 @@ describe('IntervalsIcu client', () => {
     const fetchFn = fakeFetch(() => ({ status: 200, body: [] }));
     await make(fetchFn).listActivities('2026-10-16', '2026-10-30');
     expect(calls(fetchFn)[0]![0]).toBe('https://intervals.icu/api/v1/athlete/0/activities?oldest=2026-10-16&newest=2026-10-30T23%3A59%3A59');
+  });
+
+  it('tells a hidden ride from a deleted one', async () => {
+    const fetchFn = fakeFetch(() => ({ status: 200, body: { id: 'i1', _note: 'not available via the API' } }));
+    const err = await make(fetchFn).activityDetail('i1').catch((e: unknown) => e);
+    expect(err).toMatchObject({ status: UNSHARED_STATUS });
   });
 
   it('treats deleting an already-deleted event as done', async () => {

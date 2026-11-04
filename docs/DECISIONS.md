@@ -1526,3 +1526,36 @@ The self-hosted app sets nothing and looks the same.
 
 **Why.** A logo is a deployment's brand, like `brand` (#58). Two URLs fit the one dark surface we have, the phone sign-in
 header. A `ReactNode` slot would make each caller know about backgrounds anyway.
+
+## 71. Rides can come from a second source (Nov 4)
+
+**Decision.** `Activity` gains optional `provider` and `sourceLabel`; absent means intervals.icu, so nothing needs migrating.
+Such a ride's id starts `<provider>:`. A deployment writes them through `Core.rides` (`save`, `remove`, `settle`). This amends
+#49 ("only the sync writes them") and #64, which turned down a second path into rides.
+- **The sync only sees its own rides.** `storedRideRefs`, `ridesNeedingDetail` and `countActivities` filter to intervals.icu
+  rows. Without this the delta would delete every other ride as "no longer listed".
+- **`settleRides` is shared.** Dropping duplicates, ticking off sessions and marking missed ones moved out of the delta, which
+  exits early for an athlete without intervals.icu.
+- **Duplicates:** the same ride is one that starts within 5 minutes and lasts within 10%. The intervals.icu copy wins, because it
+  has load and intervals and fitness is built on it. Sessions and feedback move to the survivor, so nothing dangles.
+- **Hidden isn't deleted.** A ride intervals.icu lists as a placeholder still exists, so a stored copy stays (`listRides` returns
+  `hidden`), and its detail stops being fetched (`UNSHARED_STATUS`). It used to be deleted, which would have lost history if
+  intervals.icu hides a source's rides.
+
+**Trade-off.** Another source's rides have no load, so they don't move CTL or ATL, and no power curve. Those stay intervals.icu's.
+
+## 72. A deployment can add to the coach's turn context (Nov 4)
+
+**Decision.** `createCore` takes `coachContext(userId, today)`, returning a line of text or null. It goes after the food line in
+the per-turn context message, only when it changed (`thread.seen.extra`). A failure leaves it out and the turn carries on.
+
+**Why here.** It's after every cache breakpoint, so the prefix doesn't move (#18, #67), and daily values already live here. A new
+tool would change the prefix for everyone, and the athlete block would re-send whole on every daily change.
+
+**Rejected.** *`SpendDecision.coachNote`*: free today, but it's a spend decision and this isn't one.
+
+## 73. Web slots for extra connections and body cards (Nov 4)
+
+**Decision.** `Extensions` gains `extraConnections` (rows above the usage row on Connections) and `athleteBodyCards` (above the
+budget on Athlete › Body & energy), both empty by default. Generic on purpose: a deployment's own sources shouldn't need a named
+slot here, as intervals.icu and Zwift have.

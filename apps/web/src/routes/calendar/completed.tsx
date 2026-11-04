@@ -127,13 +127,20 @@ export function CompletedPanel({
   const matched =
     event.activityId &&
     (grouped ? (
-      <div className="text-[13px] text-muted">{rideCount} rides · synced from intervals.icu</div>
+      <div className="text-[13px] text-muted">{rideCount} rides</div>
     ) : (
       <div className="text-[13px] text-muted">
-        Matched to <strong className="text-ink">{activity?.name ?? 'a ride'}</strong> · synced from intervals.icu ·{' '}
-        <a href={intervalsUrl(event.activityId)} target="_blank" rel="noreferrer">
-          view ↗
-        </a>
+        Matched to <strong className="text-ink">{activity?.name ?? 'a ride'}</strong> ·{' '}
+        {activity?.provider ? (
+          activity.sourceLabel
+        ) : (
+          <>
+            synced from intervals.icu ·{' '}
+            <a href={intervalsUrl(event.activityId)} target="_blank" rel="noreferrer">
+              view ↗
+            </a>
+          </>
+        )}
       </div>
     ));
   const askCoach = () => void navigate({ to: '/', search: { new: true, prompt: askCoachPrompt(event.title, event.date, `event ${event.id}`) } });

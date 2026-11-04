@@ -95,13 +95,42 @@ export interface StoredRideRef {
  * Compare what intervals.icu lists for a window with what we stored for the same window: rides to
  * write (new, or a changed fingerprint) and stored rides it no longer has (deleted there).
  */
-export function diffActivities(stored: readonly StoredRideRef[], remote: readonly Activity[]): { changed: Activity[]; removed: string[] } {
+export function diffActivities(
+  stored: readonly StoredRideRef[],
+  remote: readonly Activity[],
+  /** Rides intervals.icu lists without sharing them: they still exist, so our copy stays (DECISIONS #71). */
+  hidden: readonly string[] = [],
+): { changed: Activity[]; removed: string[] } {
   const known = new Map(stored.map((s) => [s.id, s.fingerprint]));
-  const seen = new Set(remote.map((a) => a.id));
+  const seen = new Set([...remote.map((a) => a.id), ...hidden]);
   return {
     changed: remote.filter((a) => known.get(a.id) !== activityFingerprint(a)),
     removed: stored.filter((s) => !seen.has(s.id)).map((s) => s.id),
   };
+}
+
+const SAME_RIDE_START_SEC = 5 * 60;
+const SAME_RIDE_DURATION_SHARE = 0.1;
+
+type RideTiming = Pick<Activity, 'startLocal' | 'elapsedSec'>;
+
+/** Two records of one ride: they started within 5 minutes and lasted within 10% of each other. */
+export function isSameRide(a: RideTiming, b: RideTiming): boolean {
+  const apart = Math.abs(Date.parse(`${a.startLocal}Z`) - Date.parse(`${b.startLocal}Z`)) / 1000;
+  const longest = Math.max(a.elapsedSec, b.elapsedSec);
+  return apart <= SAME_RIDE_START_SEC && Math.abs(a.elapsedSec - b.elapsedSec) <= longest * SAME_RIDE_DURATION_SHARE;
+}
+
+/**
+ * Rides from a second source that intervals.icu also has, each with its intervals.icu `twinId`. The
+ * intervals.icu copy wins: it has load and intervals, and it's what fitness is built on (DECISIONS #71).
+ */
+export function shadowedRides(rides: readonly (RideTiming & Pick<Activity, 'id' | 'provider'>)[]): { id: string; twinId: string }[] {
+  const intervalsRides = rides.filter((r) => !r.provider);
+  return rides.flatMap((r) => {
+    const twin = r.provider ? intervalsRides.find((i) => isSameRide(r, i)) : undefined;
+    return twin ? [{ id: r.id, twinId: twin.id }] : [];
+  });
 }
 
 /** Stored wellness → the fitness model's days (days without CTL/ATL are left out). */

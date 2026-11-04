@@ -120,6 +120,13 @@ describe('renderTurnContext calendar', () => {
     expect(renderTurnContext({ ...base, calendarBlock: block, seen: { athlete: 'athlete' } })).toContain(block);
   });
 
+  it('adds the deployment’s context, but only when it changed', () => {
+    const block = calendar('2026-10-27', '2026-11-17', '- e1');
+    expect(renderTurnContext({ ...base, calendarBlock: block, seen: { athlete: 'athlete' }, extra: 'Readiness: HRV 52 ms.' })).toContain('Readiness: HRV 52 ms.');
+    expect(renderTurnContext({ ...base, calendarBlock: block, seen: { athlete: 'athlete', extra: 'Readiness: HRV 52 ms.' }, extra: 'Readiness: HRV 52 ms.' })).not.toContain('HRV');
+    expect(renderTurnContext({ ...base, calendarBlock: block, seen: { athlete: 'athlete', extra: 'Readiness: HRV 52 ms.' }, extra: 'Readiness: HRV 40 ms.' })).toContain('HRV 40 ms');
+  });
+
   it('adds a note from the deployment', () => {
     const block = calendar('2026-10-27', '2026-11-17', '- e1');
     expect(renderTurnContext({ ...base, calendarBlock: block, seen: { athlete: 'athlete' }, coachNote: 'Allowance used up.' })).toContain('Allowance used up.');

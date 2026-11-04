@@ -4,6 +4,7 @@ export type { RemoteEvent } from './map';
 import {
   CURVE_IDS,
   mapActivities,
+  hiddenActivityIds,
   mapActivity,
   mapCurvePoints,
   mapInterval,
@@ -33,6 +34,9 @@ export interface IntervalsIcuOptions {
    */
   gate?: RequestGate;
 }
+
+/** A ride that exists but comes back as a placeholder. Not a real response: 404 means deleted, and this doesn't. */
+export const UNSHARED_STATUS = 451;
 
 export class IntervalsError extends Error {
   constructor(
@@ -149,17 +153,22 @@ export class IntervalsIcu {
   // ── Training data (read by the sync) ──────────────────────────────────────
 
   async listActivities(start: IsoDate, end: IsoDate): Promise<Activity[]> {
+    return (await this.listRides(start, end)).rides;
+  }
+
+  /** The rides in a window, and the ids of any it lists without sharing (DECISIONS #71). */
+  async listRides(start: IsoDate, end: IsoDate): Promise<{ rides: Activity[]; hidden: string[] }> {
     const raw = await this.request<unknown>('GET', `${this.athletePath}/activities`, {
       query: { oldest: start, newest: `${end}T23:59:59` },
     });
-    return mapActivities(raw);
+    return { rides: mapActivities(raw), hidden: hiddenActivityIds(raw) };
   }
 
   /** One ride with its detected intervals. */
   async activityDetail(id: string): Promise<Omit<ActivityDetail, 'powerCurve'>> {
     const raw = await this.request<Record<string, unknown>>('GET', `/activity/${encodeURIComponent(id)}`, { query: { intervals: 'true' } });
     const activity = mapActivity(raw);
-    if (!activity) throw new IntervalsError(`Activity ${id} not found.`, 404);
+    if (!activity) throw new IntervalsError(`Activity ${id} isn't shared by intervals.icu.`, UNSHARED_STATUS);
     const intervals = (Array.isArray(raw['icu_intervals']) ? raw['icu_intervals'] : []).map(mapInterval).filter((i) => i !== null);
     return { activity, intervals };
   }

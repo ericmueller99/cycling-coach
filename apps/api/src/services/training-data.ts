@@ -15,7 +15,7 @@ import type { IntegrationResolver } from '../integrations';
 
 /**
  * Training data as the app and the coach read it: from our own copy, which the intervals.icu sync
- * keeps (DECISIONS #49). Nothing here calls intervals.icu, except to fill in one ride's detail the
+ * keeps (DECISIONS #49), with any rides from a deployment's own source beside them (#71). Nothing here calls intervals.icu, except to fill in one ride's detail the
  * first time it's needed before the sync got to it.
  */
 export class TrainingData {
@@ -37,7 +37,8 @@ export class TrainingData {
     const stored = await getStoredActivity(this.c, userId, id);
     if (!stored) return null;
     let { activity, intervals, powerCurve } = stored;
-    const icu = !stored.hasDetail || (opts.powerCurve && !powerCurve) ? await this.integrations.intervalsFor(userId) : null;
+    // Another source's ride isn't on intervals.icu, so what's stored is all there is (DECISIONS #71).
+    const icu = !activity.provider && (!stored.hasDetail || (opts.powerCurve && !powerCurve)) ? await this.integrations.intervalsFor(userId) : null;
     if (!stored.hasDetail && icu) {
       try {
         const fresh = await icu.activityDetail(id);

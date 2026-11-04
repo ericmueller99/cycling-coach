@@ -45,9 +45,13 @@ export function RideSummary({ activity }: { activity: CalendarActivity }) {
         <span className="flex min-w-0 items-center gap-1.5 font-semibold">
           <PulseIcon className="shrink-0 text-data" /> <span className="truncate">{activity.name}</span>
         </span>
-        <a href={intervalsUrl(activity.id)} target="_blank" rel="noreferrer" className="shrink-0 text-xs">
-          intervals.icu
-        </a>
+        {activity.provider ? (
+          <span className="shrink-0 text-xs text-muted">{activity.sourceLabel}</span>
+        ) : (
+          <a href={intervalsUrl(activity.id)} target="_blank" rel="noreferrer" className="shrink-0 text-xs">
+            intervals.icu
+          </a>
+        )}
       </div>
       <div className="grid grid-cols-3 gap-2">
         <StatTile label="Time" value={formatWorkoutDuration(activity.movingSec)} />

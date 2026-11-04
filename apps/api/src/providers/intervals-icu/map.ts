@@ -26,11 +26,17 @@ const pos = (v: unknown): number | undefined => {
 };
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v.length > 0 ? v : undefined);
 
+/**
+ * intervals.icu won't share some activities (those from Strava; Garmin's may follow): they come back
+ * as empty placeholders with a `_note`. Nothing to show or coach from, but the ride still exists.
+ */
+function isPlaceholder(raw: Record<string, unknown>): boolean {
+  return raw['_note'] !== undefined && !num(raw['moving_time']);
+}
+
 export function mapActivity(raw: unknown): Activity | null {
   if (!isObj(raw)) return null;
-  // intervals.icu won't share activities it imported from Strava: they come back as empty
-  // placeholders with a `_note`. Nothing to show or coach from.
-  if (raw['_note'] !== undefined && !num(raw['moving_time'])) return null;
+  if (isPlaceholder(raw)) return null;
   const id = str(raw['id']) ?? (num(raw['id']) !== undefined ? String(raw['id']) : undefined);
   const startLocal = str(raw['start_date_local']);
   if (!id || !startLocal) return null;
@@ -70,6 +76,16 @@ export function mapActivity(raw: unknown): Activity | null {
 
 export function mapActivities(raw: unknown): Activity[] {
   return Array.isArray(raw) ? raw.map(mapActivity).filter((a): a is Activity => a !== null) : [];
+}
+
+/** The placeholders in a listing, by id: a ride we stored before it was hidden stays stored (DECISIONS #71). */
+export function hiddenActivityIds(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((r) => {
+    if (!isObj(r) || !isPlaceholder(r)) return [];
+    const id = str(r['id']) ?? (num(r['id']) !== undefined ? String(r['id']) : undefined);
+    return id ? [id] : [];
+  });
 }
 
 export function mapInterval(raw: unknown): ActivityInterval | null {

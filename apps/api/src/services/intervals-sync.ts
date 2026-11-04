@@ -5,8 +5,6 @@ import {
   deltaWindow,
   flatten,
   inferSessionType,
-  matchActivities,
-  missedEventIds,
   parseZwo,
   previousQuarter,
   quarterOf,
@@ -25,12 +23,11 @@ import {
   getEvent,
   getProfile,
   getWorkout,
-  listActivities,
-  listEvents,
   listPendingSync,
   listSyncedEvents,
   listWellness,
   listWorkouts,
+  markDetailUnavailable,
   patchEvent,
   ridesNeedingDetail,
   saveActivities,
@@ -56,10 +53,11 @@ import {
   type WorkoutSegment,
 } from '@cycling-coach/shared';
 import type { IntegrationResolver } from '../integrations';
-import { IntervalsError, isTransient, type IntervalsIcu, type RemoteEvent } from '../providers/intervals-icu';
+import { IntervalsError, isTransient, UNSHARED_STATUS, type IntervalsIcu, type RemoteEvent } from '../providers/intervals-icu';
 import { withoutNameSuffix } from '../providers/intervals-icu/map';
 import type { CalendarService } from './calendar';
 import { reconcile } from './calendar-reconcile';
+import { MATCH_DAYS, settleRides } from './rides';
 
 /**
  * intervals.icu is the hub Garmin, Zwift and Strava feed; we sync from it into our own collections
@@ -78,7 +76,6 @@ import { reconcile } from './calendar-reconcile';
 const EVENT_WINDOW = { back: 21, ahead: 120 };
 /** The full import's last step also reconciles a long calendar span. */
 const EVENT_BACKFILL = { back: 400, ahead: 400 };
-const MATCH_DAYS = 21;
 const WEIGHT_DAYS = 14;
 const CURVE_PERIODS: PowerCurvePeriod[] = ['90d', 'season', '1y', 'allTime'];
 const BEST_PERIODS = new Set<PowerCurvePeriod>(['90d', 'season', 'allTime']);
@@ -386,20 +383,9 @@ export class IntervalsSync {
 
       // 4. Done / missed, from the stored rides — across all history when a full import finishes.
       const matchFrom = finishing ? (full.oldest ?? addDays(today, -400)) : [window.from, addDays(today, -MATCH_DAYS)].sort()[0]!;
-      const [activities, recent] = await Promise.all([listActivities(this.c, userId, matchFrom, today), listEvents(this.c, userId, matchFrom, today)]);
-      const matchable = recent.map((e) => ({ ...e, intervalsEventId: e.intervals?.eventId }));
-      const pairs = matchActivities(
-        matchable,
-        activities.map((a) => ({ id: a.id, startLocal: a.startLocal, name: a.name, sportType: a.type, movingSec: a.movingSec, pairedEventId: a.pairedEventId })),
-        today,
-      );
-      for (const p of pairs) await patchEvent(this.c, userId, p.eventId, { status: 'done', activityId: p.activityId }, now);
-      report.matched = pairs.length;
-      const matchedIds = new Set(pairs.map((p) => p.eventId));
-      for (const id of missedEventIds(matchable.filter((e) => !matchedIds.has(e.id)), today)) {
-        await patchEvent(this.c, userId, id, { status: 'missed' }, now);
-        report.missed++;
-      }
+      const settled = await settleRides(this.c, userId, matchFrom, today, now);
+      report.matched = settled.matched;
+      report.missed += settled.missed;
 
       // 5. Weight: the trend, not the last reading.
       const weight = trendWeight(weighInsFrom(await listWellness(this.c, userId, addDays(today, -WEIGHT_DAYS), today)));
@@ -433,11 +419,11 @@ export class IntervalsSync {
   /** List a window's rides, write what's new or changed, drop what intervals.icu no longer has. */
   private async syncRides(userId: string, from: IsoDate, to: IsoDate, now: Date): Promise<{ listed: number; changed: number; removed: number }> {
     const icu = await this.client(userId);
-    const [remote, stored] = await Promise.all([icu.listActivities(from, to), storedRideRefs(this.c, userId, from, to)]);
-    const { changed, removed } = diffActivities(stored, remote);
+    const [{ rides, hidden }, stored] = await Promise.all([icu.listRides(from, to), storedRideRefs(this.c, userId, from, to)]);
+    const { changed, removed } = diffActivities(stored, rides, hidden);
     await saveActivities(this.c, userId, changed, now);
     await deleteActivities(this.c, userId, removed);
-    return { listed: remote.length, changed: changed.length, removed: removed.length };
+    return { listed: rides.length, changed: changed.length, removed: removed.length };
   }
 
   /** Athlete curves; power bests from them, keeping a higher manual entry (an outdoor ride intervals.icu never saw). */
@@ -483,8 +469,9 @@ export class IntervalsSync {
       const d = await icu.activityDetail(id);
       await saveActivityDetail(this.c, userId, d.activity, d.intervals, this.now());
     } catch (err) {
-      // Deleted in intervals.icu since it was listed (or a Strava placeholder): drop our copy.
+      // Deleted in intervals.icu since it was listed: drop our copy. A hidden ride still exists: keep it.
       if (err instanceof IntervalsError && err.status === 404) await deleteActivities(this.c, userId, [id]);
+      else if (err instanceof IntervalsError && err.status === UNSHARED_STATUS) await markDetailUnavailable(this.c, userId, id, this.now());
       else throw err;
     }
   }

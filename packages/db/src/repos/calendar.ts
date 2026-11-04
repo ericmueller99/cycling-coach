@@ -67,6 +67,18 @@ export async function patchEvent(
   return doc ? toEvent(doc) : null;
 }
 
+/**
+ * One record of a ride replaced by another (DECISIONS #71): sessions and feedback follow it. Feedback
+ * already on the new record stays, and the old one is left behind.
+ */
+export async function replaceRideReferences(c: Collections, userId: string, id: string, twinId: string, now: Date): Promise<void> {
+  await c.calendarEvents.updateMany({ userId, activityId: id }, { $set: { activityId: twinId, updatedAt: now } });
+  await c.calendarEvents.updateMany({ userId, extraActivityIds: id }, { $set: { 'extraActivityIds.$': twinId, updatedAt: now } });
+  await c.sessionFeedback.updateMany({ userId, activityId: id }, { $set: { activityId: twinId, updatedAt: now } }).catch((err: { code?: number }) => {
+    if (err.code !== 11000) throw err;
+  });
+}
+
 /** The Mongo update for a patch: `$set` what it sets, `$unset` what it clears (a set value wins). */
 export function eventPatchUpdate(patch: CalendarEventPatch & { activityId?: string | undefined }, now: Date): UpdateFilter<CalendarEventDoc> {
   const { unset, ...fields } = patch;

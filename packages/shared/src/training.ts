@@ -1,9 +1,13 @@
 /**
- * Training data from intervals.icu, in our own shapes. Produced by
- * apps/api/src/providers/intervals-icu; nothing outside that folder sees intervals.icu payloads.
+ * Training data in our own shapes, from intervals.icu (produced by apps/api/src/providers/intervals-icu;
+ * nothing outside that folder sees intervals.icu payloads) or a deployment's own ride source (DECISIONS #71).
  */
 export interface Activity {
   id: string;
+  /** Which ride source this came from, when it isn't intervals.icu (DECISIONS #71). Its ids start with `<provider>:`. */
+  provider?: string | undefined;
+  /** How to name the source on screen, for a ride with a `provider`. */
+  sourceLabel?: string | undefined;
   name: string;
   description?: string | undefined;
   /** intervals.icu sport type, e.g. "VirtualRide", "Ride". */

@@ -34,9 +34,11 @@ import {
   createEventSearch,
   deleteEventSearch,
   listEventSearches,
+  saveActivities,
+  deleteActivities,
 } from '@cycling-coach/db';
-import { sessionRideIds, todayIn } from '@cycling-coach/core';
-import type { IntegrationStatus, ZwiftStatus } from '@cycling-coach/shared';
+import { addDays, sessionRideIds, todayIn } from '@cycling-coach/core';
+import type { Activity, IntegrationStatus, ZwiftStatus } from '@cycling-coach/shared';
 import type { Db } from 'mongodb';
 import { createApp, type AppServices } from './app';
 import { authConfig, createAuth, type Auth, type AuthExtension } from './auth';
@@ -55,9 +57,10 @@ import { FoodAiService } from './services/food-ai';
 import { OpenFoodFacts } from './providers/openfoodfacts';
 import { photoStoreFromEnv } from './providers/storage/s3';
 import { UsdaClient } from './providers/usda';
-import { getThreadView, sendMessage, startThread, type CoachDeps } from './services/coach';
+import { getThreadView, sendMessage, startThread, type CoachContext, type CoachDeps } from './services/coach';
 import { CoachFoodService } from './services/coach-food';
 import { IntervalsSync } from './services/intervals-sync';
+import { MATCH_DAYS, settleRides } from './services/rides';
 import { TrainingData } from './services/training-data';
 import { weightHistory } from './services/weight';
 import { ZwiftSync } from './services/zwift-sync';
@@ -92,6 +95,8 @@ export interface CoreOptions {
   spendGuard?: SpendGuard;
   /** Which model does what, asked per turn. Default: `DEFAULT_ROUTER` (DECISIONS #69). */
   router?: (ctx: CoreContext) => RouterSource;
+  /** More for the coach to know each turn. Default: nothing (DECISIONS #72). */
+  coachContext?: CoachContext;
   /**
    * Appended to workout names pushed to intervals.icu, e.g. " via example.com". Zwift titles the ride
    * after the workout, so it shows wherever the ride is shared. Stripped from names read back.
@@ -129,6 +134,14 @@ export interface Core {
    * record, for FTP (DECISIONS #64).
    */
   intervalsChanged(userId: string, opts?: { settings?: boolean }): Promise<void>;
+  /** Rides from a source of the deployment's own (DECISIONS #71). */
+  rides: {
+    /** Store rides. Each needs a `provider` and an id starting `<provider>:`; a known id is replaced. */
+    save(userId: string, rides: readonly Activity[]): Promise<void>;
+    remove(userId: string, ids: readonly string[]): Promise<void>;
+    /** After saving: drop what intervals.icu also has, then tick off sessions. */
+    settle(userId: string): Promise<void>;
+  };
   /** Hand back job leases and close the database. */
   close(): Promise<void>;
 }
@@ -249,6 +262,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     intervalsConnected: (userId) => sync.connected(userId),
     events: zwiftEvents,
     spendGuard,
+    ...(opts.coachContext ? { coachContext: opts.coachContext } : {}),
     food: { food, energy, coachFood },
     now,
   };
@@ -517,6 +531,22 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
       if (settings) await sync.markAthleteStale(userId);
       await jobs.kickSoon(JOB.delta, userId, WEBHOOK_DEBOUNCE_MS);
     },
+    rides: {
+      save: async (userId, rides) => {
+        const stray = rides.find((r) => !r.provider || !r.id.startsWith(`${r.provider}:`));
+        if (stray) throw new Error(`Ride ${stray.id} needs a provider and an id starting with it`);
+        await saveActivities(c, userId, rides, now());
+      },
+      remove: async (userId, ids) => {
+        await deleteActivities(c, userId, ids.filter((id) => id.includes(':')));
+      },
+      settle: async (userId) => {
+        const profile = await getProfile(c, userId);
+        if (!profile) return;
+        const today = todayIn(profile.timezone, now());
+        await settleRides(c, userId, addDays(today, -MATCH_DAYS), today, now());
+      },
+    },
     close: async () => {
       // Hand back leases so another process can pick the jobs up at once.
       await jobs.stop().catch(() => {});
@@ -528,6 +558,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
 export type { CredentialSource, FeatureSource, IntegrationResolver } from './integrations';
 export type { AuthExtension } from './auth';
 export type { AiUse, SpendDecision, SpendGuard } from './lib/spend';
+export type { CoachContext } from './services/coach';
 export { JobRunner } from './jobs';
 export { IntervalsError, IntervalsIcu } from './providers/intervals-icu';
 export { serveSpa } from './lib/spa';

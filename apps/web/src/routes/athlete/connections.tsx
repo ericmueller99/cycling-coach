@@ -70,7 +70,7 @@ export function FullSyncBar({ progress }: { progress: FullSyncProgress }) {
 
 export function ConnectionsSection() {
   const me = useMe();
-  const { intervalsConnect, usageCard: UsageCard } = useExtensions();
+  const { intervalsConnect, extraConnections, usageCard: UsageCard } = useExtensions();
   const intervals = useIntervals();
   const sync = useIntervalsSync();
   const full = useIntervalsFullSync();
@@ -162,6 +162,8 @@ export function ConnectionsSection() {
 
       {/* Only accounts that may use a Zwift login (DECISIONS #54); hand-entered zFTP never needs one. */}
       {me.data?.features.zwiftAccount && <ZwiftConnection />}
+
+      {extraConnections}
 
       {UsageCard && <UsageCard />}
     </Card>

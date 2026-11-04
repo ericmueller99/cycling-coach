@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { AppBar } from '../../components/AppBar';
 import { SectionTabs } from '../../components/SectionTabs';
 import { ErrorNote, Spinner } from '../../components/ui';
+import { useExtensions } from '../../extensions';
 import { errorMessage, useDashboard, useIntervals, useProfile } from '../../lib/queries';
 import { useIsMobile } from '../../lib/useIsMobile';
 import { BudgetSection } from './BudgetSection';
@@ -43,6 +44,7 @@ export function AthletePage({ tab, addWeightGoal }: { tab: AthleteTab; addWeight
   const { data, isPending, error } = useProfile();
   const dashboard = useDashboard();
   const intervals = useIntervals();
+  const { athleteBodyCards } = useExtensions();
   const mobile = useIsMobile();
   const navigate = useNavigate();
   if (isPending) return <Spinner />;
@@ -75,7 +77,12 @@ export function AthletePage({ tab, addWeightGoal }: { tab: AthleteTab; addWeight
             <EnergySection today={today} />
           </>
         }
-        right={<BudgetSection today={today} onAddWeightGoal={() => void navigate({ to: '/athlete/$tab', params: { tab: 'goals' }, search: { addWeightGoal: true } })} />}
+        right={
+          <>
+            {athleteBodyCards}
+            <BudgetSection today={today} onAddWeightGoal={() => void navigate({ to: '/athlete/$tab', params: { tab: 'goals' }, search: { addWeightGoal: true } })} />
+          </>
+        }
       />
     );
   } else {

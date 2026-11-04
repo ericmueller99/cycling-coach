@@ -1,8 +1,9 @@
-import { collections, ensureIndexes, saveProfile, type Collections } from '@cycling-coach/db';
+import { collections, ensureIndexes, listActivities, saveActivities, saveProfile, type Collections } from '@cycling-coach/db';
 import { MongoClient } from 'mongodb';
 import { MongoMemoryServer } from 'mongodb-memory-server-core';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { IntervalsError, type IntervalsIcu } from '../providers/intervals-icu';
+import type { Activity } from '@cycling-coach/shared';
+import { IntervalsError, UNSHARED_STATUS, type IntervalsIcu } from '../providers/intervals-icu';
 import type { CalendarService } from './calendar';
 import { IntervalsSync } from './intervals-sync';
 
@@ -28,7 +29,7 @@ const U = 'aaaaaaaaaaaaaaaaaaaaaaaa';
 const NOW = new Date('2026-11-03T12:00:00Z');
 
 beforeEach(async () => {
-  await Promise.all([c.integrations.deleteMany({}), c.profiles.deleteMany({})]);
+  await Promise.all([c.integrations.deleteMany({}), c.profiles.deleteMany({}), c.activities.deleteMany({})]);
   await saveProfile(c, U, { ftpZwift: 250, weightKg: 70, weightSource: 'manual', timezone: 'UTC' }, NOW);
   // An athlete who has synced before: history imported, athlete record fresh.
   await c.integrations.insertOne({
@@ -45,7 +46,7 @@ beforeEach(async () => {
 /** intervals.icu with nothing new on it. */
 const quiet = () => ({
   listEvents: vi.fn(async () => []),
-  listActivities: vi.fn(async () => []),
+  listRides: vi.fn(async () => ({ rides: [] as Activity[], hidden: [] as string[] })),
   wellness: vi.fn(async () => []),
   powerCurves: vi.fn(async () => []),
   athlete: vi.fn(async () => ({ athleteId: 'i1', ftp: 260 })),
@@ -106,6 +107,40 @@ describe('the athlete record (DECISIONS #64)', () => {
 
     await sync.run(U);
     expect(icu.athlete).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('rides the sync must leave alone (DECISIONS #71)', () => {
+  const ride = (id: string, over: Partial<Activity> = {}): Activity => ({ id, name: 'Ride', type: 'Ride', startLocal: '2026-11-02T09:00:00', distanceM: 1000, movingSec: 3600, elapsedSec: 3600, ...over });
+  const ids = async () => (await listActivities(c, U, '2026-10-01', '2026-11-03')).map((a) => a.id).sort();
+
+  it('never touches another source’s rides', async () => {
+    await saveActivities(c, U, [ride('garmin:1', { provider: 'garmin' })], NOW);
+    const icu = { ...quiet(), activityDetail: vi.fn() };
+    await syncWith(icu).run(U);
+    expect(await ids()).toEqual(['garmin:1']);
+    expect(icu.activityDetail).not.toHaveBeenCalled();
+  });
+
+  it('still removes a ride deleted from intervals.icu', async () => {
+    await saveActivities(c, U, [ride('i1')], NOW);
+    await syncWith({ ...quiet(), activityDetail: vi.fn() }).run(U);
+    expect(await ids()).toEqual([]);
+  });
+
+  it('keeps a stored ride intervals.icu has started to hide', async () => {
+    await saveActivities(c, U, [ride('i1')], NOW);
+    const activityDetail = vi.fn(async () => Promise.reject(new IntervalsError('hidden', UNSHARED_STATUS)));
+    await syncWith({ ...quiet(), listRides: vi.fn(async () => ({ rides: [], hidden: ['i1'] })), activityDetail }).run(U);
+    expect(await ids()).toEqual(['i1']);
+  });
+
+  it('stops fetching detail for a hidden ride, without deleting it', async () => {
+    await saveActivities(c, U, [ride('i1')], NOW);
+    const activityDetail = vi.fn(async () => Promise.reject(new IntervalsError('hidden', UNSHARED_STATUS)));
+    await syncWith({ ...quiet(), listRides: vi.fn(async () => ({ rides: [], hidden: ['i1'] })), activityDetail }).run(U);
+    expect(await ids()).toEqual(['i1']);
+    expect((await c.activities.findOne({ userId: U, id: 'i1' }))?.detailAt).toEqual(NOW);
   });
 });
 

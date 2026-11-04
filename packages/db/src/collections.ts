@@ -135,7 +135,7 @@ export interface ThreadDoc {
    * The calendar and athlete text the coach has already been shown in this context, so per-turn
    * context messages only repeat what changed (packages/coach/src/context.ts).
    */
-  seen: { calendar?: string; athlete: string };
+  seen: { calendar?: string; athlete: string; extra?: string };
   /** When a call last started on the build model, for the one warm follow-up (`warmFollowUp`). */
   lastBuildStartedAt?: Date;
   /** That one follow-up has been used, so the next turn goes back to the chat model. */
