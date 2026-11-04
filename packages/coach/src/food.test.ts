@@ -62,7 +62,7 @@ describe('FoodAi.readNutrition', () => {
 
   it('sends the images with a strict JSON schema to the small model', async () => {
     const { client, calls } = fake({ content: [{ type: 'text', text: JSON.stringify(reading) }], stop_reason: 'end_turn' });
-    const ai = new FoodAi({ apiKey: 'k', model: 'claude-haiku-5-5' }, client);
+    const ai = new FoodAi({ apiKey: 'k' }, client);
     const r = await ai.readNutrition(input);
     expect(r.ok && r.value.name).toBe('Greek yogurt, plain 0%');
     const call = calls[0] as { model: string; output_config: { effort: string; format: { type: string; schema: { additionalProperties: boolean; required: string[] } } }; messages: { content: { type: string }[] }[] };
@@ -83,14 +83,14 @@ describe('FoodAi.readNutrition', () => {
       ],
       stop_reason: 'end_turn',
     });
-    const r = await new FoodAi({ apiKey: 'k', model: 'm' }, client).readNutrition(input);
+    const r = await new FoodAi({ apiKey: 'k' }, client).readNutrition(input);
     expect(r.ok).toBe(true);
   });
 
   it('reports refusals and bad output without throwing', async () => {
-    const refused = await new FoodAi({ apiKey: 'k', model: 'm' }, fake({ content: [], stop_reason: 'refusal' }).client).readNutrition(input);
+    const refused = await new FoodAi({ apiKey: 'k' }, fake({ content: [], stop_reason: 'refusal' }).client).readNutrition(input);
     expect(refused).toMatchObject({ ok: false, error: expect.stringMatching(/declined/) });
-    const garbage = await new FoodAi({ apiKey: 'k', model: 'm' }, fake({ content: [{ type: 'text', text: '{"found": true}' }], stop_reason: 'end_turn' }).client).readNutrition(input);
+    const garbage = await new FoodAi({ apiKey: 'k' }, fake({ content: [{ type: 'text', text: '{"found": true}' }], stop_reason: 'end_turn' }).client).readNutrition(input);
     expect(garbage).toMatchObject({ ok: false });
   });
 });
@@ -99,7 +99,7 @@ describe('FoodAi.parsePhrase', () => {
   it('sends the catalog as the cached system prefix and the change with the current list', async () => {
     const parse = { dayOffset: 0, slot: 'Breakfast', time: null, items: [{ heard: 'half a bagel', ref: 'f1', alternatives: [], quantity: 0.5, unit: null }] };
     const { client, calls } = fake({ content: [{ type: 'text', text: JSON.stringify(parse) }], stop_reason: 'end_turn' });
-    const r = await new FoodAi({ apiKey: 'k', model: 'claude-haiku-5-5' }, client).parsePhrase({
+    const r = await new FoodAi({ apiKey: 'k' }, client).parsePhrase({
       phrase: 'make it half a bagel',
       catalog: [{ id: 'f1', name: 'Blueberry bagel', aliases: ['bagel'], units: ['bagel', 'g'], usual: '1 bagel' }],
       slots: ['Breakfast', 'Lunch'],

@@ -1,5 +1,6 @@
 import { Link } from '@tanstack/react-router';
 import { useId, useState, type InputHTMLAttributes, type ReactNode } from 'react';
+import { BrandLogo } from '../../components/BrandLogo';
 import { ChevronLeft, LogoIcon } from '../../components/icons';
 import { useExtensions } from '../../extensions';
 import { passwordMeter } from '../../lib/password';
@@ -12,8 +13,9 @@ import { MIN_PASSWORD_LENGTH } from '@cycling-coach/shared';
  * layout. No app shell.
  */
 
-export function BrandMark({ size = 34, text = 16 }: { size?: number; text?: number }) {
-  const { brand } = useExtensions();
+export function BrandMark({ size = 34, text = 16, tone = 'light' }: { size?: number; text?: number; tone?: 'light' | 'dark' }) {
+  const { brand, logo } = useExtensions();
+  if (logo) return <BrandLogo logo={logo} alt={brand} height={size + 6} tone={tone} />;
   return (
     <div className="flex items-center gap-2.5">
       <div className="flex items-center justify-center rounded-[9px] bg-accent text-on-accent" style={{ width: size, height: size }}>
@@ -60,7 +62,7 @@ export function AuthLayout({ showcase, phone, children }: { showcase: Showcase; 
     return (
       <div className="flex min-h-dvh flex-col bg-ink">
         <header className="flex flex-col gap-5 px-5 py-7 text-white">
-          <BrandMark size={32} />
+          <BrandMark size={32} tone="dark" />
           <div className="flex flex-col gap-2.5" aria-hidden="true">
             <div className="max-w-[82%] self-end rounded-[16px_16px_4px_16px] bg-[#2A3140] px-[13px] py-[9px] text-[#E6EEF9]">What should I ride today?</div>
             <div className="flex items-start gap-2">

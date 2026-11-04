@@ -51,7 +51,6 @@ there's no training data, and the coach says so.
 | `ZWIFT_USERNAME`, `ZWIFT_PASSWORD` | zFTP, zMAP and weight pulled from Zwift every 6 hours, and "Get more events" (about a week of events, with sign-up counts). **Read [Zwift login](#zwift-login-at-your-own-risk) first.** Leave them blank and you can enter zFTP by hand. |
 | `USDA_FDC_API_KEY` | A free [USDA FoodData Central](https://fdc.nal.usda.gov/api-key-signup) key for food search. Without it, a shared demo key is used (30 requests an hour). |
 | `S3_HOSTNAME`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKETNAME`, `S3_REGION` | An S3-compatible bucket for keeping nutrition-label photos. Without it, photos are read but not kept. |
-| `CLAUDE_MODEL`, `CLAUDE_EFFORT`, `FOOD_AI_MODEL` | Which Claude models to use and how hard the coach thinks. The defaults are in `.env.example`. |
 | `APP_PORT`, `PUBLIC_URL` | The host port (default `8787`) and the address you open the app at (default `http://localhost:8787`). |
 
 ### Zwift login (at your own risk)

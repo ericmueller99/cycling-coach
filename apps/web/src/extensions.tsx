@@ -5,7 +5,7 @@ import { CalendarIcon, ChatIcon, FlagIcon, LibraryIcon, TargetIcon } from './com
 
 /**
  * The places where an app built on this one (DECISIONS #58) puts its own pieces: extra navigation,
- * its name, what sits under the sign-in form, how an athlete connects intervals.icu or Zwift, the
+ * its name and logo, what sits under the sign-in form, how an athlete connects intervals.icu or Zwift, the
  * usage row and extra Account cards. Every slot has a default, which is the self-hosted app.
  */
 
@@ -34,6 +34,11 @@ export interface ConnectSlot {
 export interface Extensions {
   /** The product name: sidebar, sign-in page, share links. */
   brand: string;
+  /**
+   * Logo images for light and dark backgrounds, shown instead of the tile and name (DECISIONS #70).
+   * Self-host: none.
+   */
+  logo: { light: string; dark: string } | null;
   /** Sidebar and tab bar items, given the core five. */
   navItems: (core: readonly NavItem[]) => readonly NavItem[];
   /** Under the sign-in form, for anything extra (sign-up and reset links come from the server's auth config). */
@@ -69,6 +74,7 @@ export const CORE_NAV: readonly NavItem[] = [
 /** The self-hosted app: credentials come from the server's env and apply to the owner account only (DECISIONS #53). */
 export const defaultExtensions: Extensions = {
   brand: 'Coach',
+  logo: null,
   navItems: (core) => core,
   loginFooter: null,
   legalLinks: null,

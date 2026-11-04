@@ -3,17 +3,19 @@ import { nutritionReadingSchema, phraseParseSchema, type NutritionReading, type 
 import { z } from 'zod';
 import type { CallUsage } from './engine';
 import { priceUsage } from './pricing';
+import { defaultRouter, type RouterSource } from './router';
 import { toStrictSchema } from './schema';
 
 /**
  * The food module's model calls (DECISIONS #33). A small, cheap model —
- * `claude-haiku-5-5` by default (FOOD_AI_MODEL) — not the coach's Opus. Every call returns strict
+ * the router's `small` job, `claude-haiku-5-5` by default — not the coach's Opus. Every call returns strict
  * JSON (structured outputs) that is validated again with Zod before anything uses it, and nothing
  * here writes: the caller shows the result for the athlete to confirm.
  */
 export interface FoodAiConfig {
   apiKey: string;
-  model: string;
+  /** Read per call, so a change applies straight away. Defaults to `DEFAULT_ROUTER`. */
+  router?: RouterSource | undefined;
 }
 
 export type FoodAiResult<T> = { ok: true; value: T; usage: CallUsage } | { ok: false; error: string; usage?: CallUsage | undefined };
@@ -100,16 +102,11 @@ export const jsonFormat = (schema: z.ZodType) => ({ type: 'json_schema' as const
 
 export class FoodAi {
   private readonly client: Anthropic;
+  private readonly router: RouterSource;
 
-  constructor(
-    private readonly config: FoodAiConfig,
-    client?: Anthropic,
-  ) {
+  constructor(config: FoodAiConfig, client?: Anthropic) {
     this.client = client ?? new Anthropic({ apiKey: config.apiKey, maxRetries: 2, timeout: 90_000 });
-  }
-
-  get model() {
-    return this.config.model;
+    this.router = config.router ?? defaultRouter;
   }
 
   /**
@@ -124,8 +121,9 @@ export class FoodAi {
   private async structuredWithSystem<T>(args: { system: string[]; content: Anthropic.ContentBlockParam[]; schema: z.ZodType<T>; effort: 'low' | 'medium'; maxTokens: number }): Promise<FoodAiResult<T>> {
     let res: Anthropic.Message;
     try {
+      const { small } = await this.router();
       res = await this.client.messages.create({
-        model: this.config.model,
+        model: small,
         max_tokens: args.maxTokens,
         system: args.system.map((text, i) => ({ type: 'text' as const, text, ...(i === args.system.length - 1 ? { cache_control: { type: 'ephemeral' as const } } : {}) })),
         output_config: { effort: args.effort, format: jsonFormat(args.schema) },

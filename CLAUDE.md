@@ -86,10 +86,12 @@ Fixtures use made-up ids, names and domains. Never commit `.env`, keys or a real
 
 | Use | Model | Notes |
 |---|---|---|
-| Everyday coaching | `claude-sonnet-5-5` (`CLAUDE_MODEL`) | adaptive thinking, `effort` from `CLAUDE_EFFORT` (set it: Sonnet's own default is `high`), `fallbacks: "default"` |
-| Plans and workouts | `claude-opus-5-5` (`CLAUDE_BUILD_MODEL`) | effort from `CLAUDE_BUILD_EFFORT`. Tools marked `tier: 'build'` move the turn here (DECISIONS #65). Same as `CLAUDE_MODEL` means one model, no routing |
-| Thread titles | `FOOD_AI_MODEL` | effort `low` |
-| Food: label photos, "log with words" | `claude-haiku-5-5` (`FOOD_AI_MODEL`) | `FoodAi` in `packages/coach/src/food.ts`; structured outputs, Zod-validated; never Opus (DECISIONS #33–34) |
+| Everyday coaching | `claude-sonnet-5-5` (router `chat`) | adaptive thinking, effort `medium` (set it: Sonnet's own default is `high`), `fallbacks: "default"` |
+| Plans and workouts | `claude-opus-5-5` (router `build`) | effort `medium`. Tools marked `tier: 'build'` move the turn here (DECISIONS #65). The same model as `chat` means no routing |
+| Thread titles | router `small` | effort `low` |
+| Food: label photos, "log with words" | `claude-haiku-5-5` (router `small`) | `FoodAi` in `packages/coach/src/food.ts`; structured outputs, Zod-validated; never Opus (DECISIONS #33–34) |
+
+The defaults are `DEFAULT_ROUTER` in `packages/coach/src/router.ts`, not env (DECISIONS #69). `createCore`'s `router` option replaces them.
 
 Opus 5.5 and Sonnet 5.5: forced `tool_choice` (`any`/`tool`) returns 400 — use `auto` + prompt + strict tools.
 Minimum cacheable prefix 512 tokens. Tools and persona alone are about 15.5K tokens, in front of every

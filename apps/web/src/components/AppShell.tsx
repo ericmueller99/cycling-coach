@@ -5,6 +5,7 @@ import { dismissNotice, useAnyRunningTurn, useTurnNotice } from '../lib/coachTur
 import { useDashboard, useFullSyncRefresh, useMe } from '../lib/queries';
 import { fullSyncFraction } from '../routes/athlete/connections';
 import { Avatar } from './Avatar';
+import { BrandLogo } from './BrandLogo';
 import { CORE_NAV, useExtensions, type NavItem } from '../extensions';
 import { ChevronRight, LogoIcon, XIcon } from './icons';
 import { VerifyEmailBanner } from './VerifyEmailBanner';
@@ -163,19 +164,27 @@ export function AppShell({ children }: { children: ReactNode }) {
   const working = useAnyRunningTurn();
   const importing = useFullSyncRefresh();
   const nav = useNav();
-  const { brand } = useExtensions();
+  const { brand, logo } = useExtensions();
+  const ftp = <div className="text-xs text-muted">{data ? (data.snapshot.ftpZwift ? `FTP ${data.snapshot.ftpZwift} W` : 'FTP not set yet') : ' '}</div>;
   return (
     <div className="flex min-h-dvh bg-bg text-ink">
       <nav aria-label="Main" className="sticky top-0 flex h-dvh w-[220px] shrink-0 flex-col gap-1 self-start border-r border-line bg-surface px-3.5 py-5 mobile:hidden">
-        <div className="flex items-center gap-2.5 px-2.5 pt-1.5 pb-5">
-          <div className="flex h-[34px] w-[34px] items-center justify-center rounded-[9px] bg-accent text-on-accent">
-            <LogoIcon />
+        {logo ? (
+          <div className="flex flex-col gap-1 px-2.5 pt-1.5 pb-5">
+            <BrandLogo logo={logo} alt={brand} height={40} />
+            {ftp}
           </div>
-          <div>
-            <div className="text-base font-bold">{brand}</div>
-            <div className="text-xs text-muted">{data ? (data.snapshot.ftpZwift ? `FTP ${data.snapshot.ftpZwift} W` : 'FTP not set yet') : ' '}</div>
+        ) : (
+          <div className="flex items-center gap-2.5 px-2.5 pt-1.5 pb-5">
+            <div className="flex h-[34px] w-[34px] items-center justify-center rounded-[9px] bg-accent text-on-accent">
+              <LogoIcon />
+            </div>
+            <div>
+              <div className="text-base font-bold">{brand}</div>
+              {ftp}
+            </div>
           </div>
-        </div>
+        )}
         {nav.map(({ to, label, icon: Icon, match }) => {
           const active = match(path);
           return (

@@ -1,5 +1,6 @@
 import { useNavigate } from '@tanstack/react-router';
 import { useState } from 'react';
+import { BrandLogo } from '../components/BrandLogo';
 import { ExpandIcon, LogoIcon } from '../components/icons';
 import { useExtensions } from '../extensions';
 import { CookMode } from '../components/recipe/CookMode';
@@ -14,7 +15,7 @@ import { useSharedRecipe } from '../lib/foodQueries';
  */
 export function SharedRecipePage({ token, cookFor }: { token: string; cookFor?: number | undefined }) {
   const navigate = useNavigate();
-  const { brand } = useExtensions();
+  const { brand, logo } = useExtensions();
   const q = useSharedRecipe(token);
   const [cooking, setCooking] = useState(false);
   const d = q.data;
@@ -26,11 +27,17 @@ export function SharedRecipePage({ token, cookFor }: { token: string; cookFor?: 
     <div className="min-h-dvh bg-bg pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
       <header className="border-b border-line bg-surface">
         <div className="mx-auto flex max-w-[760px] items-center gap-2.5 px-4 py-3">
-          <span className="flex h-7 w-7 items-center justify-center rounded-[8px] bg-accent text-on-accent">
-            <LogoIcon size={14} />
-          </span>
-          <span className="font-semibold">{brand}</span>
-          {d && <span className="ml-auto text-[13px] text-muted">Shared by {d.sharedBy}</span>}
+          {logo ? (
+            <BrandLogo logo={logo} alt={brand} height={34} />
+          ) : (
+            <>
+              <span className="flex h-7 w-7 items-center justify-center rounded-[8px] bg-accent text-on-accent">
+                <LogoIcon size={14} />
+              </span>
+              <span className="font-semibold">{brand}</span>
+            </>
+          )}
+          {d &&<span className="ml-auto text-[13px] text-muted">Shared by {d.sharedBy}</span>}
         </div>
       </header>
       <main className="mx-auto flex max-w-[760px] flex-col gap-5 px-4 pt-5 pb-12">

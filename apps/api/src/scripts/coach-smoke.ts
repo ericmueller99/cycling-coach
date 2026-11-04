@@ -8,7 +8,7 @@
  * Run after changing tools, schemas, the persona or engine request parameters: some failures (like
  * "compiled grammar is too large") only show up against the real API.
  */
-import { CoachEngine, COACH_PERSONA, type ApiMessageParam, type CallUsage, type CoachPorts, type TurnRoute } from '@cycling-coach/coach';
+import { CoachEngine, COACH_PERSONA, DEFAULT_ROUTER, type ApiMessageParam, type CallUsage, type CoachPorts, type TurnRoute } from '@cycling-coach/coach';
 import { loadEnv } from '../lib/env';
 
 const env = loadEnv(process.env);
@@ -18,11 +18,9 @@ if (!env.CLAUDE_API_KEY) {
 }
 const engine = new CoachEngine({
   apiKey: env.CLAUDE_API_KEY,
-  model: env.CLAUDE_MODEL,
-  effort: 'low',
-  buildModel: env.CLAUDE_BUILD_MODEL,
-  buildEffort: 'low',
+  router: () => ({ ...DEFAULT_ROUTER, chat: { ...DEFAULT_ROUTER.chat, effort: 'low' }, build: { ...DEFAULT_ROUTER.build, effort: 'low' } }),
 });
+const buildModel = await engine.buildModel();
 const unused = () => {
   throw new Error('no tools expected here in the smoke test');
 };
@@ -87,10 +85,7 @@ if (!second.ok) fail('The coach request was rejected.');
 console.log(second.cacheRead > 0 ? 'prompt cache: hit ✓' : 'prompt cache: MISS — something in the prefix varies between requests');
 if (second.cacheRead === 0) process.exit(1);
 
-if (!engine.buildModel) {
-  console.log('one model configured: skipping the routing checks');
-  process.exit(0);
-}
+if (!buildModel) fail('The router has one model, so nothing routes.');
 
 // A build tool moves the turn to the build model: the live stream has to stop cleanly.
 const ask: ApiMessageParam[] = [
@@ -99,7 +94,7 @@ const ask: ApiMessageParam[] = [
 ];
 const built = await turn('build', ask);
 if (!built.ok) fail('The build turn failed.');
-if (built.moved !== engine.buildModel) fail(`The turn never moved to ${engine.buildModel}.`);
+if (built.moved !== buildModel) fail(`The turn never moved to ${buildModel}.`);
 console.log('moved to the build model ✓');
 
 // One thread across both models, the way routing uses it. Build-model thinking can't be read by the

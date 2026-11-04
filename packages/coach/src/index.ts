@@ -2,6 +2,7 @@ export * from './context';
 export * from './engine';
 export * from './pricing';
 export { COACH_PERSONA } from './prompt';
+export * from './router';
 export {
   activityChip,
   COACH_TOOLS,

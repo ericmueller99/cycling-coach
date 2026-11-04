@@ -1,20 +1,13 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { CoachEvent, CoachTier, CoachUsage, IsoDate, TurnStop, UiBlock } from '@cycling-coach/shared';
 import { estimateOutputTokens, priceUsage } from './pricing';
+import { defaultRouter, routes, type Effort, type ModelRouter, type RouterSource } from './router';
 import { findTool, runTool, TOOL_DEFINITIONS, type CoachPorts } from './tools';
-
-export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 export interface CoachConfig {
   apiKey: string;
-  /** Everyday coaching. */
-  model: string;
-  effort: Effort;
-  /** Plans and workouts. Unset, or the same as `model`, means one model and no routing. */
-  buildModel?: string | undefined;
-  buildEffort?: Effort | undefined;
-  /** Thread titles. Defaults to `model`. */
-  titleModel?: string | undefined;
+  /** Which model does what. Defaults to `DEFAULT_ROUTER`. */
+  router?: RouterSource | undefined;
 }
 
 /** A message the engine produced and the caller must append to the thread, in order. */
@@ -33,6 +26,8 @@ export interface CallUsage extends CoachUsage {
   stopReason: string | null;
   /** Which coach route paid for this call, whatever model ended up serving it. Food calls have none. */
   tier?: CoachTier;
+  /** The effort it ran at. Food calls have none. */
+  effort?: Effort;
   /** A stopped stream never reports its output tokens, so they're estimated. */
   estimated?: boolean;
 }
@@ -96,43 +91,35 @@ export function withoutDeclinedAttempt(content: Anthropic.Beta.BetaContentBlock[
  */
 export class CoachEngine {
   private readonly client: Anthropic;
+  private readonly router: RouterSource;
 
   /** `client` is injectable for tests; production builds one from the config. */
-  constructor(
-    private readonly config: CoachConfig,
-    client?: Anthropic,
-  ) {
+  constructor(config: CoachConfig, client?: Anthropic) {
     // CLAUDE_API_KEY is passed explicitly so nothing else in the environment is picked up implicitly.
     this.client = client ?? new Anthropic({ apiKey: config.apiKey, maxRetries: 2, timeout: 15 * 60 * 1000 });
-  }
-
-  get model() {
-    return this.config.model;
+    this.router = config.router ?? defaultRouter;
   }
 
   /** The build model, or null when there's only one model and so nothing to route. */
-  get buildModel(): string | null {
-    const { buildModel, model } = this.config;
-    return buildModel && buildModel !== model ? buildModel : null;
-  }
-
-  private choice(tier: CoachTier) {
-    const { model, effort, buildModel, buildEffort } = this.config;
-    return tier === 'build' && buildModel ? { model: buildModel, effort: buildEffort ?? effort } : { model, effort };
+  async buildModel(): Promise<string | null> {
+    const router = await this.router();
+    return routes(router) ? router.build.model : null;
   }
 
   /**
    * One coach turn. It runs on the chat model until the model opens a build tool: that call is
    * stopped, nothing from it is kept, and the same messages go to the build model, so a plan is
    * really written there and not copied from a draft. The chat model's earlier tool calls stay in
-   * the history, and the build model reads its thinking.
+   * the history, and the build model reads its thinking. The router is read once, here, so a change
+   * made during a turn starts with the next one.
    */
   async *runTurn(args: RunTurnArgs): AsyncGenerator<CoachEvent> {
     const total = emptyUsage();
     const messages = [...args.messages];
-    const routed = this.buildModel !== null;
+    const router = await this.router();
+    const choice = (t: CoachTier) => (t === 'build' ? router.build : router.chat);
     const route = args.route ?? { start: 'chat', canBuild: true };
-    let canBuild = routed && route.canBuild;
+    let canBuild = routes(router) && route.canBuild;
     let tier: CoachTier = canBuild ? route.start : 'chat';
     /** A refusal has already moved this turn once, so a second one ends it. */
     let refusalMoved = false;
@@ -161,7 +148,7 @@ export class CoachEngine {
       }
       iteration++;
 
-      const { model, effort } = this.choice(tier);
+      const { model, effort } = choice(tier);
       const stream = this.client.beta.messages.stream(
         {
           model,
@@ -187,12 +174,12 @@ export class CoachEngine {
       /** Tool chips and text shown from this call, to take back if the call is dropped. */
       const shownChips: string[] = [];
 
-      const recordStopped = async () => {
+      const recordStopped = async (stopReason: 'stopped' | 'handoff' = 'stopped') => {
         if (settled || !opened) return;
         settled = true;
         const tokens = { ...opened, output_tokens: estimateOutputTokens(Date.now() - startedAt) };
         const priced = priceUsage(model, tokens);
-        await args.recordUsage({ ...priced.usage, model, costUsd: priced.costUsd, stopReason: 'stopped', tier, estimated: true });
+        await args.recordUsage({ ...priced.usage, model, costUsd: priced.costUsd, stopReason, tier, effort, estimated: true });
       };
 
       let message: Anthropic.Beta.BetaMessage;
@@ -230,12 +217,12 @@ export class CoachEngine {
         }
 
         if (handoff) {
-          await recordStopped();
+          await recordStopped('handoff');
           yield { type: 'discard', toolUseIds: shownChips };
           tier = 'build';
           iteration = 0; // Bounded: a turn moves up at most once.
           await args.onBuildStart?.();
-          yield { type: 'model', model: this.choice('build').model, tier };
+          yield { type: 'model', model: router.build.model, tier };
           continue;
         }
 
@@ -251,7 +238,7 @@ export class CoachEngine {
         if (err instanceof Anthropic.APIError) {
           // A build that can't run shouldn't lose the turn: the chat model carries on.
           if (retryable(err) && tier === 'build') {
-            yield* this.dropToChat(args, shownChips);
+            yield* this.dropToChat(args, shownChips, router);
             tier = 'chat';
             canBuild = false;
             iteration = 0;
@@ -282,6 +269,7 @@ export class CoachEngine {
         costUsd: priced.costUsd,
         stopReason: message.stop_reason,
         tier,
+        effort,
       });
 
       if (message.stop_reason === 'refusal') {
@@ -293,12 +281,12 @@ export class CoachEngine {
           tier = 'build';
           iteration = 0;
           await args.onBuildStart?.();
-          yield { type: 'model', model: this.choice('build').model, tier };
+          yield { type: 'model', model: router.build.model, tier };
           continue;
         }
         if (!refusalMoved && tier === 'build') {
           refusalMoved = true;
-          yield* this.dropToChat(args, shownChips);
+          yield* this.dropToChat(args, shownChips, router);
           tier = 'chat';
           canBuild = false;
           iteration = 0;
@@ -383,17 +371,18 @@ export class CoachEngine {
   }
 
   /** Tell the client the build model is out for this turn, and take back what the failed call showed. */
-  private async *dropToChat(args: RunTurnArgs, shownChips: string[]): AsyncGenerator<CoachEvent> {
+  private async *dropToChat(args: RunTurnArgs, shownChips: string[], router: ModelRouter): AsyncGenerator<CoachEvent> {
     await args.onBuildDone?.();
     yield { type: 'discard', toolUseIds: shownChips };
-    yield { type: 'model', model: this.config.model, tier: 'chat', fallback: true };
+    yield { type: 'model', model: router.chat.model, tier: 'chat', fallback: true };
   }
 
   /** A 2–5 word thread title from the first exchange. Cheap: low effort, tiny output. */
   async generateTitle(userText: string, assistantText: string): Promise<{ title: string; usage: CallUsage } | null> {
     try {
+      const { small } = await this.router();
       const res = await this.client.messages.create({
-        model: this.config.titleModel ?? this.config.model,
+        model: small,
         max_tokens: 2000,
         output_config: { effort: 'low' },
         messages: [
@@ -409,7 +398,7 @@ export class CoachEngine {
       const { usage, costUsd } = priceUsage(res.model, res.usage);
       return {
         title: title || 'New chat',
-        usage: { ...usage, model: res.model, costUsd, stopReason: res.stop_reason, tier: 'chat' },
+        usage: { ...usage, model: res.model, costUsd, stopReason: res.stop_reason, tier: 'chat', effort: 'low' },
       };
     } catch {
       return null; // A missing title is cosmetic; never fail the turn over it.

@@ -90,7 +90,8 @@ async function run(engine: CoachEngine, p = ports()) {
   return { persisted, events };
 }
 
-const config = { apiKey: 'test', model: 'claude-opus-5-5', effort: 'medium' as const };
+const OPUS = { model: 'claude-opus-5-5', effort: 'medium' as const };
+const config = { apiKey: 'test', router: () => ({ chat: OPUS, build: OPUS, small: 'claude-haiku-5-5' }) };
 
 describe('CoachEngine.runTurn', () => {
   it('runs a training-data tool, returns results in one user message, and streams the final text', async () => {

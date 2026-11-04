@@ -1443,6 +1443,7 @@ work that matters most. This replaces #11's single model. Titles move to the sma
   refusal on the chat model gets one try on the build model, because the two decline different things.
 - **Use {model}** in the composer sends one message to the build model, for a question no tool would catch.
 - Set both to the same model for no routing.
+- The env vars named here are gone: see #69.
 
 **Why.** Opus on every turn costs more than most people want to pay. Sonnet is exactly half of Opus on every price
 line. Plans and workouts are all tools inside one chat loop, so routing has to happen inside it. Sonnet → Opus keeps
@@ -1499,3 +1500,29 @@ rides are never written there (#16), so the two can disagree until the athlete f
 
 **Rejected.** *Re-matching done sessions when a better ride lands*: it could undo a choice the athlete made.
 *The same rule for workouts*: a ride's name says nothing reliable about whether it was the session.
+
+## 69. The model router is code, not env (Nov 3)
+
+**Decision.** `CLAUDE_MODEL`, `CLAUDE_EFFORT`, `CLAUDE_BUILD_MODEL`, `CLAUDE_BUILD_EFFORT` and `FOOD_AI_MODEL` are removed.
+This reverses that part of #65. `packages/coach/src/router.ts` holds `DEFAULT_ROUTER`: chat, build and small jobs.
+- `CoachEngine` and `FoodAi` take a `RouterSource`, a function asked for the router. A turn reads it once at its start, so a
+  change never lands mid-turn. Food and titles read it per call.
+- `createCore` takes an optional `router` (like `spendGuard`, #57), so a deployment can supply its own, from a database for
+  example. Self-host runs the defaults.
+- `ai_calls` gains `turnId`, `effort` and `routeStart`, and a call stopped to move a turn is `stopReason: 'handoff'`, not
+  `stopped`, so what routing costs can be measured apart from the user pressing Stop.
+
+**Why.** Five env vars described one thing, and two models are now how the coach works, not an option. A wrong pairing was
+easy to leave in a `.env` and silently turned routing off.
+
+**Trade-off.** A self-hoster who wants another model now changes `DEFAULT_ROUTER` or passes `router`. If people ask for it,
+a single env var over the defaults can come back.
+
+## 70. A deployment can supply its own logo (Nov 3)
+
+**Decision.** `Extensions` gains `logo`, a pair of image URLs for light and dark backgrounds, defaulting to `null`. When set,
+the sidebar, the auth pages and the share page show the image in place of the tile and name; the sidebar keeps its FTP line.
+The self-hosted app sets nothing and looks the same.
+
+**Why.** A logo is a deployment's brand, like `brand` (#58). Two URLs fit the one dark surface we have, the phone sign-in
+header. A `ReactNode` slot would make each caller know about backgrounds anyway.

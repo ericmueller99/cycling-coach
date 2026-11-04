@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { CoachEvent } from '@cycling-coach/shared';
 import { describe, expect, it, vi } from 'vitest';
 import { CoachEngine, withoutDeclinedAttempt, type CallUsage, type PersistedMessage, type RunTurnArgs } from './engine';
+import type { ModelRouter } from './router';
 import type { CoachPorts } from './tools';
 
 type Block = Record<string, unknown>;
@@ -44,9 +45,11 @@ function fakeClient(script: Scripted[]) {
   return { client: { beta: { messages: { stream } } } as unknown as Anthropic, calls };
 }
 
-const engineWith = (script: Scripted[], config = {}) => {
+const ROUTER: ModelRouter = { chat: { model: SONNET, effort: 'medium' }, build: { model: OPUS, effort: 'high' }, small: 'claude-haiku-5-5' };
+
+const engineWith = (script: Scripted[], router: ModelRouter | (() => ModelRouter) = ROUTER) => {
   const fake = fakeClient(script);
-  return { ...fake, engine: new CoachEngine({ apiKey: 'k', model: SONNET, effort: 'medium', buildModel: OPUS, buildEffort: 'high', ...config }, fake.client) };
+  return { ...fake, engine: new CoachEngine({ apiKey: 'k', router: typeof router === 'function' ? router : () => router }, fake.client) };
 };
 
 const ports = { remember: async (t: string) => ({ id: 'm1', text: t, source: 'coach', createdAt: '' }) } as unknown as CoachPorts;
@@ -83,7 +86,7 @@ describe('moving a turn to the build model', () => {
     expect(events).toContainEqual({ type: 'discard', toolUseIds: [] });
     expect(events).toContainEqual({ type: 'model', model: OPUS, tier: 'build' });
     // The dropped call still cost something, so it's recorded, as an estimate.
-    expect(usage[0]).toMatchObject({ model: SONNET, tier: 'chat', stopReason: 'stopped', estimated: true, inputTokens: 100 });
+    expect(usage[0]).toMatchObject({ model: SONNET, tier: 'chat', stopReason: 'handoff', estimated: true, inputTokens: 100 });
     expect(usage[1]).toMatchObject({ model: OPUS, tier: 'build', outputTokens: 50 });
     expect(usage[1]!.estimated).toBeUndefined();
   });
@@ -115,10 +118,33 @@ describe('moving a turn to the build model', () => {
   });
 
   it('does not route when there is one model', async () => {
-    const { engine, calls } = engineWith([{ content: [planCall], stop_reason: 'tool_use' }, { content: [text('ok')] }], { buildModel: SONNET });
+    const { engine, calls } = engineWith([{ content: [planCall], stop_reason: 'tool_use' }, { content: [text('ok')] }], { ...ROUTER, build: { model: SONNET, effort: 'high' } });
     await run(engine);
-    expect(engine.buildModel).toBeNull();
+    expect(await engine.buildModel()).toBeNull();
     expect(calls.map((c) => c.model)).toEqual([SONNET, SONNET]);
+  });
+
+  it('reads the router once per turn, so a change starts with the next turn', async () => {
+    let router = ROUTER;
+    const source = vi.fn(() => router);
+    const { engine, calls } = engineWith([{ content: [readCall('r1')], stop_reason: 'tool_use' }, { content: [text('one')] }, { content: [text('two')] }], source);
+    const first = engine.runTurn({ system: ['p', 'a'], messages: [{ role: 'user', content: 'hi' }], ports, today: '2026-01-01' as never, persist: async () => {}, recordUsage: async () => {} });
+    await first.next();
+    router = { ...ROUTER, chat: { model: OPUS, effort: 'low' } };
+    for await (const _ of first);
+    expect(source).toHaveBeenCalledTimes(1);
+    expect(calls.map((c) => c.model)).toEqual([SONNET, SONNET]);
+
+    await run(engine);
+    expect(calls[2]!.model).toBe(OPUS);
+    expect(calls[2]!.output_config).toEqual({ effort: 'low' });
+  });
+
+  it('marks the stopped call as a handoff and records the effort of each call', async () => {
+    const { engine } = engineWith([{ content: [planCall], stop_reason: 'tool_use' }, { content: [text('ok')] }]);
+    const { usage } = await run(engine);
+    expect(usage[0]).toMatchObject({ stopReason: 'handoff', effort: 'medium', estimated: true });
+    expect(usage[1]).toMatchObject({ tier: 'build', effort: 'high' });
   });
 
   it('starts on the build model when asked, and reports the build tool with the call start', async () => {
@@ -239,7 +265,7 @@ describe('spend on a stopped stream', () => {
     const stream = vi.fn(() => ({
       [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(overloaded()) }),
     }));
-    const engine = new CoachEngine({ apiKey: 'k', model: SONNET, effort: 'medium' }, { beta: { messages: { stream } } } as unknown as Anthropic);
+    const engine = new CoachEngine({ apiKey: 'k', router: () => ROUTER }, { beta: { messages: { stream } } } as unknown as Anthropic);
     const { usage } = await run(engine);
     expect(usage).toEqual([]);
   });

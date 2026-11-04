@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { warmFollowUp } from './coach';
+import { routeStartOf, warmFollowUp } from './coach';
 
 const start = new Date('2026-11-03T10:00:00Z');
 const after = (ms: number) => new Date(start.getTime() + ms);
@@ -19,5 +19,17 @@ describe('warmFollowUp', () => {
 
   it('is false on a thread that never built anything', () => {
     expect(warmFollowUp({}, start)).toBe(false);
+  });
+});
+
+describe('routeStartOf', () => {
+  it('says why a turn started on the build model', () => {
+    expect(routeStartOf('build', true, true)).toBe('toggle');
+    expect(routeStartOf('build', false, true)).toBe('retry');
+    expect(routeStartOf('build', false, false)).toBe('follow_up');
+  });
+
+  it('is normal on the chat model, whatever was asked', () => {
+    expect(routeStartOf('chat', true, true)).toBe('normal');
   });
 });

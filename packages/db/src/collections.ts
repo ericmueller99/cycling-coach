@@ -431,6 +431,9 @@ export interface RecipeDraftDoc {
   updatedAt: Date;
 }
 
+/** `toggle`: the athlete asked for it. `follow_up`: just after a build. `retry`: a build didn't finish. */
+export type AiRouteStart = 'normal' | 'toggle' | 'follow_up' | 'retry';
+
 export interface AiCallDoc {
   _id?: ObjectId;
   userId: string;
@@ -445,6 +448,12 @@ export interface AiCallDoc {
   stopReason?: string;
   /** The route that paid for it: `build` counts as the stronger model, whichever model served it. */
   tier?: 'chat' | 'build';
+  /** The effort it ran at. Food calls have none. */
+  effort?: string;
+  /** The user message this call answered, so a turn's calls can be read together. */
+  turnId?: string;
+  /** Why the turn started where it did. */
+  routeStart?: AiRouteStart;
   /** Output tokens were estimated, because the stream stopped before reporting them. */
   estimated?: boolean;
   createdAt: Date;
@@ -551,6 +560,7 @@ export async function ensureIndexes(db: Db): Promise<void> {
     c.proposals.createIndex({ threadId: 1 }),
     c.integrations.createIndex({ userId: 1, provider: 1 }, { unique: true }),
     c.aiCalls.createIndex({ userId: 1, createdAt: -1 }),
+    c.aiCalls.createIndex({ createdAt: -1 }),
     c.calendarEvents.createIndex({ userId: 1, zwiftEventId: 1 }, { sparse: true }),
     c.zwiftEvents.createIndex({ id: 1 }, { unique: true }),
     c.zwiftEvents.createIndex({ start: 1 }),

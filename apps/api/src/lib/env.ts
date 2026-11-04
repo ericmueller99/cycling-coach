@@ -16,10 +16,6 @@ const schema = z.object({
   PORT: z.coerce.number().default(8787),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   CLAUDE_API_KEY: z.string().optional(),
-  CLAUDE_MODEL: z.string().default('claude-sonnet-5-5'),
-  CLAUDE_EFFORT: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).default('medium'),
-  CLAUDE_BUILD_MODEL: z.string().default('claude-opus-5-5'),
-  CLAUDE_BUILD_EFFORT: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).default('medium'),
   /** Personal API key from intervals.icu → Settings → Developer Settings (docs/DECISIONS.md #13). */
   INTERVALS_ICU_KEY: z.string().optional(),
   /** "0" = the athlete who owns the key. */
@@ -33,7 +29,6 @@ const schema = z.object({
    */
   OWNER_EMAIL: z.email().optional(),
   /** Food: the small model that reads labels and logging phrases. */
-  FOOD_AI_MODEL: z.string().default('claude-haiku-5-5'),
   /** api.data.gov key for USDA FoodData Central (staples fallback). Without one: the shared DEMO_KEY. */
   USDA_FDC_API_KEY: z.string().optional(),
   /** S3-compatible bucket for food label photos (same shape as ez-scheduler-checkout). All four or none. */

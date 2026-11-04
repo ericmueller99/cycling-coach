@@ -1,4 +1,4 @@
-import { CoachEngine, FoodAi } from '@cycling-coach/coach';
+import { CoachEngine, defaultRouter, FoodAi, type RouterSource } from '@cycling-coach/coach';
 import {
   aiSpendByTier,
   aiSpendSince,
@@ -90,6 +90,8 @@ export interface CoreOptions {
   auth?: AuthExtension;
   /** Asked before every Claude call. Default: never refuses. */
   spendGuard?: SpendGuard;
+  /** Which model does what, asked per turn. Default: `DEFAULT_ROUTER` (DECISIONS #69). */
+  router?: (ctx: CoreContext) => RouterSource;
   /**
    * Appended to workout names pushed to intervals.icu, e.g. " via example.com". Zwift titles the ride
    * after the workout, so it shows wherever the ride is shared. Stripped from names read back.
@@ -185,16 +187,8 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     if (!env.ZWIFT_USERNAME || !env.ZWIFT_PASSWORD) console.warn('ZWIFT_USERNAME/ZWIFT_PASSWORD not set — zFTP is entered by hand.');
   }
 
-  const engine = env.CLAUDE_API_KEY
-    ? new CoachEngine({
-        apiKey: env.CLAUDE_API_KEY,
-        model: env.CLAUDE_MODEL,
-        effort: env.CLAUDE_EFFORT,
-        buildModel: env.CLAUDE_BUILD_MODEL,
-        buildEffort: env.CLAUDE_BUILD_EFFORT,
-        titleModel: env.FOOD_AI_MODEL,
-      })
-    : null;
+  const router = opts.router ? opts.router(ctx) : defaultRouter;
+  const engine = env.CLAUDE_API_KEY ? new CoachEngine({ apiKey: env.CLAUDE_API_KEY, router }) : null;
   if (!engine) console.warn('CLAUDE_API_KEY not set — the coach will report itself offline.');
 
 
@@ -211,10 +205,10 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   const energy = new EnergyService(c, training, now);
   /** USDA works without a key on its shared DEMO_KEY (30 requests an hour) — enough for the odd staple. */
   const staples = new StaplesService(c, new UsdaClient(env.USDA_FDC_API_KEY || 'DEMO_KEY'), now);
-  /** Labels and logging phrases go to a small model (FOOD_AI_MODEL), never the coach's models. */
+  /** Labels and logging phrases go to the router's small model, never the coach's models. */
   const foodAi = new FoodAiService(
     c,
-    env.CLAUDE_API_KEY ? new FoodAi({ apiKey: env.CLAUDE_API_KEY, model: env.FOOD_AI_MODEL }) : null,
+    env.CLAUDE_API_KEY ? new FoodAi({ apiKey: env.CLAUDE_API_KEY, router }) : null,
     photoStoreFromEnv(env),
     new OpenFoodFacts(),
     (userId) => food.library(userId),
@@ -245,7 +239,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     c,
     food,
     { searchStaples: (q, source) => staples.search(q, source), stapleDetail: (source, ref) => staples.detail(source, ref) },
-    env.CLAUDE_API_KEY ? new FoodAi({ apiKey: env.CLAUDE_API_KEY, model: env.FOOD_AI_MODEL }) : null,
+    env.CLAUDE_API_KEY ? new FoodAi({ apiKey: env.CLAUDE_API_KEY, router }) : null,
     now,
   );
   const coach: CoachDeps = {
@@ -295,15 +289,21 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
 
     usage: async (userId) => {
       const from = startOfMonthUtc(now());
-      const [spend, tiers, decision] = await Promise.all([aiSpendSince(c, userId, from), aiSpendByTier(c, userId, from), spendGuard(userId, 'coach')]);
+      const [spend, tiers, decision, models, buildModel] = await Promise.all([
+        aiSpendSince(c, userId, from),
+        aiSpendByTier(c, userId, from),
+        spendGuard(userId, 'coach'),
+        router(),
+        engine?.buildModel() ?? null,
+      ]);
       return {
         monthToDateUsd: spend.costUsd,
         chatUsd: tiers.chatUsd,
         buildUsd: tiers.buildUsd,
         calls: spend.calls,
-        model: env.CLAUDE_MODEL,
+        model: models.chat.model,
         // Null when this athlete can't use it, so the app doesn't offer what won't happen.
-        buildModel: decision.allow && decision.build !== false ? (engine?.buildModel ?? null) : null,
+        buildModel: decision.allow && decision.build !== false ? buildModel : null,
       };
     },
 

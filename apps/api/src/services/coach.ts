@@ -32,13 +32,14 @@ import {
   recordAiCall,
   toThreadSummary,
   updateThread,
+  type AiRouteStart,
   type Collections,
   type MessageDoc,
   type ThreadDoc,
   type WorkoutDoc,
 } from '@cycling-coach/db';
 import { dayTotals, slotForTime } from '@cycling-coach/core';
-import type { CoachEvent, FitnessDay, IntegrationStatus, IsoDate, SendMessageInput, ThreadSummary, ThreadView, Workout } from '@cycling-coach/shared';
+import type { CoachEvent, CoachTier, FitnessDay, IntegrationStatus, IsoDate, SendMessageInput, ThreadSummary, ThreadView, Workout } from '@cycling-coach/shared';
 import type { FoodTurnContext } from '@cycling-coach/coach';
 import type { ObjectId } from 'mongodb';
 import { coachCalendarWindow, loadAthleteContext, localNow } from './athlete';
@@ -148,10 +149,23 @@ export function warmFollowUp(thread: Pick<ThreadDoc, 'lastBuildStartedAt' | 'bui
   return now.getTime() - thread.lastBuildStartedAt.getTime() < CACHE_TTL_MS;
 }
 
-async function logUsage(deps: CoachDeps, userId: string, threadId: ObjectId, purpose: 'coach' | 'title', u: CallUsage) {
+/** Why a turn started where it did. The toggle wins: it's what the athlete asked for. */
+export function routeStartOf(start: CoachTier, toggle: boolean | undefined, pending: boolean | undefined): AiRouteStart {
+  if (start === 'chat') return 'normal';
+  return toggle ? 'toggle' : pending ? 'retry' : 'follow_up';
+}
+
+/** The turn a call belongs to, for reading its cost and route together. */
+interface TurnRef {
+  turnId: string;
+  routeStart: AiRouteStart;
+}
+
+async function logUsage(deps: CoachDeps, userId: string, threadId: ObjectId, purpose: 'coach' | 'title', u: CallUsage, turn: TurnRef) {
   await recordAiCall(deps.c, {
     userId,
     threadId,
+    ...turn,
     purpose,
     model: u.model,
     inputTokens: u.inputTokens,
@@ -160,6 +174,7 @@ async function logUsage(deps: CoachDeps, userId: string, threadId: ObjectId, pur
     cacheWriteTokens: u.cacheWriteTokens,
     costUsd: u.costUsd,
     ...(u.tier ? { tier: u.tier } : {}),
+    ...(u.effort ? { effort: u.effort } : {}),
     ...(u.estimated ? { estimated: true } : {}),
     ...(u.stopReason ? { stopReason: u.stopReason } : {}),
     createdAt: deps.now(),
@@ -322,6 +337,7 @@ export async function* sendMessage(
   const canBuild = decision.build !== false;
   const start = canBuild && (input.useBuildModel || thread.buildPending || warm) ? 'build' : 'chat';
   if (start === 'build' && warm) await updateThread(c, tid, { buildFollowUpUsed: true });
+  const turn: TurnRef = { turnId: idOf(userDoc), routeStart: routeStartOf(start, input.useBuildModel, thread.buildPending) };
 
   for await (const event of engine.runTurn({
     system: thread.systemSnapshot,
@@ -349,7 +365,7 @@ export async function* sendMessage(
       }
       if (m.kind === 'assistant') textBefore = assistantText.length;
     },
-    recordUsage: (u) => logUsage(deps, userId, tid, 'coach', u),
+    recordUsage: (u) => logUsage(deps, userId, tid, 'coach', u, turn),
     onBuildStart: () => updateThread(c, tid, { buildPending: true }),
     onBuildDone: () => updateThread(c, tid, { buildPending: false }),
     onBuildTool: (startedAt) => updateThread(c, tid, { lastBuildStartedAt: startedAt, buildFollowUpUsed: false }),
@@ -372,7 +388,7 @@ export async function* sendMessage(
   if (thread.title === 'New chat' && assistantText) {
     const titled = await engine.generateTitle(text, assistantText);
     if (titled) {
-      await logUsage(deps, userId, tid, 'title', titled.usage);
+      await logUsage(deps, userId, tid, 'title', titled.usage, turn);
       await updateThread(c, tid, { title: titled.title });
       yield { type: 'thread_title', title: titled.title };
     }
