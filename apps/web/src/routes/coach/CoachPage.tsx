@@ -7,10 +7,12 @@ import { AppBar, IconButton } from '../../components/AppBar';
 import { ArrowUpIcon, ComposeIcon, LogoIcon, MenuIcon, SendIcon } from '../../components/icons';
 import { Sheet } from '../../components/Sheet';
 import { Button, ErrorNote, PageHeader } from '../../components/ui';
+import { useExtensions } from '../../extensions';
 import { api, unwrap } from '../../lib/api';
 import { useFoodLibrary } from '../../lib/foodQueries';
-import { useDashboard, useThread, useThreads } from '../../lib/queries';
-import { abortTurn, clearDoneTurn, patchTurn, setWatching, startTurn, useLiveTurn, type LiveTurn, type TurnOrigin } from '../../lib/coachTurn';
+import { modelName } from '../../lib/models';
+import { useDashboard, useThread, useThreads, useUsage } from '../../lib/queries';
+import { abortTurn, clearDoneTurn, patchTurn, setWatching, startTurn, useLiveTurn, type LiveTurn, type TurnError as TurnErrorInfo, type TurnOrigin } from '../../lib/coachTurn';
 import { useIsMobile } from '../../lib/useIsMobile';
 import { MemoryChip, ProposalBlock, RequestChangesContext, TextBlock, ToolChip, WorkoutBlock } from './blocks';
 import { CoachFoodContext, MealIdeasBlock, RecipeRefBlock, type CoachFoodActions } from './foodBlocks';
@@ -82,15 +84,21 @@ function MessageRow({ message, view, cards }: { message: UiMessage; view: Thread
       <CoachAvatar />
       <div className="flex min-w-0 flex-auto flex-col gap-3.5">
         <AssistantBlocks blocks={message.blocks} threadId={view?.thread.id ?? ''} cards={cards} />
+        {message.model && <div className="font-mono text-[11px] text-muted">{modelName(message.model)}</div>}
       </div>
     </div>
   );
 }
 
-function TurnError({ error, onRetry }: { error: { message: string; retryable: boolean }; onRetry: () => void }) {
+function TurnError({ error, onRetry }: { error: TurnErrorInfo; onRetry: () => void }) {
   return (
     <div className="flex flex-col gap-2">
       <ErrorNote>{error.message}</ErrorNote>
+      {error.action && (
+        <a href={error.action.href} className="self-start rounded-[10px] bg-accent px-3 py-2 text-[13px] font-semibold text-on-accent no-underline">
+          {error.action.label}
+        </a>
+      )}
       {error.retryable && (
         <Button size="sm" className="self-start" onClick={onRetry}>
           Try again
@@ -197,6 +205,10 @@ export function CoachPage({
   const threads = useThreads();
   const thread = useThread(threadId);
   const [draft, setDraft] = useState(prompt ?? '');
+  const [refused, setRefused] = useState<TurnErrorInfo | null>(null);
+  const [forBuild, setForBuild] = useState(false);
+  const { coachNotice: CoachNotice } = useExtensions();
+  const buildModel = useUsage().data?.buildModel ?? null;
   useEffect(() => {
     if (prompt) setDraft(prompt);
   }, [prompt]);
@@ -306,20 +318,32 @@ export function CoachPage({
     const trimmed = text.trim();
     if (!trimmed || streaming) return;
     setDraft('');
+    setRefused(null);
+    const useBuildModel = forBuild;
+    setForBuild(false);
     let id = threadId;
     if (!id) {
+      // Ask first: a refusal after creating the thread would leave an empty one behind.
+      const stop = await unwrap(await api.api.coach.check.$get());
+      if (stop.refused) {
+        setRefused({ message: stop.refused.message, retryable: false, action: stop.refused.action });
+        setDraft(trimmed);
+        return;
+      }
       const created = await unwrap(await api.api.threads.$post());
       id = created.id;
       // Only while still on Coach: the app never pulls the user back here (DECISIONS #46).
       if (mountedRef.current) void navigate({ to: '/', search: { t: id }, replace: true });
     }
-    await startTurn({
+    const { refused } = await startTurn({
       threadId: id,
-      input: { text: trimmed, ...(foodPick ? { food: foodPick } : {}) },
+      input: { text: trimmed, ...(foodPick ? { food: foodPick } : {}), ...(useBuildModel ? { useBuildModel } : {}) },
       baseCount: id === threadId ? (thread.data?.messages.length ?? 0) : 0,
       qc,
       origin,
     });
+    // Nothing was stored, so give the words back.
+    if (refused && mountedRef.current) setDraft((current) => current || trimmed);
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -441,14 +465,29 @@ export function CoachPage({
             </>
           )}
           {lateError && live && <TurnError error={lateError} onRetry={() => void send(live.userText)} />}
+          {refused && <TurnError error={refused} onRetry={() => {}} />}
         </div>
         </RequestChangesContext>
         </CoachFoodContext>
 
         {/* Pinned above the tab bar on mobile, with the chips scrolling sideways. */}
         <div className="sticky bottom-0 mx-auto box-border flex w-full max-w-[860px] flex-col gap-2.5 bg-bg px-7 pt-2 pb-6 mobile:bottom-[calc(64px+env(safe-area-inset-bottom))] mobile:gap-2 mobile:border-t mobile:border-line mobile:px-3 mobile:pb-2.5">
+          {CoachNotice && <CoachNotice />}
           {isFood && <FoodStrip slot={foodSlot} date={foodDate} today={today} onChange={(slot, date) => setFoodPick({ slot, date })} />}
           <div className="flex flex-wrap gap-2 mobile:scrollbar-none mobile:flex-nowrap mobile:gap-1.5 mobile:overflow-x-auto">
+            {buildModel && (
+              <button
+                type="button"
+                aria-pressed={forBuild}
+                title={`Send this one message to ${modelName(buildModel)}`}
+                onClick={() => setForBuild(!forBuild)}
+                className={`min-h-9 shrink-0 rounded-full border px-3 text-[13px] whitespace-nowrap mobile:min-h-[36px] ${
+                  forBuild ? 'border-accent bg-accent text-on-accent' : 'border-line-strong bg-surface text-ink'
+                }`}
+              >
+                Use {modelName(buildModel)}
+              </button>
+            )}
             {quickPrompts.map((p) => (
               <button
                 key={p}

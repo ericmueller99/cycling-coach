@@ -14,6 +14,12 @@ import { streamCoachTurn } from './sse';
 /** What started the turn, so the button that started it can say so ("Writing recipe…"). */
 export type TurnOrigin = { kind: 'make'; ideaKey: string };
 
+export interface TurnError {
+  message: string;
+  retryable: boolean;
+  action?: { label: string; href: string } | undefined;
+}
+
 export interface LiveTurn {
   threadId: string;
   userText: string;
@@ -29,7 +35,9 @@ export interface LiveTurn {
   origin?: TurnOrigin | undefined;
   /** A recipe the coach just built, for the Coach page to open (then cleared). */
   readyRecipe?: string | undefined;
-  error?: { message: string; retryable: boolean } | undefined;
+  error?: TurnError | undefined;
+  /** The turn moved to this model part-way. */
+  model?: { id: string; fallback: boolean } | undefined;
   done: boolean;
   usage?: CoachUsage | undefined;
 }
@@ -109,16 +117,29 @@ function appendText(blocks: UiBlock[], text: string): UiBlock[] {
   return [...blocks, { type: 'text', text }];
 }
 
-/** Stream one turn into the store. Resolves when it's done and the thread has been refetched. */
+/** A dropped model call's output is whatever sits at the end: its text and its chips. */
+function dropCall(blocks: UiBlock[], toolUseIds: string[]): UiBlock[] {
+  const kept = [...blocks];
+  for (let last = kept.at(-1); last; last = kept.at(-1)) {
+    if (last.type !== 'text' && !(last.type === 'tool' && toolUseIds.includes(last.toolUseId))) break;
+    kept.pop();
+  }
+  return kept;
+}
+
+/**
+ * Stream one turn into the store. Resolves when it's done and the thread has been refetched, with
+ * whether it was refused before it started, so the page can give the user their words back.
+ */
 export async function startTurn(opts: {
   threadId: string;
   input: SendMessageInput;
   baseCount: number;
   qc: QueryClient;
   origin?: TurnOrigin | undefined;
-}): Promise<void> {
+}): Promise<{ refused: boolean }> {
   const { threadId: id, input, qc } = opts;
-  if (turns.get(id) && !turns.get(id)!.done) return;
+  if (turns.get(id) && !turns.get(id)!.done) return { refused: false };
   const abort = new AbortController();
   aborts.set(id, abort);
   turns.set(id, {
@@ -134,9 +155,20 @@ export async function startTurn(opts: {
   });
   emit();
   let recipeId: string | undefined;
+  let started = false;
+  let refused = false;
   try {
     for await (const event of streamCoachTurn(id, input, abort.signal)) {
       switch (event.type) {
+        case 'turn_start':
+          started = true;
+          break;
+        case 'discard':
+          update(id, (l) => ({ ...l, writing: false, runningTool: undefined, blocks: dropCall(l.blocks, event.toolUseIds) }));
+          break;
+        case 'model':
+          update(id, (l) => ({ ...l, thinking: true, model: { id: event.model, fallback: event.fallback === true } }));
+          break;
         case 'text_delta':
           update(id, (l) => ({ ...l, thinking: false, writing: true, blocks: appendText(l.blocks, event.text) }));
           break;
@@ -160,7 +192,8 @@ export async function startTurn(opts: {
           void qc.invalidateQueries({ queryKey: keys.threads });
           break;
         case 'error':
-          update(id, (l) => ({ ...l, thinking: false, error: { message: event.message, retryable: event.retryable } }));
+          refused = !started;
+          update(id, (l) => ({ ...l, thinking: false, error: { message: event.message, retryable: event.retryable, action: event.action } }));
           break;
         case 'done':
           update(id, (l) => ({ ...l, usage: event.usage }));
@@ -176,6 +209,8 @@ export async function startTurn(opts: {
   await qc.refetchQueries({ queryKey: keys.thread(id) });
   void qc.invalidateQueries({ queryKey: keys.threads });
   void qc.invalidateQueries({ queryKey: keys.dashboard });
+  // The turn cost something, which can change what's on offer.
+  void qc.invalidateQueries({ queryKey: keys.usage });
   // A revised card closes the one it replaces.
   void qc.invalidateQueries({ queryKey: ['proposals'] });
   // A recipe built from an idea marks it Picked.
@@ -184,4 +219,5 @@ export async function startTurn(opts: {
   if (watching !== id && !abort.signal.aborted) notice = { threadId: id, recipeId, error: failed };
   if (!failed) turns.delete(id);
   emit();
+  return { refused };
 }

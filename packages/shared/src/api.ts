@@ -70,8 +70,13 @@ export interface DashboardPayload {
 
 export interface UsagePayload {
   monthToDateUsd: number;
+  /** Month to date on the chat and build routes. Calls from before routing are in neither. */
+  chatUsd: number;
+  buildUsd: number;
   calls: number;
   model: string;
+  /** The build model, or null when one model does everything or this athlete can't use it now. */
+  buildModel: string | null;
 }
 
 /** A calendar range: planned sessions plus every synced ride (DECISIONS #49). */

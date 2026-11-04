@@ -7,6 +7,7 @@ export interface StoredMessage {
   content: unknown[];
   ui?: Exclude<UiBlock, { type: 'text' }>[];
   createdAt: Date;
+  model?: string | undefined;
 }
 
 function textOf(content: unknown[]): string[] {
@@ -46,6 +47,9 @@ export function toUiMessages(messages: StoredMessage[]): UiMessage[] {
     } else if (m.kind === 'assistant') {
       const texts = textOf(m.content);
       if (texts.length) current(m.createdAt, m.id).blocks.push(...texts.map((text) => ({ type: 'text' as const, text })));
+      // One bubble can span both models; it's labelled with the one that wrote last.
+      const bubble = out[out.length - 1];
+      if (m.model && bubble?.role === 'assistant') bubble.model = m.model;
     } else if (m.kind === 'tool_results' && m.ui?.length) {
       current(m.createdAt, m.id).blocks.push(...m.ui);
     }

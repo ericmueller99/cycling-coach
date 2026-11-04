@@ -57,16 +57,27 @@ function score(e: MatchableEvent, a: MatchableActivity): number {
 }
 
 /**
+ * intervals.icu can pair a race with the warm-up, which uploads first. A matched session is closed,
+ * so a race session waits out its day for a ride named like a race, and only then takes the pairing.
+ */
+function holdsOutForRace(e: MatchableEvent, paired: MatchableActivity, rides: readonly MatchableActivity[], today: string): boolean {
+  if (e.type !== 'race' || RACE.test(paired.name)) return false;
+  return e.date >= today || rides.some((r) => r.startLocal.slice(0, 10) === e.date && RACE.test(r.name));
+}
+
+/**
  * Pair completed rides with planned sessions on the same local day.
  *
- * intervals.icu's own pairing (`pairedEventId`) wins outright. Everything else is matched greedily
- * by score. `planned` and `missed` sessions are open — a late upload un-misses one — and an
+ * intervals.icu's own pairing (`pairedEventId`) wins, except that a race session holds out for a
+ * ride that looks like the race (see `holdsOutForRace`). Everything else is matched greedily by
+ * score. `planned` and `missed` sessions are open — a late upload un-misses one — and an
  * activity is used at most once, and never with a session it was unlinked from. A pair needs a non-negative score: a race on a recovery day stays
  * unmatched rather than silently ticking the recovery session off.
  */
 export function matchActivities(
   events: readonly MatchableEvent[],
   activities: readonly MatchableActivity[],
+  today: string,
 ): { eventId: string; activityId: string }[] {
   const taken = new Set(events.flatMap((e) => [e.activityId, ...(e.extraActivityIds ?? [])]).filter(Boolean));
   const open = events.filter((e) => (e.status === 'planned' || e.status === 'missed') && !e.activityId);
@@ -79,7 +90,7 @@ export function matchActivities(
   for (const a of rides) {
     if (a.pairedEventId === undefined) continue;
     const e = open.find((x) => x.intervalsEventId === a.pairedEventId && !x.ignoredActivityIds?.includes(a.id));
-    if (!e || usedEvents.has(e.id)) continue;
+    if (!e || usedEvents.has(e.id) || holdsOutForRace(e, a, rides, today)) continue;
     usedEvents.add(e.id);
     usedActivities.add(a.id);
     out.push({ eventId: e.id, activityId: a.id });

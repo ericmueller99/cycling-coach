@@ -136,6 +136,12 @@ export interface ThreadDoc {
    * context messages only repeat what changed (packages/coach/src/context.ts).
    */
   seen: { calendar?: string; athlete: string };
+  /** When a call last started on the build model, for the one warm follow-up (`warmFollowUp`). */
+  lastBuildStartedAt?: Date;
+  /** That one follow-up has been used, so the next turn goes back to the chat model. */
+  buildFollowUpUsed?: boolean;
+  /** A build started and hasn't written anything yet, so a retry starts on the build model. */
+  buildPending?: boolean;
   /** `food` once the coach has suggested meals or built a recipe here. */
   tags?: ThreadTag[];
 }
@@ -156,6 +162,8 @@ export interface MessageDoc {
   createdAt: Date;
   /** Chips and cards rendered from this message (tool_results only). Not sent to the API. */
   ui?: Exclude<UiBlock, { type: 'text' }>[];
+  /** The model that wrote it (assistant messages). */
+  model?: string;
 }
 
 export type ProposalDoc = {
@@ -435,6 +443,10 @@ export interface AiCallDoc {
   cacheWriteTokens: number;
   costUsd: number;
   stopReason?: string;
+  /** The route that paid for it: `build` counts as the stronger model, whichever model served it. */
+  tier?: 'chat' | 'build';
+  /** Output tokens were estimated, because the stream stopped before reporting them. */
+  estimated?: boolean;
   createdAt: Date;
 }
 

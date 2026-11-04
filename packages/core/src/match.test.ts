@@ -17,6 +17,9 @@ const ev = (id: string, date: string, type: MatchableEvent['type'], durationMin?
   ...(durationMin ? { durationMin } : {}),
 });
 
+/** After every date below, so the sessions' days are over unless a test says otherwise. */
+const TODAY = '2026-12-01';
+
 describe('matchActivities', () => {
   it('matches the race, not the warm-up spin before it', () => {
     const result = matchActivities(
@@ -25,41 +28,68 @@ describe('matchActivities', () => {
         ride('warmup', '2026-10-27T16:56:27', "Zwift - California Dreamin' in Watopia", 27),
         ride('race', '2026-10-27T17:32:13', 'Zwift - Race: Zwift Racing League - Race 5 (B)', 42),
       ],
+      TODAY,
     );
     expect(result).toEqual([{ eventId: 'e1', activityId: 'race' }]);
   });
 
   it('matches a structured workout to an intervals day', () => {
     expect(
-      matchActivities([ev('e1', '2026-10-28', 'intervals', 63)], [ride('a', '2026-10-28T11:50:26', 'Zwift - VO2 6x3', 63)]),
+      matchActivities([ev('e1', '2026-10-28', 'intervals', 63)], [ride('a', '2026-10-28T11:50:26', 'Zwift - VO2 6x3', 63)], TODAY),
     ).toEqual([{ eventId: 'e1', activityId: 'a' }]);
   });
 
   it('never pairs a session with a ride it was unlinked from', () => {
     const unlinked = { ...ev('e1', '2026-10-28', 'intervals', 63), intervalsEventId: 77, ignoredActivityIds: ['a'] };
-    expect(matchActivities([unlinked], [{ ...ride('a', '2026-10-28T11:50:26', 'Zwift - VO2 6x3', 63), pairedEventId: 77 }])).toEqual([]);
+    expect(matchActivities([unlinked], [{ ...ride('a', '2026-10-28T11:50:26', 'Zwift - VO2 6x3', 63), pairedEventId: 77 }], TODAY)).toEqual([]);
     expect(
-      matchActivities([unlinked], [ride('a', '2026-10-28T11:50:26', 'Zwift - VO2 6x3', 63), ride('b', '2026-10-28T18:00:00', 'Zwift - VO2 6x3', 63)]),
+      matchActivities([unlinked], [ride('a', '2026-10-28T11:50:26', 'Zwift - VO2 6x3', 63), ride('b', '2026-10-28T18:00:00', 'Zwift - VO2 6x3', 63)], TODAY),
     ).toEqual([{ eventId: 'e1', activityId: 'b' }]);
   });
 
   it("trusts intervals.icu's pairing over scoring", () => {
     const events = [{ ...ev('e1', '2026-10-28', 'intervals', 60), intervalsEventId: 77 }];
     // Name and duration would score badly; the pairing decides.
-    expect(matchActivities(events, [{ ...ride('a', '2026-10-28T11:50:26', 'Evening spin', 20), pairedEventId: 77 }])).toEqual([
+    expect(matchActivities(events, [{ ...ride('a', '2026-10-28T11:50:26', 'Evening spin', 20), pairedEventId: 77 }], TODAY)).toEqual([
       { eventId: 'e1', activityId: 'a' },
     ]);
   });
 
+  describe('a race intervals.icu paired with a ride not named like one', () => {
+    const race = { ...ev('e1', '2026-10-27', 'race', 40), intervalsEventId: 77 };
+    const warmup = { ...ride('warmup', '2026-10-27T16:56:27', 'Zwift - Seafoam Circuit in Watopia', 22), pairedEventId: 77 };
+    const raceRide = ride('race', '2026-10-27T17:32:13', 'Zwift - Race: ClubLadder Team A vs Team B', 35);
+
+    it('takes the race ride over the paired warm-up', () => {
+      expect(matchActivities([race], [warmup, raceRide], TODAY)).toEqual([{ eventId: 'e1', activityId: 'race' }]);
+    });
+
+    it('waits while the race day is going and the race has not uploaded', () => {
+      expect(matchActivities([race], [warmup], '2026-10-27')).toEqual([]);
+    });
+
+    it('takes the race ride once it uploads the same day', () => {
+      expect(matchActivities([race], [warmup, raceRide], '2026-10-27')).toEqual([{ eventId: 'e1', activityId: 'race' }]);
+    });
+
+    it('honours the pairing once the day is over and no ride looks like a race', () => {
+      expect(matchActivities([race], [warmup], '2026-10-28')).toEqual([{ eventId: 'e1', activityId: 'warmup' }]);
+    });
+
+    it('takes a paired ride named like a race straight away', () => {
+      expect(matchActivities([race], [{ ...raceRide, pairedEventId: 77 }], '2026-10-27')).toEqual([{ eventId: 'e1', activityId: 'race' }]);
+    });
+  });
+
   it('lets a late upload un-miss a session', () => {
     const events = [{ ...ev('e1', '2026-10-28', 'endurance', 60), status: 'missed' as const }];
-    expect(matchActivities(events, [ride('a', '2026-10-28T08:00:00', 'Morning ride', 60, 'Ride')])).toEqual([
+    expect(matchActivities(events, [ride('a', '2026-10-28T08:00:00', 'Morning ride', 60, 'Ride')], TODAY)).toEqual([
       { eventId: 'e1', activityId: 'a' },
     ]);
   });
 
   it("doesn't tick off a recovery day with a race", () => {
-    expect(matchActivities([ev('e1', '2026-10-29', 'recovery', 30)], [ride('a', '2026-10-29T18:00:00', 'Club Ladder race', 35)])).toEqual([]);
+    expect(matchActivities([ev('e1', '2026-10-29', 'recovery', 30)], [ride('a', '2026-10-29T18:00:00', 'Club Ladder race', 35)], TODAY)).toEqual([]);
   });
 
   it('ignores other days, other sports, skipped events and already-matched activities', () => {
@@ -73,7 +103,7 @@ describe('matchActivities', () => {
       ride('used', '2026-10-29T08:00:00', 'Morning ride', 60, 'Ride'),
       ride('walk', '2026-10-29T09:00:00', 'Walk', 60, 'Walk'),
     ];
-    expect(matchActivities(events, activities)).toEqual([]);
+    expect(matchActivities(events, activities, TODAY)).toEqual([]);
   });
 
   it('never matches a ride the athlete grouped into another session', () => {
@@ -82,7 +112,7 @@ describe('matchActivities', () => {
       ev('spin', '2026-11-01', 'recovery', 30),
     ];
     const activities = [ride('long', '2026-11-01T09:00:00', 'Long Z2', 84), ride('loop', '2026-11-01T10:30:00', 'Beach Island Loop', 27)];
-    expect(matchActivities(events, activities)).toEqual([]);
+    expect(matchActivities(events, activities, TODAY)).toEqual([]);
   });
 });
 

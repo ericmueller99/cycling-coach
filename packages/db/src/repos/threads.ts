@@ -43,7 +43,7 @@ export async function createThread(
 export async function updateThread(
   c: Collections,
   threadId: ObjectId,
-  set: Partial<Pick<ThreadDoc, 'title' | 'lastMessageAt' | 'seen'>>,
+  set: Partial<Pick<ThreadDoc, 'title' | 'lastMessageAt' | 'seen' | 'lastBuildStartedAt' | 'buildFollowUpUsed' | 'buildPending'>>,
 ) {
   await c.threads.updateOne({ _id: threadId }, { $set: set });
 }
@@ -121,4 +121,16 @@ export async function aiSpendSince(c: Collections, userId: string, since: Date) 
     ])
     .toArray();
   return { costUsd: row?.costUsd ?? 0, calls: row?.calls ?? 0 };
+}
+
+/** Spend per tier in `[from, to)`. Calls with no tier predate routing and count as `other`. */
+export async function aiSpendByTier(c: Collections, userId: string, from: Date, to?: Date) {
+  const rows = await c.aiCalls
+    .aggregate<{ _id: 'chat' | 'build' | null; costUsd: number }>([
+      { $match: { userId, createdAt: { $gte: from, ...(to ? { $lt: to } : {}) } } },
+      { $group: { _id: '$tier', costUsd: { $sum: '$costUsd' } } },
+    ])
+    .toArray();
+  const of = (tier: 'chat' | 'build' | null) => rows.find((r) => (r._id ?? null) === tier)?.costUsd ?? 0;
+  return { chatUsd: of('chat'), buildUsd: of('build'), otherUsd: of(null) };
 }

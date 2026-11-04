@@ -18,6 +18,8 @@ export class ApiError extends Error {
     message: string,
     /** Better Auth's error code, e.g. `INVALID_PASSWORD`. */
     public readonly code?: string,
+    /** Where to go about it, on a 402. */
+    public readonly action?: { label: string; href: string },
   ) {
     super(message);
   }
@@ -33,13 +35,15 @@ type Ok<R> = R extends ClientResponse<infer T, infer S, infer _F> ? (S extends E
 export async function unwrap<R extends ClientResponse<unknown, number, string>>(res: R): Promise<Ok<R>> {
   if (!res.ok) {
     let message = `Request failed (${res.status})`;
+    let action: ApiError['action'];
     try {
-      const body = (await res.json()) as { error?: string; message?: string };
+      const body = (await res.json()) as { error?: string; message?: string; action?: ApiError['action'] };
       message = body.error ?? body.message ?? message;
+      action = body.action;
     } catch {
       /* non-JSON error body */
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, undefined, action);
   }
   return (await res.json()) as Ok<R>;
 }

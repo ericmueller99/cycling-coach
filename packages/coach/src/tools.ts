@@ -151,6 +151,8 @@ interface CoachTool<S extends z.ZodType> {
   source: 'data' | 'app';
   /** Chip label while the tool runs; omitted for tools that render a card instead. */
   runningLabel?: string;
+  /** `build`: this tool's work belongs on the build model, so the engine moves the turn there first. */
+  tier?: 'build';
   /**
    * Strict (grammar-constrained) input. Default true. Off for the large card/workout schemas: the
    * API compiles every strict schema in a request into one grammar and rejects the request when it
@@ -489,6 +491,7 @@ export const COACH_TOOLS = [
 
   defineTool({
     name: 'propose_plan',
+    tier: 'build',
     description:
       "Show the athlete a plan card of dated sessions they can add to their calendar one by one or all at once. Nothing is written until they confirm. Use for any multi-day plan or a recommended session for a specific day. Each item has a kind: 'workout' = a structured workout from their library (workoutId required — call create_workout first for a new one; platform 'zwift'); 'race' = a scheduled race, usually a Zwift race (type 'race', startTime HH:mm when known, priority A/B/C, default B); 'ride' = any other planned ride (Z2, group ride, eFondo, recovery spin) named for what it is. Workouts and races sync to their intervals.icu calendar and from there to Zwift once they add them; rides stay in this app.",
     schema: z.object({
@@ -517,6 +520,7 @@ export const COACH_TOOLS = [
 
   defineTool({
     name: 'propose_calendar_changes',
+    tier: 'build',
     description:
       'Propose changes to sessions already on the calendar (move, update, remove) or single additions. Uses event ids from the calendar context. The athlete confirms before anything changes.',
     schema: z.object({
@@ -585,6 +589,7 @@ export const COACH_TOOLS = [
 
   defineTool({
     name: 'create_workout',
+    tier: 'build',
     description:
       'Create a structured Zwift workout and save it to the athlete’s library (they can download the .zwo). Segments: steady {durSec, pct}, ramp {durSec, fromPct, toPct}, repeat {count, steps: [{durSec, pct}]}. pct is integer % FTP. Pass basedOnId when revising an existing library workout.',
     schema: workoutInputSchema.omit({ inZwift: true }),

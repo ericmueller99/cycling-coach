@@ -6,7 +6,14 @@ import type { BarcodeLookup, FoodImageRef, FoodLibrary, FoodParseInput, FoodPars
 import type { ServiceFailure as Failure } from '../app';
 import { OpenFoodFactsError, type OpenFoodFacts } from '../providers/openfoodfacts';
 import { userImagePrefix, type PhotoStore } from '../providers/storage/s3';
-import { allowSpend, type SpendGuard } from '../lib/spend';
+import { allowSpend, type SpendDecision, type SpendGuard } from '../lib/spend';
+
+/** The spend guard said no: a 402 with what to show. */
+const refusal = (d: Extract<SpendDecision, { allow: false }>): Failure => ({
+  error: d.message,
+  status: 402,
+  ...(d.action ? { action: d.action } : {}),
+});
 
 const aiOff: Failure = { error: 'Reading photos needs CLAUDE_API_KEY on the server. Enter the food by hand instead.', status: 503 };
 /** ~5 MB decoded per image is far above a 1600 px JPEG; anything bigger wasn't shrunk. */
@@ -37,8 +44,8 @@ export class FoodAiService {
    */
   async parse(userId: string, input: FoodParseInput): Promise<FoodParseResult | Failure> {
     if (!this.ai) return { error: 'Logging with words needs CLAUDE_API_KEY on the server. Use Log food instead.', status: 503 };
-    const refused = await this.spendGuard(userId, 'food_parse');
-    if (refused) return { error: refused, status: 402 };
+    const decision = await this.spendGuard(userId, 'food_parse');
+    if (!decision.allow) return refusal(decision);
     const [lib, tz] = await Promise.all([this.library(userId), this.timezone(userId)]);
     const { lines, refs } = buildCatalog(lib);
     const idOf = new Map([...refs].map(([short, ref]) => [`${ref.kind}:${ref.id}`, short]));
@@ -75,8 +82,8 @@ export class FoodAiService {
   /** Read a label / screenshot, and keep the photos (when S3 is configured) to attach to the food. */
   async readPhoto(userId: string, input: PhotoReadInput): Promise<PhotoReadResult | Failure> {
     if (!this.ai) return aiOff;
-    const refused = await this.spendGuard(userId, 'food_vision');
-    if (refused) return { error: refused, status: 402 };
+    const decision = await this.spendGuard(userId, 'food_vision');
+    if (!decision.allow) return refusal(decision);
     const buffers = input.images.map((img) => Buffer.from(img.data, 'base64'));
     if (buffers.some((b) => b.byteLength > MAX_IMAGE_BYTES)) return { error: 'That photo is too large — try again (the app shrinks photos before sending).', status: 413 };
     const result = await this.ai.readNutrition(input);

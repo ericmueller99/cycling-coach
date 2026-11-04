@@ -391,6 +391,7 @@ export class IntervalsSync {
       const pairs = matchActivities(
         matchable,
         activities.map((a) => ({ id: a.id, startLocal: a.startLocal, name: a.name, sportType: a.type, movingSec: a.movingSec, pairedEventId: a.pairedEventId })),
+        today,
       );
       for (const p of pairs) await patchEvent(this.c, userId, p.eventId, { status: 'done', activityId: p.activityId }, now);
       report.matched = pairs.length;

@@ -53,6 +53,8 @@ export interface Extensions {
   usageCard: ComponentType | null;
   /** Extra cards at the end of the Account page. */
   accountCards: ReactNode;
+  /** Above the Coach composer, for anything the athlete should know before sending (plan limits). */
+  coachNotice: ComponentType | null;
 }
 
 /** The core destinations. */
@@ -75,6 +77,7 @@ export const defaultExtensions: Extensions = {
   zwiftConnect: { hint: 'Set ZWIFT_USERNAME and ZWIFT_PASSWORD on the server (owner account only), or enter zFTP by hand' },
   usageCard: ClaudeUsageRow,
   accountCards: null,
+  coachNotice: null,
 };
 
 const ExtensionsContext = createContext<Extensions>(defaultExtensions);

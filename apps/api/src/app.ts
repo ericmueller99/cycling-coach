@@ -65,6 +65,7 @@ import {
   type OnboardingFitness,
   type OnboardingGoals,
   type OnboardingState,
+  type TurnStop,
 } from '@cycling-coach/shared';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
@@ -145,6 +146,8 @@ export interface AppServices {
     save(userId: string, input: SessionFeedbackInput): Promise<SessionFeedback | ServiceFailure>;
   };
   threads: {
+    /** Why a coach turn would be refused right now, or null. */
+    check(userId: string): Promise<TurnStop | null>;
     list(userId: string): Promise<ThreadSummary[]>;
     create(userId: string): Promise<ThreadSummary | null>;
     view(userId: string, id: string): Promise<ThreadView | null>;
@@ -208,6 +211,8 @@ export interface ServiceFailure {
   error: string;
   /** 402: refused by the spend guard (hosted plan limits, DECISIONS #57). */
   status: 400 | 402 | 404 | 409 | 410 | 413 | 502 | 503;
+  /** With a 402: where to go about it. */
+  action?: TurnStop['action'];
 }
 
 const isFailure = (r: object): r is ServiceFailure => 'error' in r && 'status' in r;
@@ -417,6 +422,7 @@ export function createApp(deps: AppDeps) {
 
     // ── Coach threads ───────────────────────────────────────────────────────
     .get('/threads', async (c) => c.json(await services.threads.list(c.get('user')!.id)))
+    .get('/coach/check', async (c) => c.json({ refused: await services.threads.check(c.get('user')!.id) }))
     .post('/threads', async (c) => {
       const t = await services.threads.create(c.get('user')!.id);
       return t ? c.json(t, 201) : c.json({ error: 'Create your profile first' }, 409);

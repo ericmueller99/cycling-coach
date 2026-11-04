@@ -1430,3 +1430,72 @@ later.
 - *Ignoring our own `CALENDAR_UPDATED` echoes*: a push fires one, but a delta with no changes pushes nothing, so
   it ends after one extra run.
 
+## 65. Two models: everyday coaching on Sonnet, plans and workouts on Opus (Nov 3)
+
+**Decision.** `CLAUDE_MODEL` now defaults to `claude-sonnet-5-5`, and `CLAUDE_BUILD_MODEL` (`claude-opus-5-5`) does the
+work that matters most. This replaces #11's single model. Titles move to the small `FOOD_AI_MODEL`.
+- **How a turn moves:** tools marked `tier: 'build'` (`propose_plan`, `propose_calendar_changes`, `create_workout`).
+  A turn starts on the chat model. When that model opens a build tool, the engine stops the call, keeps nothing from
+  it, and re-issues the same messages on the build model. The tool list is the same on both, so the prefix is stable.
+- **One warm follow-up:** for one turn after a build, while its cache is warm (5 minutes from the call's start), the
+  thread stays on the build model. A warm read there costs far less than a cold write on the chat model.
+- **When a model can't go on:** a retryable failure or refusal on the build model carries on with the chat model. A
+  refusal on the chat model gets one try on the build model, because the two decline different things.
+- **Use {model}** in the composer sends one message to the build model, for a question no tool would catch.
+- Set both to the same model for no routing.
+
+**Why.** Opus on every turn costs more than most people want to pay. Sonnet is exactly half of Opus on every price
+line. Plans and workouts are all tools inside one chat loop, so routing has to happen inside it. Sonnet → Opus keeps
+the reasoning, because Opus reads Sonnet's thinking blocks on the Claude API; Opus → Sonnet drops it without an error.
+
+**Rejected.**
+- *A small classifier before each turn*: it guesses, can't be explained to users, and adds a call.
+- *Letting the chat model finish and rejecting its tool call*: a whole draft of latency, and the build model can copy it.
+- *The advisor tool*: encrypted advice, and it only helps if the executor chooses to consult it.
+- *One model at low effort*: simpler, and worth measuring, but it can't offer two tiers.
+
+## 66. Usage is recorded for every attempt, including stopped ones (Nov 3)
+
+**Decision.** `priceUsage` sums `usage.iterations`, each at its own model, because top-level usage covers only the
+attempt that produced the message. A stream that stops early (the Stop button, a dropped connection, the handoff in
+#65) records its input usage and an output estimate from elapsed time, marked `estimated`. `ai_calls` gains `tier`,
+set from the route and not the model, because a fallback can serve another model.
+
+**Why.** Once limits exist, anything unrecorded is free usage. Output tokens aren't reported until a stream finishes
+and thinking isn't visible, so time is the only measure left. `ai_calls` stays an estimate, and the Console is the
+source of truth.
+
+## 67. `SpendGuard` returns a decision; a turn's context says why (Nov 3)
+
+**Decision.** The guard from #57 now answers `{ allow: true, build?, coachNote? }` or
+`{ allow: false, code, message, action? }`. `build: false` keeps a turn on the chat model. `coachNote` goes in the
+turn's context message, so the coach can explain a change itself. `action` becomes a button. It's asked before a turn
+and between its model calls, and `GET /coach/check` asks before a new thread is created. A `coachNotice` web slot sits
+above the composer. A refused turn gives the text back to the composer.
+
+**Why.** A plain string could only say no. A deployment needs "yes, but on the smaller model", and an athlete who
+gets a worse answer should know why, from the coach as well as from a banner.
+
+**Rejected.** *Refusing `POST /threads`*: onboarding opens a thread before the email is confirmed.
+
+Also, from the same work: the athlete block no longer carries live CTL (it's in every context message, and in the
+block it re-sent the whole block daily), a calendar whose window moved but whose sessions didn't counts as unchanged,
+and `seen` is updated only once the coach has replied. The persona's cache marker uses the 1-hour TTL.
+
+
+## 68. A race session holds out for a ride that looks like the race (Nov 3)
+
+**Decision.** intervals.icu's pairing no longer wins outright for a race session (#17). If the paired ride's name
+doesn't look like a race, the session skips the pairing while its day is going. Once the day is over it takes the
+pairing only if no ride that day looks like a race. A skipped pairing falls through to the scorer. `matchActivities`
+now takes `today`. Other sessions still trust the pairing.
+
+**Why.** A warm-up before a Zwift race uploads first, and intervals.icu paired it with the race event, which left the
+race as an unplanned ride. #32 says the two must stay apart. Checking for a better ride isn't enough: a sync can run
+before the race uploads, and a matched session is closed to the matcher, so it has to wait.
+
+**Cost.** An outdoor race with a plain ride name matches a day late. intervals.icu keeps its own pairing, because
+rides are never written there (#16), so the two can disagree until the athlete fixes it there.
+
+**Rejected.** *Re-matching done sessions when a better ride lands*: it could undo a choice the athlete made.
+*The same rule for workouts*: a ride's name says nothing reliable about whether it was the session.

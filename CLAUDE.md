@@ -86,12 +86,15 @@ Fixtures use made-up ids, names and domains. Never commit `.env`, keys or a real
 
 | Use | Model | Notes |
 |---|---|---|
-| Coach chat | `claude-opus-5-5` (`CLAUDE_MODEL`) | adaptive thinking (always on), `effort` from `CLAUDE_EFFORT` (default `medium` — set explicitly), `fallbacks: "default"` |
-| Titles, continuation summaries | same model | effort `low` |
+| Everyday coaching | `claude-sonnet-5-5` (`CLAUDE_MODEL`) | adaptive thinking, `effort` from `CLAUDE_EFFORT` (set it: Sonnet's own default is `high`), `fallbacks: "default"` |
+| Plans and workouts | `claude-opus-5-5` (`CLAUDE_BUILD_MODEL`) | effort from `CLAUDE_BUILD_EFFORT`. Tools marked `tier: 'build'` move the turn here (DECISIONS #65). Same as `CLAUDE_MODEL` means one model, no routing |
+| Thread titles | `FOOD_AI_MODEL` | effort `low` |
 | Food: label photos, "log with words" | `claude-haiku-5-5` (`FOOD_AI_MODEL`) | `FoodAi` in `packages/coach/src/food.ts`; structured outputs, Zod-validated; never Opus (DECISIONS #33–34) |
 
-Opus 5.5: forced `tool_choice` (`any`/`tool`) returns 400 — use `auto` + prompt + strict tools.
-Minimum cacheable prefix 512 tokens; the persona block is well above it.
+Opus 5.5 and Sonnet 5.5: forced `tool_choice` (`any`/`tool`) returns 400 — use `auto` + prompt + strict tools.
+Minimum cacheable prefix 512 tokens. Tools and persona alone are about 15.5K tokens, in front of every
+call, so keep that prefix byte-stable: `pnpm --filter @cycling-coach/api coach:smoke` checks it.
+Caches are per model. Effort is pinned per route, because changing it invalidates the messages cache.
 
 ## Commands
 

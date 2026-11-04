@@ -1,5 +1,6 @@
 import { CoachEngine, FoodAi } from '@cycling-coach/coach';
 import {
+  aiSpendByTier,
   aiSpendSince,
   archiveWorkout,
   collections,
@@ -185,7 +186,14 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   }
 
   const engine = env.CLAUDE_API_KEY
-    ? new CoachEngine({ apiKey: env.CLAUDE_API_KEY, model: env.CLAUDE_MODEL, effort: env.CLAUDE_EFFORT })
+    ? new CoachEngine({
+        apiKey: env.CLAUDE_API_KEY,
+        model: env.CLAUDE_MODEL,
+        effort: env.CLAUDE_EFFORT,
+        buildModel: env.CLAUDE_BUILD_MODEL,
+        buildEffort: env.CLAUDE_BUILD_EFFORT,
+        titleModel: env.FOOD_AI_MODEL,
+      })
     : null;
   if (!engine) console.warn('CLAUDE_API_KEY not set — the coach will report itself offline.');
 
@@ -203,7 +211,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   const energy = new EnergyService(c, training, now);
   /** USDA works without a key on its shared DEMO_KEY (30 requests an hour) — enough for the odd staple. */
   const staples = new StaplesService(c, new UsdaClient(env.USDA_FDC_API_KEY || 'DEMO_KEY'), now);
-  /** Labels and logging phrases go to a small model (FOOD_AI_MODEL), never the coach's Opus. */
+  /** Labels and logging phrases go to a small model (FOOD_AI_MODEL), never the coach's models. */
   const foodAi = new FoodAiService(
     c,
     env.CLAUDE_API_KEY ? new FoodAi({ apiKey: env.CLAUDE_API_KEY, model: env.FOOD_AI_MODEL }) : null,
@@ -286,8 +294,17 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     },
 
     usage: async (userId) => {
-      const spend = await aiSpendSince(c, userId, startOfMonthUtc(now()));
-      return { monthToDateUsd: spend.costUsd, calls: spend.calls, model: env.CLAUDE_MODEL };
+      const from = startOfMonthUtc(now());
+      const [spend, tiers, decision] = await Promise.all([aiSpendSince(c, userId, from), aiSpendByTier(c, userId, from), spendGuard(userId, 'coach')]);
+      return {
+        monthToDateUsd: spend.costUsd,
+        chatUsd: tiers.chatUsd,
+        buildUsd: tiers.buildUsd,
+        calls: spend.calls,
+        model: env.CLAUDE_MODEL,
+        // Null when this athlete can't use it, so the app doesn't offer what won't happen.
+        buildModel: decision.allow && decision.build !== false ? (engine?.buildModel ?? null) : null,
+      };
     },
 
     profile: {
@@ -375,6 +392,10 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     threads: {
       list: (userId) => listThreads(c, userId),
       create: (userId) => startThread(coach, userId),
+      check: async (userId) => {
+        const decision = await spendGuard(userId, 'coach');
+        return decision.allow ? null : { message: decision.message, ...(decision.action ? { action: decision.action } : {}) };
+      },
       view: (userId, id) => getThreadView(coach, userId, id),
       send: (userId, id, input, signal) => sendMessage(coach, userId, id, input, signal),
     },
@@ -506,7 +527,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
 
 export type { CredentialSource, FeatureSource, IntegrationResolver } from './integrations';
 export type { AuthExtension } from './auth';
-export type { AiUse, SpendGuard } from './lib/spend';
+export type { AiUse, SpendDecision, SpendGuard } from './lib/spend';
 export { JobRunner } from './jobs';
 export { IntervalsError, IntervalsIcu } from './providers/intervals-icu';
 export { serveSpa } from './lib/spa';

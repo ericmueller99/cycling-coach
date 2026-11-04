@@ -1,6 +1,6 @@
 import type { CalendarEvent, SessionFeedback } from '@cycling-coach/shared';
 import { describe, expect, it } from 'vitest';
-import { renderAthleteBlock, renderCalendarBlock } from './context';
+import { renderAthleteBlock, renderCalendarBlock, renderTurnContext } from './context';
 import { feedbackRollup, formatActivityForModel, formatFeedbackForModel } from './tools';
 
 const ctx = (zwift?: object) =>
@@ -93,5 +93,35 @@ describe('renderAthleteBlock — FTP not known yet (DECISIONS #62)', () => {
     expect(block).not.toContain('Zones at Zwift FTP');
     expect(block).toContain('70%');
     expect(block).not.toMatch(/\d+ W\b.*Steady|Steady.* \d+ W/);
+  });
+});
+
+describe('renderTurnContext calendar', () => {
+  const base = { today: '2026-11-03', localTime: '9:14 PM', timezone: 'UTC', training: 'connected', athleteBlock: 'athlete' } as const;
+  const calendar = (from: string, to: string, body: string) => `# Calendar ${from} → ${to} (id · date)\n${body}`;
+
+  it('calls the calendar unchanged when only the window moved', () => {
+    const text = renderTurnContext({
+      ...base,
+      calendarBlock: calendar('2026-10-27', '2026-11-17', '- e1 · Tue'),
+      seen: { athlete: 'athlete', calendar: calendar('2026-10-26', '2026-11-16', '- e1 · Tue') },
+    });
+    expect(text).toContain('Calendar: unchanged');
+  });
+
+  it('repeats it when a session changed', () => {
+    const block = calendar('2026-10-27', '2026-11-17', '- e2 · Wed');
+    const text = renderTurnContext({ ...base, calendarBlock: block, seen: { athlete: 'athlete', calendar: calendar('2026-10-27', '2026-11-17', '- e1 · Tue') } });
+    expect(text).toContain(block);
+  });
+
+  it('shows it the first time', () => {
+    const block = calendar('2026-10-27', '2026-11-17', 'Nothing scheduled.');
+    expect(renderTurnContext({ ...base, calendarBlock: block, seen: { athlete: 'athlete' } })).toContain(block);
+  });
+
+  it('adds a note from the deployment', () => {
+    const block = calendar('2026-10-27', '2026-11-17', '- e1');
+    expect(renderTurnContext({ ...base, calendarBlock: block, seen: { athlete: 'athlete' }, coachNote: 'Allowance used up.' })).toContain('Allowance used up.');
   });
 });

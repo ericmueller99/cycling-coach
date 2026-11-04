@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { LiveTurn } from '../../lib/coachTurn';
+import { modelName } from '../../lib/models';
 
 /** What the coach is doing, in words, while a tool runs. */
 const TOOL_LABELS: Record<string, string> = {
@@ -34,7 +35,8 @@ function useElapsed(since: number) {
  */
 export function CoachWorking({ turn }: { turn: LiveTurn }) {
   const secs = useElapsed(turn.startedAt);
-  const label = turn.runningTool ? (TOOL_LABELS[turn.runningTool] ?? 'Working') : turn.thinking || !turn.writing ? 'Thinking' : null;
+  const moved = turn.model && (turn.model.fallback ? `Carrying on with ${modelName(turn.model.id)}` : `Building with ${modelName(turn.model.id)}`);
+  const label = turn.runningTool ? (TOOL_LABELS[turn.runningTool] ?? 'Working') : turn.thinking || !turn.writing ? (moved ?? 'Thinking') : null;
   if (!label) return null;
   return (
     <div role="status" aria-live="polite" className="flex items-center gap-2.5 self-start rounded-full border border-line bg-surface px-3 py-1.5 text-[13px] text-muted">

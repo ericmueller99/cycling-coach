@@ -34,6 +34,7 @@ import {
   updateThread,
   type Collections,
   type MessageDoc,
+  type ThreadDoc,
   type WorkoutDoc,
 } from '@cycling-coach/db';
 import { dayTotals, slotForTime } from '@cycling-coach/core';
@@ -46,7 +47,7 @@ import type { EnergyService } from './energy';
 import type { FoodService } from './food';
 import { createCoachProposal } from './proposals';
 import type { TrainingData } from './training-data';
-import type { SpendGuard } from '../lib/spend';
+import type { SpendDecision, SpendGuard } from '../lib/spend';
 import type { ZwiftEventsService } from './zwift-events';
 
 export interface CoachDeps {
@@ -76,6 +77,7 @@ const toStored = (d: MessageDoc): StoredMessage => ({
   content: d.content,
   createdAt: d.createdAt,
   ...(d.ui ? { ui: d.ui } : {}),
+  ...(d.model ? { model: d.model } : {}),
 });
 
 /**
@@ -133,6 +135,19 @@ function toWorkoutDto(doc: WorkoutDoc): Workout {
   return { ...rest, id: idOf(doc), createdAt: createdAt.toISOString() } as Workout;
 }
 
+/** How long a cached prompt lasts, counted from the start of the request that wrote or read it. */
+const CACHE_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * True for the one turn after a build while its cache is warm. Reading that cache on the build model
+ * costs far less than a cold write on the chat model, and "make Tuesday harder" belongs there anyway.
+ * One turn only, so everyday chat can't drift onto the build model.
+ */
+export function warmFollowUp(thread: Pick<ThreadDoc, 'lastBuildStartedAt' | 'buildFollowUpUsed'>, now: Date): boolean {
+  if (!thread.lastBuildStartedAt || thread.buildFollowUpUsed) return false;
+  return now.getTime() - thread.lastBuildStartedAt.getTime() < CACHE_TTL_MS;
+}
+
 async function logUsage(deps: CoachDeps, userId: string, threadId: ObjectId, purpose: 'coach' | 'title', u: CallUsage) {
   await recordAiCall(deps.c, {
     userId,
@@ -144,6 +159,8 @@ async function logUsage(deps: CoachDeps, userId: string, threadId: ObjectId, pur
     cacheReadTokens: u.cacheReadTokens,
     cacheWriteTokens: u.cacheWriteTokens,
     costUsd: u.costUsd,
+    ...(u.tier ? { tier: u.tier } : {}),
+    ...(u.estimated ? { estimated: true } : {}),
     ...(u.stopReason ? { stopReason: u.stopReason } : {}),
     createdAt: deps.now(),
   });
@@ -207,9 +224,9 @@ export async function* sendMessage(
     yield { type: 'error', message: 'The coach is offline: CLAUDE_API_KEY is not set on the server.', retryable: false };
     return;
   }
-  const refused = await deps.spendGuard?.(userId, 'coach');
-  if (refused) {
-    yield { type: 'error', message: refused, retryable: false };
+  const decision: SpendDecision = (await deps.spendGuard?.(userId, 'coach')) ?? { allow: true };
+  if (!decision.allow) {
+    yield { type: 'error', message: decision.message, retryable: false, ...(decision.action ? { action: decision.action } : {}) };
     return;
   }
   const profile = await getProfile(c, userId);
@@ -221,7 +238,9 @@ export async function* sendMessage(
   const now = deps.now();
   const { today, localTime } = localNow(profile.timezone, now);
   const training = await trainingContext(deps, userId, today);
-  const athlete = (await loadAthleteContext(c, userId, training.fitness?.ctl))!;
+  // No live CTL here: it's in the context message every turn. In this block it would differ from the
+  // thread's snapshot and change daily, re-sending the whole block into a permanent transcript.
+  const athlete = (await loadAthleteContext(c, userId))!;
 
   // Retrying a turn that failed before the coach replied: reuse the stored message instead of
   // showing the user's text twice. Its orphaned context message is skipped by toApiMessages.
@@ -271,12 +290,13 @@ export async function* sendMessage(
           athleteBlock,
           food,
           seen: thread.seen,
+          ...(decision.coachNote ? { coachNote: decision.coachNote } : {}),
         }),
       },
     ],
     createdAt: now,
   });
-  await updateThread(c, tid, { seen: { calendar: calendarBlock, athlete: athleteBlock }, lastMessageAt: now });
+  await updateThread(c, tid, { lastMessageAt: now });
 
   const ports: CoachPorts = {
     training: training.status !== 'not_configured' ? deps.training.port(userId) : null,
@@ -296,12 +316,19 @@ export async function* sendMessage(
 
   const history = await listMessages(c, tid);
   let assistantText = '';
+  let textBefore = 0;
+  let replied = false;
+  const warm = warmFollowUp(thread, now);
+  const canBuild = decision.build !== false;
+  const start = canBuild && (input.useBuildModel || thread.buildPending || warm) ? 'build' : 'chat';
+  if (start === 'build' && warm) await updateThread(c, tid, { buildFollowUpUsed: true });
 
   for await (const event of engine.runTurn({
     system: thread.systemSnapshot,
     messages: toApiMessages(history),
     ports,
     today,
+    route: { start, canBuild },
     ...(signal ? { signal } : {}),
     persist: async (m) => {
       await appendMessage(c, {
@@ -312,11 +339,31 @@ export async function* sendMessage(
         content: m.content,
         createdAt: deps.now(),
         ...(m.ui ? { ui: m.ui } : {}),
+        ...(m.model ? { model: m.model } : {}),
       });
+      // Only now has the coach really seen this context. A turn that failed first drops the message,
+      // and "unchanged" on the retry would point at something it never received.
+      if (m.kind === 'assistant' && !replied) {
+        replied = true;
+        await updateThread(c, tid, { seen: { calendar: calendarBlock, athlete: athleteBlock } });
+      }
+      if (m.kind === 'assistant') textBefore = assistantText.length;
     },
     recordUsage: (u) => logUsage(deps, userId, tid, 'coach', u),
+    onBuildStart: () => updateThread(c, tid, { buildPending: true }),
+    onBuildDone: () => updateThread(c, tid, { buildPending: false }),
+    onBuildTool: (startedAt) => updateThread(c, tid, { lastBuildStartedAt: startedAt, buildFollowUpUsed: false }),
+    ...(deps.spendGuard
+      ? {
+          checkLimit: async () => {
+            const again = await deps.spendGuard!(userId, 'coach');
+            return again.allow ? null : { message: again.message, ...(again.action ? { action: again.action } : {}) };
+          },
+        }
+      : {}),
   })) {
     if (event.type === 'text_delta') assistantText += event.text;
+    if (event.type === 'discard') assistantText = assistantText.slice(0, textBefore);
     yield event;
   }
 

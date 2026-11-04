@@ -133,6 +133,8 @@ export interface UiMessage {
   role: 'user' | 'assistant';
   blocks: UiBlock[];
   createdAt: string;
+  /** Assistant bubbles: the model that wrote last. */
+  model?: string | undefined;
 }
 
 export const threadTags = ['food'] as const;
@@ -151,8 +153,19 @@ export const sendMessageSchema = z.object({
   text: z.string().min(1).max(8000),
   /** The Coach food strip's meal and day, when the user is planning food. */
   food: z.object({ slot: z.string().trim().min(1).max(30), date: isoDateSchema }).optional(),
+  /** Run this one message on the build model, for a question that deserves it. */
+  useBuildModel: z.boolean().optional(),
 });
 export type SendMessageInput = z.infer<typeof sendMessageSchema>;
+
+/** `build`: plans and workouts, on the stronger model. `chat`: everything else. */
+export type CoachTier = 'chat' | 'build';
+
+/** Why a coach turn or AI call won't run, and where to go about it. */
+export interface TurnStop {
+  message: string;
+  action?: { label: string; href: string } | undefined;
+}
 
 export interface CoachUsage {
   inputTokens: number;
@@ -172,4 +185,8 @@ export type CoachEvent =
   | { type: 'block'; block: Exclude<UiBlock, { type: 'text' }> }
   | { type: 'thread_title'; title: string }
   | { type: 'done'; usage: CoachUsage }
-  | { type: 'error'; message: string; retryable: boolean };
+  /** Take back what the model call being dropped showed: its text, and these tool chips. */
+  | { type: 'discard'; toolUseIds: string[] }
+  /** The turn moved to this model. `fallback`: the build model couldn't run, so it's the chat model. */
+  | { type: 'model'; model: string; tier: CoachTier; fallback?: boolean }
+  | { type: 'error'; message: string; retryable: boolean; action?: TurnStop['action'] };

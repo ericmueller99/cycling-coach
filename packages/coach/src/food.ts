@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { nutritionReadingSchema, phraseParseSchema, type NutritionReading, type PhotoReadInput, type PhraseParse } from '@cycling-coach/shared';
 import { z } from 'zod';
 import type { CallUsage } from './engine';
-import { estimateCostUsd } from './pricing';
+import { priceUsage } from './pricing';
 import { toStrictSchema } from './schema';
 
 /**
@@ -91,13 +91,8 @@ export interface ParsePhraseInput {
 const catalogLine = (e: CatalogEntry) => [e.id, e.name, e.aliases.join(', ') || '-', e.units.join(', '), e.usual ?? '-'].join(' | ');
 
 function usageOf(res: Anthropic.Message): CallUsage {
-  const usage = {
-    inputTokens: res.usage.input_tokens,
-    outputTokens: res.usage.output_tokens,
-    cacheReadTokens: res.usage.cache_read_input_tokens ?? 0,
-    cacheWriteTokens: res.usage.cache_creation_input_tokens ?? 0,
-  };
-  return { ...usage, model: res.model, costUsd: estimateCostUsd(res.model, usage), stopReason: res.stop_reason };
+  const { usage, costUsd } = priceUsage(res.model, res.usage);
+  return { ...usage, model: res.model, costUsd, stopReason: res.stop_reason };
 }
 
 /** The JSON schema the API constrains output to, from the same Zod schema used to validate it. */

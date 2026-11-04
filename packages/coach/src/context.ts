@@ -185,6 +185,8 @@ export function renderCalendarBlock(events: CalendarEvent[], from: IsoDate, to: 
 }
 
 export interface TurnContextInput {
+  /** Something the coach should know about this turn, from the deployment (e.g. a plan limit). */
+  coachNote?: string | undefined;
   today: IsoDate;
   /** Local wall-clock time, e.g. "9:14 PM". */
   localTime: string;
@@ -239,6 +241,15 @@ export function renderFoodLine(f: FoodTurnContext): string {
 }
 
 /**
+ * The first line is the window's dates, which move every day. The same sessions in a window one day
+ * on are still "unchanged", or the first turn of every day would repeat the whole calendar.
+ */
+function sameCalendar(seen: string | undefined, block: string): boolean {
+  const sessions = (text: string) => text.slice(text.indexOf('\n'));
+  return seen !== undefined && sessions(seen) === sessions(block);
+}
+
+/**
  * The per-turn context message (sent as a mid-conversation system message after the athlete's message).
  * Appended, never rewritten. Unchanged calendar/athlete sections are referenced rather than
  * repeated, so a long thread doesn't grow by the full calendar every turn.
@@ -269,7 +280,7 @@ export function renderTurnContext(input: TurnContextInput): string {
   }
   if (input.food) parts.push(renderFoodLine(input.food));
   parts.push(
-    input.seen.calendar === input.calendarBlock
+    sameCalendar(input.seen.calendar, input.calendarBlock)
       ? 'Calendar: unchanged since the previous context message.'
       : input.calendarBlock,
   );
@@ -279,5 +290,6 @@ export function renderTurnContext(input: TurnContextInput): string {
       input.athleteBlock,
     );
   }
+  if (input.coachNote) parts.push(input.coachNote);
   return parts.join('\n\n');
 }

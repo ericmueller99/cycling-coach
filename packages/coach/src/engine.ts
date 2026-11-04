@@ -1,14 +1,20 @@
 import Anthropic from '@anthropic-ai/sdk';
-import type { CoachEvent, CoachUsage, IsoDate, UiBlock } from '@cycling-coach/shared';
-import { estimateCostUsd } from './pricing';
+import type { CoachEvent, CoachTier, CoachUsage, IsoDate, TurnStop, UiBlock } from '@cycling-coach/shared';
+import { estimateOutputTokens, priceUsage } from './pricing';
 import { findTool, runTool, TOOL_DEFINITIONS, type CoachPorts } from './tools';
 
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 export interface CoachConfig {
   apiKey: string;
+  /** Everyday coaching. */
   model: string;
   effort: Effort;
+  /** Plans and workouts. Unset, or the same as `model`, means one model and no routing. */
+  buildModel?: string | undefined;
+  buildEffort?: Effort | undefined;
+  /** Thread titles. Defaults to `model`. */
+  titleModel?: string | undefined;
 }
 
 /** A message the engine produced and the caller must append to the thread, in order. */
@@ -17,12 +23,24 @@ export interface PersistedMessage {
   kind: 'assistant' | 'tool_results';
   content: unknown[];
   ui?: Exclude<UiBlock, { type: 'text' }>[];
+  /** The model that wrote it (assistant messages). */
+  model?: string;
 }
 
 export interface CallUsage extends CoachUsage {
   model: string;
   costUsd: number;
   stopReason: string | null;
+  /** Which coach route paid for this call, whatever model ended up serving it. Food calls have none. */
+  tier?: CoachTier;
+  /** A stopped stream never reports its output tokens, so they're estimated. */
+  estimated?: boolean;
+}
+
+/** Where a turn starts and whether it may use the build model at all. */
+export interface TurnRoute {
+  start: CoachTier;
+  canBuild: boolean;
 }
 
 export interface RunTurnArgs {
@@ -34,6 +52,16 @@ export interface RunTurnArgs {
   today: IsoDate;
   persist(message: PersistedMessage): Promise<void>;
   recordUsage(usage: CallUsage): Promise<void>;
+  /** Defaults to starting on the chat model with the build model available. */
+  route?: TurnRoute;
+  /** The turn is on the build model and hasn't written anything yet. */
+  onBuildStart?(): Promise<void>;
+  /** The build is settled: it wrote something, or it couldn't run and the chat model took over. */
+  onBuildDone?(): Promise<void>;
+  /** A build tool ran on the build model, in a call started at this time. */
+  onBuildTool?(startedAt: Date): Promise<void>;
+  /** Asked between model calls: a reason to stop the turn here, or null to go on. */
+  checkLimit?(): Promise<TurnStop | null>;
   signal?: AbortSignal;
 }
 
@@ -51,7 +79,19 @@ function retryable(err: unknown): boolean {
 }
 
 /**
- * The only place Claude is called (ESLint enforces the SDK import boundary). One engine over the
+ * After a mid-output fallback, reasoning and tool calls from before the last `fallback` block belong
+ * to the model that was declined. They can't be replayed and were never answered, so they're dropped
+ * before the message is stored or acted on.
+ */
+export function withoutDeclinedAttempt(content: Anthropic.Beta.BetaContentBlock[]): Anthropic.Beta.BetaContentBlock[] {
+  const last = content.map((b) => b.type as string).lastIndexOf('fallback');
+  if (last === -1) return content;
+  const dropped = new Set(['thinking', 'redacted_thinking', 'tool_use']);
+  return content.filter((b, i) => i > last || !dropped.has(b.type));
+}
+
+/**
+ * Every coach call goes through here (ESLint keeps the SDK inside this package). One engine over the
  * Messages API; a different runtime would re-wrap the same tools and ports (docs/DECISIONS.md #1).
  */
 export class CoachEngine {
@@ -70,28 +110,67 @@ export class CoachEngine {
     return this.config.model;
   }
 
+  /** The build model, or null when there's only one model and so nothing to route. */
+  get buildModel(): string | null {
+    const { buildModel, model } = this.config;
+    return buildModel && buildModel !== model ? buildModel : null;
+  }
+
+  private choice(tier: CoachTier) {
+    const { model, effort, buildModel, buildEffort } = this.config;
+    return tier === 'build' && buildModel ? { model: buildModel, effort: buildEffort ?? effort } : { model, effort };
+  }
+
+  /**
+   * One coach turn. It runs on the chat model until the model opens a build tool: that call is
+   * stopped, nothing from it is kept, and the same messages go to the build model, so a plan is
+   * really written there and not copied from a draft. The chat model's earlier tool calls stay in
+   * the history, and the build model reads its thinking.
+   */
   async *runTurn(args: RunTurnArgs): AsyncGenerator<CoachEvent> {
     const total = emptyUsage();
     const messages = [...args.messages];
-    const system: Anthropic.Beta.BetaTextBlockParam[] = args.system.map((text) => ({
+    const routed = this.buildModel !== null;
+    const route = args.route ?? { start: 'chat', canBuild: true };
+    let canBuild = routed && route.canBuild;
+    let tier: CoachTier = canBuild ? route.start : 'chat';
+    /** A refusal has already moved this turn once, so a second one ends it. */
+    let refusalMoved = false;
+    if (tier === 'build') await args.onBuildStart?.();
+
+    const system: Anthropic.Beta.BetaTextBlockParam[] = args.system.map((text, i) => ({
       type: 'text',
       text,
-      // Breakpoints on both system blocks: persona (+ tools before it) is shared by every thread;
-      // the athlete block is shared by every turn of this context.
-      cache_control: { type: 'ephemeral' },
+      // Breakpoints on both system blocks. The persona (+ tools before it) is shared by every thread,
+      // so it gets the long TTL; the athlete block is shared by every turn of this context. A longer
+      // TTL must come before shorter ones.
+      cache_control: i === 0 ? { type: 'ephemeral', ttl: '1h' } : { type: 'ephemeral' },
     }));
     let jsonRetries = 0;
+    let iteration = 0;
+    let finished = false;
 
-    for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
+    while (iteration < MAX_ITERATIONS) {
+      if (iteration > 0) {
+        const stop = await args.checkLimit?.();
+        if (stop) {
+          yield { type: 'error', message: stop.message, retryable: false, ...(stop.action ? { action: stop.action } : {}) };
+          finished = true;
+          break;
+        }
+      }
+      iteration++;
+
+      const { model, effort } = this.choice(tier);
       const stream = this.client.beta.messages.stream(
         {
-          model: this.config.model,
+          model,
           max_tokens: MAX_TOKENS,
           system,
           tools: TOOL_DEFINITIONS,
           messages,
           thinking: { type: 'adaptive' },
-          output_config: { effort: this.config.effort },
+          output_config: { effort },
           // Top-level automatic caching covers the growing message history.
           cache_control: { type: 'ephemeral' },
           betas: [FALLBACK_BETA],
@@ -100,19 +179,45 @@ export class CoachEngine {
         args.signal ? { signal: args.signal } : undefined,
       );
 
+      const startedAt = Date.now();
+      /** Input usage, known from the first event. It's what a stopped stream still costs. */
+      let opened: Anthropic.Beta.BetaUsage | null = null;
+      let settled = false;
+      let handoff = false;
+      /** Tool chips and text shown from this call, to take back if the call is dropped. */
+      const shownChips: string[] = [];
+
+      const recordStopped = async () => {
+        if (settled || !opened) return;
+        settled = true;
+        const tokens = { ...opened, output_tokens: estimateOutputTokens(Date.now() - startedAt) };
+        const priced = priceUsage(model, tokens);
+        await args.recordUsage({ ...priced.usage, model, costUsd: priced.costUsd, stopReason: 'stopped', tier, estimated: true });
+      };
+
       let message: Anthropic.Beta.BetaMessage;
       try {
         for await (const event of stream) {
-          if (event.type === 'content_block_start') {
+          if (event.type === 'message_start') {
+            opened = event.message.usage;
+          } else if (event.type === 'content_block_start') {
             const block = event.content_block;
             if (block.type === 'thinking' || block.type === 'redacted_thinking') {
               yield { type: 'thinking', active: true };
             } else if (block.type === 'text') {
               yield { type: 'thinking', active: false };
             } else if (block.type === 'tool_use') {
-              yield { type: 'thinking', active: false };
               const tool = findTool(block.name);
+              if (tool && 'tier' in tool && tool.tier === 'build') {
+                if (tier === 'chat' && canBuild) {
+                  handoff = true;
+                  break; // Leaving the loop stops the stream.
+                }
+                if (tier === 'build') await args.onBuildTool?.(new Date(startedAt));
+              }
+              yield { type: 'thinking', active: false };
               if (tool && 'runningLabel' in tool && tool.runningLabel) {
+                shownChips.push(block.id);
                 yield {
                   type: 'block',
                   block: { type: 'tool', toolUseId: block.id, name: block.name, status: 'running', summary: tool.runningLabel, source: tool.source },
@@ -123,14 +228,35 @@ export class CoachEngine {
             yield { type: 'text_delta', text: event.delta.text };
           }
         }
+
+        if (handoff) {
+          await recordStopped();
+          yield { type: 'discard', toolUseIds: shownChips };
+          tier = 'build';
+          iteration = 0; // Bounded: a turn moves up at most once.
+          await args.onBuildStart?.();
+          yield { type: 'model', model: this.choice('build').model, tier };
+          continue;
+        }
+
         message = await stream.finalMessage();
+        settled = true;
         jsonRetries = 0;
       } catch (err) {
+        await recordStopped();
         if (args.signal?.aborted) {
           yield { type: 'error', message: 'Stopped.', retryable: true };
           return;
         }
         if (err instanceof Anthropic.APIError) {
+          // A build that can't run shouldn't lose the turn: the chat model carries on.
+          if (retryable(err) && tier === 'build') {
+            yield* this.dropToChat(args, shownChips);
+            tier = 'chat';
+            canBuild = false;
+            iteration = 0;
+            continue;
+          }
           yield { type: 'error', message: this.describeError(err), retryable: retryable(err) };
           return;
         }
@@ -139,14 +265,13 @@ export class CoachEngine {
         if (jsonRetries++ < 2) continue;
         yield { type: 'error', message: 'The coach sent a malformed tool call. Try again.', retryable: true };
         return;
+      } finally {
+        // A consumer that goes away ends this generator here, without reaching the catch.
+        await recordStopped();
       }
 
-      const usage: CoachUsage = {
-        inputTokens: message.usage.input_tokens,
-        outputTokens: message.usage.output_tokens,
-        cacheReadTokens: message.usage.cache_read_input_tokens ?? 0,
-        cacheWriteTokens: message.usage.cache_creation_input_tokens ?? 0,
-      };
+      const priced = priceUsage(message.model, message.usage);
+      const usage = priced.usage;
       total.inputTokens += usage.inputTokens;
       total.outputTokens += usage.outputTokens;
       total.cacheReadTokens += usage.cacheReadTokens;
@@ -154,29 +279,54 @@ export class CoachEngine {
       await args.recordUsage({
         ...usage,
         model: message.model,
-        costUsd: estimateCostUsd(message.model, usage),
+        costUsd: priced.costUsd,
         stopReason: message.stop_reason,
+        tier,
       });
 
       if (message.stop_reason === 'refusal') {
         // Nothing usable to keep: a refused turn is not persisted, so history stays replayable.
+        // Models differ in what they decline, so the other one gets one try before giving up.
+        if (!refusalMoved && tier === 'chat' && canBuild) {
+          refusalMoved = true;
+          yield { type: 'discard', toolUseIds: shownChips };
+          tier = 'build';
+          iteration = 0;
+          await args.onBuildStart?.();
+          yield { type: 'model', model: this.choice('build').model, tier };
+          continue;
+        }
+        if (!refusalMoved && tier === 'build') {
+          refusalMoved = true;
+          yield* this.dropToChat(args, shownChips);
+          tier = 'chat';
+          canBuild = false;
+          iteration = 0;
+          continue;
+        }
         yield {
           type: 'error',
           message: "The coach couldn't answer that one. Try rephrasing.",
           retryable: false,
         };
+        finished = true;
         break;
       }
 
       // Verbatim, including thinking blocks — they're only valid when replayed exactly.
-      const assistant: Anthropic.Beta.BetaMessageParam = { role: 'assistant', content: message.content };
-      await args.persist({ role: 'assistant', kind: 'assistant', content: message.content });
+      const content = withoutDeclinedAttempt(message.content);
+      const assistant: Anthropic.Beta.BetaMessageParam = { role: 'assistant', content };
+      await args.persist({ role: 'assistant', kind: 'assistant', content, model: message.model });
+      if (tier === 'build') await args.onBuildDone?.();
       messages.push(assistant);
 
       if (message.stop_reason === 'pause_turn') continue;
 
-      const toolUses = message.content.filter((b): b is Anthropic.Beta.BetaToolUseBlock => b.type === 'tool_use');
-      if (toolUses.length === 0) break;
+      const toolUses = content.filter((b): b is Anthropic.Beta.BetaToolUseBlock => b.type === 'tool_use');
+      if (toolUses.length === 0) {
+        finished = true;
+        break;
+      }
 
       if (message.stop_reason === 'max_tokens') {
         // A tool input cut off at max_tokens can still parse; never run it. Every tool_use still
@@ -192,6 +342,7 @@ export class CoachEngine {
           })),
         });
         yield { type: 'error', message: 'The response was too long and got cut off. Ask for a shorter plan.', retryable: false };
+        finished = true;
         break;
       }
 
@@ -225,14 +376,24 @@ export class CoachEngine {
       messages.push({ role: 'user', content: results });
     }
 
+    if (!finished) {
+      yield { type: 'error', message: 'The coach ran out of steps on this one. Ask it to carry on.', retryable: false };
+    }
     yield { type: 'done', usage: total };
+  }
+
+  /** Tell the client the build model is out for this turn, and take back what the failed call showed. */
+  private async *dropToChat(args: RunTurnArgs, shownChips: string[]): AsyncGenerator<CoachEvent> {
+    await args.onBuildDone?.();
+    yield { type: 'discard', toolUseIds: shownChips };
+    yield { type: 'model', model: this.config.model, tier: 'chat', fallback: true };
   }
 
   /** A 2–5 word thread title from the first exchange. Cheap: low effort, tiny output. */
   async generateTitle(userText: string, assistantText: string): Promise<{ title: string; usage: CallUsage } | null> {
     try {
       const res = await this.client.messages.create({
-        model: this.config.model,
+        model: this.config.titleModel ?? this.config.model,
         max_tokens: 2000,
         output_config: { effort: 'low' },
         messages: [
@@ -245,15 +406,10 @@ export class CoachEngine {
       const text = res.content.find((b) => b.type === 'text');
       if (!text || text.type !== 'text') return null;
       const title = text.text.trim().replace(/^["'“]|["'”.]$/g, '').slice(0, 60);
-      const usage = {
-        inputTokens: res.usage.input_tokens,
-        outputTokens: res.usage.output_tokens,
-        cacheReadTokens: res.usage.cache_read_input_tokens ?? 0,
-        cacheWriteTokens: res.usage.cache_creation_input_tokens ?? 0,
-      };
+      const { usage, costUsd } = priceUsage(res.model, res.usage);
       return {
         title: title || 'New chat',
-        usage: { ...usage, model: res.model, costUsd: estimateCostUsd(res.model, usage), stopReason: res.stop_reason },
+        usage: { ...usage, model: res.model, costUsd, stopReason: res.stop_reason, tier: 'chat' },
       };
     } catch {
       return null; // A missing title is cosmetic; never fail the turn over it.
