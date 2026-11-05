@@ -11,7 +11,7 @@ import {
   type SessionPreview,
 } from '@cycling-coach/core';
 import type { CalendarChange, Proposal, ProposalItemStatus, ToolChipBlock, UiBlock, Workout } from '@cycling-coach/shared';
-import { createContext, useContext, useState } from 'react';
+import { createContext, memo, useContext, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { CalendarAddIcon, CheckIcon, ChevronDown, MemoryIcon, PlusIcon, PulseIcon, XIcon } from '../../components/icons';
 import { Button, Card, ErrorNote, SessionTag } from '../../components/ui';
@@ -29,12 +29,17 @@ import {
   useWorkout,
 } from '../../lib/queries';
 
-export function TextBlock({ text }: { text: string }) {
+export const TextBlock = memo(function TextBlock({ text }: { text: string }) {
   return (
     <div className="prose-coach">
       <ReactMarkdown>{text}</ReactMarkdown>
     </div>
   );
+});
+
+/** Beside a button's label while it works (DESIGN 15). Applying a plan can take a while: each synced session is a request. */
+function BusyRing() {
+  return <span className="h-4 w-4 flex-none animate-spin rounded-full border-2 border-current border-t-transparent motion-reduce:animate-none" aria-hidden />;
 }
 
 /** "Pulled 16 rides from intervals.icu · Oct 20 – 28 · 5 races, 10.1 h", expandable to the rows. */
@@ -116,8 +121,8 @@ function PlanCard({ proposal, threadId }: { proposal: Extract<Proposal, { kind: 
           {proposal.subtitle && <div className="text-xs text-muted">{proposal.subtitle}</div>}
         </div>
         <Button variant="primary" disabled={pending === 0 || apply.isPending} onClick={() => apply.mutate({ id: proposal.id })}>
-          <CalendarAddIcon />
-          {pending === 0 ? 'On your calendar' : <>Add all<span className="mobile:hidden"> to calendar</span></>}
+          {apply.isPending ? <BusyRing /> : <CalendarAddIcon />}
+          {apply.isPending ? 'Adding…' : pending === 0 ? 'On your calendar' : <>Add all<span className="mobile:hidden"> to calendar</span></>}
         </Button>
       </div>
       {/* Mobile rows are compact: colour bar, title, "day · duration", a 44px "+". */}
@@ -353,7 +358,7 @@ function ChangesCard({ proposal, threadId }: { proposal: Extract<Proposal, { kin
               Dismiss
             </Button>
             <Button variant="primary" size="sm" disabled={busy} onClick={() => apply.mutate({ id: proposal.id })}>
-              Apply all
+              {apply.isPending ? <><BusyRing />Applying…</> : 'Apply all'}
             </Button>
           </div>
         ) : (
@@ -409,7 +414,7 @@ function ProfileUpdateCard({ proposal, threadId }: { proposal: Extract<Proposal,
         {status === 'pending' ? (
           <>
             <Button variant="primary" size="sm" disabled={apply.isPending} onClick={() => apply.mutate({ id: proposal.id })}>
-              Update profile
+              {apply.isPending ? <><BusyRing />Updating…</> : 'Update profile'}
             </Button>
             <Button size="sm" disabled={dismiss.isPending} onClick={() => dismiss.mutate({ id: proposal.id })}>
               Not now
@@ -444,7 +449,7 @@ function GoalCard({ proposal, threadId }: { proposal: Extract<Proposal, { kind: 
         {status === 'pending' ? (
           <>
             <Button variant="primary" size="sm" disabled={apply.isPending} onClick={() => apply.mutate({ id: proposal.id })}>
-              {g.goalId ? 'Update goal' : 'Add goal'}
+              {apply.isPending ? <><BusyRing />Saving…</> : g.goalId ? 'Update goal' : 'Add goal'}
             </Button>
             <Button size="sm" disabled={dismiss.isPending} onClick={() => dismiss.mutate({ id: proposal.id })}>
               Not now

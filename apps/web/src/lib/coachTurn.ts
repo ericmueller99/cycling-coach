@@ -1,8 +1,9 @@
-import type { CoachUsage, SendMessageInput, UiBlock } from '@cycling-coach/shared';
+import type { CoachEvent, CoachUsage, SendMessageInput, UiBlock } from '@cycling-coach/shared';
 import type { QueryClient } from '@tanstack/react-query';
 import { useSyncExternalStore } from 'react';
 import { keys } from './queries';
 import { streamCoachTurn } from './sse';
+import { TextPacer } from './textPacer';
 
 /**
  * The coach turn being streamed, kept outside the Coach page (DECISIONS #46). A turn outlives the
@@ -23,13 +24,13 @@ export interface TurnError {
 export interface LiveTurn {
   threadId: string;
   userText: string;
-  /** Persisted message count when the turn started; once the refetch adds to it, the live copy hides. */
+  /** Persisted message count when the turn started. Stored messages past it are this turn's, which the live copy shows until `synced`. */
   baseCount: number;
   blocks: UiBlock[];
   thinking: boolean;
   /** The tool running now, for the working indicator. */
   runningTool?: string | undefined;
-  /** Text has started streaming in. */
+  /** Text is coming in now. */
   writing: boolean;
   startedAt: number;
   origin?: TurnOrigin | undefined;
@@ -39,6 +40,8 @@ export interface LiveTurn {
   /** The turn moved to this model part-way. */
   model?: { id: string; fallback: boolean } | undefined;
   done: boolean;
+  /** The stored copy has been fetched since the turn ended, so the live copy can go. */
+  synced: boolean;
   usage?: CoachUsage | undefined;
 }
 
@@ -48,6 +51,9 @@ export interface TurnNotice {
   recipeId?: string | undefined;
   error?: boolean | undefined;
 }
+
+/** How often the pacer lets text out, about 30 times a second. */
+const TICK_MS = 33;
 
 const turns = new Map<string, LiveTurn>();
 const aborts = new Map<string, AbortController>();
@@ -155,61 +161,93 @@ export async function startTurn(opts: {
     startedAt: Date.now(),
     origin: opts.origin,
     done: false,
+    synced: false,
   });
   emit();
   let recipeId: string | undefined;
   let started = false;
   let refused = false;
+
+  function apply(event: CoachEvent) {
+    switch (event.type) {
+      case 'turn_start':
+        started = true;
+        break;
+      case 'discard':
+        update(id, (l) => ({ ...l, writing: false, runningTool: undefined, blocks: dropCall(l.blocks, event.toolUseIds) }));
+        break;
+      case 'model':
+        update(id, (l) => ({ ...l, thinking: true, model: { id: event.model, fallback: event.fallback === true } }));
+        break;
+      case 'thinking':
+        update(id, (l) => ({ ...l, thinking: event.active, writing: event.active ? false : l.writing }));
+        break;
+      case 'working':
+        update(id, (l) => ({ ...l, thinking: false, writing: false, runningTool: event.tool ?? undefined }));
+        break;
+      case 'block': {
+        const b = event.block;
+        if (b.type === 'recipe_ref') recipeId = b.draftId;
+        update(id, (l) => ({
+          ...l,
+          thinking: false,
+          blocks: applyBlock(l.blocks, b),
+          // The Coach page opens it, if it's showing this thread (DECISIONS #46).
+          ...(b.type === 'recipe_ref' ? { readyRecipe: b.draftId } : {}),
+        }));
+        break;
+      }
+      case 'thread_title':
+        void qc.invalidateQueries({ queryKey: keys.threads });
+        break;
+      case 'error':
+        refused = !started;
+        update(id, (l) => ({ ...l, thinking: false, error: { message: event.message, retryable: event.retryable, action: event.action } }));
+        break;
+      case 'done':
+        update(id, (l) => ({ ...l, usage: event.usage }));
+        break;
+    }
+  }
+
+  const pacer = new TextPacer<CoachEvent>({
+    text: (text) => update(id, (l) => ({ ...l, thinking: false, writing: true, blocks: appendText(l.blocks, text) })),
+    event: apply,
+  });
+  // Nobody is watching a hidden tab, and reduced motion means text arrives as it comes, in batches.
+  const unpaced = () => document.hidden || matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let lastTick = performance.now();
+  let drained = () => {};
+  const timer = setInterval(() => {
+    const now = performance.now();
+    if (unpaced()) pacer.flush();
+    else pacer.tick(now - lastTick);
+    lastTick = now;
+    if (pacer.idle) drained();
+  }, TICK_MS);
+  abort.signal.addEventListener('abort', () => pacer.flush());
+
   try {
     for await (const event of streamCoachTurn(id, input, abort.signal)) {
-      switch (event.type) {
-        case 'turn_start':
-          started = true;
-          break;
-        case 'discard':
-          update(id, (l) => ({ ...l, writing: false, runningTool: undefined, blocks: dropCall(l.blocks, event.toolUseIds) }));
-          break;
-        case 'model':
-          update(id, (l) => ({ ...l, thinking: true, model: { id: event.model, fallback: event.fallback === true } }));
-          break;
-        case 'text_delta':
-          update(id, (l) => ({ ...l, thinking: false, writing: true, blocks: appendText(l.blocks, event.text) }));
-          break;
-        case 'thinking':
-          update(id, (l) => ({ ...l, thinking: event.active }));
-          break;
-        case 'block': {
-          const b = event.block;
-          if (b.type === 'recipe_ref') recipeId = b.draftId;
-          update(id, (l) => ({
-            ...l,
-            thinking: false,
-            blocks: applyBlock(l.blocks, b),
-            ...(b.type === 'tool' ? { runningTool: b.status === 'running' ? b.name : undefined } : {}),
-            // The Coach page opens it, if it's showing this thread (DECISIONS #46).
-            ...(b.type === 'recipe_ref' ? { readyRecipe: b.draftId } : {}),
-          }));
-          break;
-        }
-        case 'thread_title':
-          void qc.invalidateQueries({ queryKey: keys.threads });
-          break;
-        case 'error':
-          refused = !started;
-          update(id, (l) => ({ ...l, thinking: false, error: { message: event.message, retryable: event.retryable, action: event.action } }));
-          break;
-        case 'done':
-          update(id, (l) => ({ ...l, usage: event.usage }));
-          break;
+      if (event.type === 'text_delta') {
+        pacer.pushText(event.text);
+      } else {
+        if (event.type === 'discard') pacer.dropText();
+        pacer.pushEvent(event);
       }
     }
+    pacer.finish();
+    if (!pacer.idle) await new Promise<void>((resolve) => (drained = resolve));
   } catch (err) {
+    pacer.flush();
     if (!abort.signal.aborted) update(id, (l) => ({ ...l, error: { message: (err as Error).message, retryable: true } }));
   }
+  clearInterval(timer);
   aborts.delete(id);
-  // The turn is persisted; swap the live bubble for the stored version.
-  update(id, (l) => ({ ...l, done: true, thinking: false, runningTool: undefined }));
+  // The turn is persisted; the live bubble stays until the stored version is here to replace it.
+  update(id, (l) => ({ ...l, done: true, thinking: false, writing: false, runningTool: undefined }));
   await qc.refetchQueries({ queryKey: keys.thread(id) });
+  patchTurn(id, { synced: true });
   void qc.invalidateQueries({ queryKey: keys.threads });
   void qc.invalidateQueries({ queryKey: keys.dashboard });
   // The coach may have saved, changed or forgotten a note.

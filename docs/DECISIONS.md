@@ -1790,3 +1790,75 @@ recap, "only two rides this week" reached a new chat, and an unrelated question 
 - *Skipping the recap for short chats*: it would lose everything chained from before them.
 - *Paging with a cursor*: a bigger limit does the job for a list this size.
 
+## 83. The coach hands food logging to the logger (Nov 5)
+
+**Decision.** The coach doesn't log food. Asked to, it calls `offer_food_log`, which puts a card in the chat: the athlete's
+words, a **Log this** button and a fixed line on the quicker way to log next time. The button opens the existing confirm
+dialog (`WordsDialog`), which matches the words and logs nothing until they press Log.
+- **Nothing new is stored.** The block carries the phrase, so it comes back with the message: no collection, route or port.
+- **No tier:** the turn stays on the chat model. The small model only runs when they tap, through the usual parse.
+- **Today, not the planning day.** The dialog opens on plain today and the current meal, so "yesterday" isn't counted from
+  the food strip's day. A meal or day in the phrase still wins.
+- **The how-to is fixed text on the card,** not the model's words, so the path is never misremembered and costs no output.
+- **`build_recipe` no longer says "and log".** That wording, with nothing else to reach for, is why logging turned into a recipe.
+
+**Why.** Asking the coach to log food is natural, and refusing or writing a recipe feels broken. But a good logger already
+exists, with matching, review, portions and misses. A hand-off keeps the confirm step (rule 5) and costs a one-line reply.
+The coach sees what was logged on its next turn, through the Food line.
+
+**Trade-offs.**
+- It's a dialog, not a card that logs in the chat, and "half the rice" is said in the dialog, not to the coach.
+- The button doesn't know it was used. Tapping again parses again, but the review step means it can't log twice by itself.
+- Each attempt still costs a chat-model turn.
+- The how-to shows on every card, which may wear on someone who keeps logging here.
+
+**Rejected.**
+- *A full in-chat log card* (drafts, routes, a claim against double taps): most of it would repeat the dialog.
+- *Logging in chat, then saying it's better done elsewhere*: all of the cost, and it scolds people for using it.
+- *Text only*: a dead end, and they'd retype what they just said.
+- *A small model classifying each message first*: a call on every message to catch a rare one (see #65).
+
+## 84. A coach reply stays where it is, comes in gently, and says it's still working (Nov 5)
+
+**Problem.** The chat was jumpy. Accepting a card while the coach was still writing refetched the thread, which returned the
+turn's stored messages. The stored and live copies both rendered, so the whole exchange appeared twice, and the change in
+message count scrolled to the bottom: measured at 486 px with the page 486 px taller. Separately, the page scrolled to the end
+on every token wherever the reader was, and the working pill vanished once any text had streamed, which hid the closing
+model call after a card. Nothing runs after accepting: that late text is the same turn's last call.
+
+**Decision.**
+- **One copy of a turn.** While a turn is on screen, stored messages show only up to `baseCount`. A new `synced` flag keeps the
+  live copy until the stored one has been fetched, so a refetch from anywhere can't double anything.
+- **Sending anchors the message.** It moves up under the header once, and nothing scrolls during the turn. The reply grows down
+  from where the eye already is. The conversation gets a `min-height` that stays after the turn, so the swap to the stored copy
+  and shrinking cards can't clamp the scroll. **Latest** appears above the composer while unread words sit below it.
+- **The working status sits above the composer** for the whole turn, over the chips, which can't be used then and keep the row's
+  height. This changes #46's "except while text streams". It's a turning wheel, a label and the seconds: the tool, then
+  Writing, then Finishing up after a card, then Thinking or the model.
+- **`working` is a new event** for every tool, with no chip, from the moment the model starts writing the call, and `tool: null`
+  when the tools are done. That is what makes "Drafting the plan" reachable: `runningLabel` would leave a chip stuck on running.
+- **Text is paced in the browser** (`lib/textPacer.ts`). Events wait in order, so a card can't overtake the words before it. Text
+  comes out by the word at `backlog / 1.2 s`, between 40 and 400 characters a second, and a finished stream gets 2 seconds. Stop,
+  a hidden tab and reduced motion skip the pacing. These numbers are starting values, set by feel.
+- **A live reply closes open `**` and `` ` ``,** so markers don't flash as literal text.
+- **The stream sends a comment every 15 s,** so a proxy doesn't drop a turn during a long silent tool call.
+- **Accept buttons say they're working,** and stay busy until the new status has arrived.
+
+**Why.** Reading from the start of a reply is calmer than chasing its end, and the worst jump was a bug, not a lack of animation.
+Pacing in the browser needs no server change, smooths any burst on the way, and adds only about a second of lag. It also cuts
+renders from one per token to about 30 a second, and memoised rows stop re-parsing old messages.
+
+**Trade-offs.**
+- A short reply leaves empty space below it until the next message, because the page keeps its height.
+- A long reply runs below the composer, so reaching the end takes a scroll or **Latest**.
+- The chat model's text still vanishes when a turn moves to the build model (#65). It no longer moves the page.
+- #46 says a turn finishes on the server if the user leaves. That holds for in-app navigation, but a dropped connection or a reload
+  aborts the turn, through the same path as Stop. Not changed here.
+
+**Rejected.**
+- *Following the end unless the reader scrolls up*: smaller, but a long reply still runs away from them.
+- *Keeping the pill under the reply*: it can be off screen, which was half the complaint.
+- *Pacing on the server*: it would hold back bytes the browser could use, and change nothing about a burst after a proxy.
+- *`runningLabel` on the card tools*: a chip that nothing ever finishes.
+- *Fading in each word*: needs a markdown plugin and spans through every re-parse, for very little beyond pacing.
+

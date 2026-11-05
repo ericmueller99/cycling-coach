@@ -74,6 +74,19 @@ describe('meal tools', () => {
     const out = await runTool('build_recipe', { name: 'Bowl', servings: 1, ingredients: [ingredient], steps: ['Cook'] }, { toolUseId: 't', today: '2026-11-01', ports: ports(null) });
     expect(out.isError).toBe(true);
   });
+
+  it('offer_food_log puts the athlete\'s words on the card, with no food module and nothing stored', async () => {
+    const out = await runTool('offer_food_log', { phrase: 'two eggs and toast for lunch' }, { toolUseId: 't', today: '2026-11-01', ports: ports(null) });
+    expect(out.isError).toBeUndefined();
+    expect(out.ui).toEqual({ type: 'food_log_offer', phrase: 'two eggs and toast for lunch' });
+    expect(out.content).toContain('Nothing is logged until they confirm it');
+  });
+
+  it('offer_food_log sends a phrase too short to parse back to the model', async () => {
+    const out = await runTool('offer_food_log', { phrase: 'x' }, { toolUseId: 't', today: '2026-11-01', ports: ports(null) });
+    expect(out.isError).toBe(true);
+    expect(out.ui).toBeUndefined();
+  });
 });
 
 describe('renderFoodLine', () => {

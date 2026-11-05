@@ -330,10 +330,10 @@ export function useSaveFeedback() {
 export function useProposalMutations(threadId: string) {
   const qc = useQueryClient();
   const invalidate = useInvalidateTraining();
+  // Returned, so the card stays busy until its new status is here and its button can't flash back.
   const after = (_: unknown, vars: { id: string }) => {
     invalidate();
-    void qc.invalidateQueries({ queryKey: keys.thread(threadId) });
-    void qc.invalidateQueries({ queryKey: ['proposals', vars.id] });
+    return Promise.all([qc.invalidateQueries({ queryKey: keys.thread(threadId) }), qc.invalidateQueries({ queryKey: ['proposals', vars.id] })]);
   };
   return {
     apply: useMutation({

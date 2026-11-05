@@ -20,5 +20,6 @@ exports[`strict tool schemas > keeps the tool list in a fixed order (it is the c
   "find_events",
   "suggest_meals",
   "build_recipe",
+  "offer_food_log",
 ]
 `;

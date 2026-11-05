@@ -791,7 +791,7 @@ export const COACH_TOOLS = [
   defineTool({
     name: 'build_recipe',
     description:
-      "Build a full recipe the athlete can cook and log — after they pick a meal idea, or when they ask for a recipe. Give every ingredient with an amount for the whole recipe, and the method as steps (the app numbers them). Use the servings they asked for (\"…, 3 servings\"). The app matches ingredients to their foods (or Canadian staples) and computes per-serving nutrition; the result tells you the numbers. It opens in a recipe pane where they pick how much they ate and logs it, or saves it to their recipes. Nothing is saved or logged by this call.",
+      "Build a full recipe for the athlete to cook — after they pick a meal idea, or when they ask for a recipe. Not for logging something they ate: that's offer_food_log, even when it's home-made. Give every ingredient with an amount for the whole recipe, and the method as steps (the app numbers them). Use the servings they asked for (\"…, 3 servings\"). The app matches ingredients to their foods (or Canadian staples) and computes per-serving nutrition; the result tells you the numbers. It opens in a recipe pane where they can save it to their recipes, or log how much they ate. Nothing is saved or logged by this call.",
     schema: z.object({
       ideas_id: z.string().optional().describe('The ideas id from suggest_meals, when building one of those ideas.'),
       idea_index: z.number().int().min(0).max(3).optional(),
@@ -834,6 +834,24 @@ export const COACH_TOOLS = [
           .filter(Boolean)
           .join('\n'),
         ui: { type: 'recipe_ref', draftId: draft.id },
+      };
+    },
+  }),
+
+  defineTool({
+    name: 'offer_food_log',
+    description:
+      'Put a Log this button in the chat when the athlete asks you to log food ("log my lunch", "add a latte") or tells you what they ate so it counts ("I had a burrito for lunch, how\'s my protein?"). You can\'t log food yourself: the button opens the app\'s food logger with their words, and they check it and log it there. Use this instead of build_recipe or suggest_meals, even for something home-made. Not for a passing mention ("big dinner last night, legs feel heavy"). One call per meal. A recipe you built in this chat is logged from its pane, so tell them that instead.',
+    schema: z.object({
+      phrase: z.string().min(2).max(500).describe('The athlete\'s words for this meal, unchanged, with any amounts, meal and day ("yesterday", "for breakfast").'),
+    }),
+    source: 'app',
+    strict: false,
+    async run({ phrase }) {
+      return {
+        content:
+          "Log this button shown with their words. Nothing is logged until they confirm it in the food logger, and the Food line won't count it until then. The card already says how to log directly next time, so don't repeat that. Give no numbers for this food.",
+        ui: { type: 'food_log_offer', phrase },
       };
     },
   }),

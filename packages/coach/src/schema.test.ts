@@ -28,6 +28,7 @@ describe('strict tool schemas', () => {
     expect(TOOL_DEFINITIONS.filter((t) => !t.strict).map((t) => t.name).sort()).toEqual([
       'build_recipe',
       'create_workout',
+      'offer_food_log',
       'propose_calendar_changes',
       'propose_goal',
       'propose_plan',

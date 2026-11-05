@@ -464,6 +464,9 @@ export function createApp(deps: AppDeps) {
       return streamSSE(c, async (stream) => {
         const abort = new AbortController();
         stream.onAbort(() => abort.abort());
+        // A plan's input can take minutes with nothing to send, and a proxy that drops a quiet
+        // connection would abort the turn. Comment frames carry no event.
+        const keepAlive = setInterval(() => void stream.write(': ping\n\n'), 15_000);
         try {
           for await (const event of services.threads.send(userId, threadId, input, abort.signal)) {
             await stream.writeSSE({ data: JSON.stringify(event) });
@@ -473,6 +476,8 @@ export function createApp(deps: AppDeps) {
           await stream.writeSSE({
             data: JSON.stringify({ type: 'error', message: 'Something went wrong on the server.', retryable: true } satisfies CoachEvent),
           });
+        } finally {
+          clearInterval(keepAlive);
         }
       });
     })

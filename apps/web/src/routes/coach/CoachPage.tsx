@@ -2,7 +2,7 @@ import { landsOnNewChat, returnsToNewChat, slotForTime, todayIn } from '@cycling
 import type { IsoDate, MealIdeas, Proposal, RecipeDraft, ThreadSummary, ThreadView, UiBlock, UiMessage, Workout } from '@cycling-coach/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
-import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { Fragment, memo, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { AppBar, IconButton } from '../../components/AppBar';
 import { BrandTile } from '../../components/BrandTile';
 import { ArrowUpIcon, ComposeIcon, MenuIcon, SendIcon } from '../../components/icons';
@@ -13,14 +13,18 @@ import { api, unwrap } from '../../lib/api';
 import { useFoodLibrary } from '../../lib/foodQueries';
 import { modelName } from '../../lib/models';
 import { keys, threadQuery, THREADS_PAGE, threadsQuery, useCoachCheck, useDashboard, useThread, useThreads, useUsage } from '../../lib/queries';
+import { settleMarkdown } from '../../lib/textPacer';
 import { abortTurn, clearDoneTurn, patchTurn, runningThreadId, setWatching, startTurn, useLiveTurn, type LiveTurn, type TurnError as TurnErrorInfo, type TurnOrigin } from '../../lib/coachTurn';
 import { useAwayReturn } from '../../lib/useAwayReturn';
 import { useIsMobile } from '../../lib/useIsMobile';
 import { MemoryChip, ProposalBlock, RequestChangesContext, TextBlock, ToolChip, WorkoutBlock } from './blocks';
-import { CoachFoodContext, MealIdeasBlock, RecipeRefBlock, type CoachFoodActions } from './foodBlocks';
+import { dayLabel } from '../food/dayLabel';
+import { useFoodFlows } from '../food/flows';
+import { CoachFoodContext, FoodLogOfferBlock, MealIdeasBlock, RecipeRefBlock, type CoachFoodActions } from './foodBlocks';
 import { FoodStrip } from './FoodStrip';
 import { IdeaDetailsPane } from './IdeaDetailsPane';
 import { CoachWorking } from './CoachWorking';
+import { useChatScroll } from './useChatScroll';
 import { LongChatNotice } from './LongChatNotice';
 import { RecipePane, RecipePaneSkeleton } from './RecipePane';
 import { RightRail, TodayStrip } from './RightRail';
@@ -56,14 +60,14 @@ function CoachAvatar() {
   return <BrandTile size={32} radius={9} className="mobile:hidden" />;
 }
 
-function AssistantBlocks({ blocks, threadId, cards }: { blocks: UiBlock[]; threadId: string; cards: CardData }) {
+function AssistantBlocks({ blocks, threadId, cards, live = false }: { blocks: UiBlock[]; threadId: string; cards: CardData; live?: boolean }) {
   const { proposals, workouts, mealIdeas, recipeDrafts } = cards;
   return (
     <>
       {blocks.map((b, i) => {
         switch (b.type) {
           case 'text':
-            return <TextBlock key={i} text={b.text} />;
+            return <TextBlock key={i} text={live ? settleMarkdown(b.text) : b.text} />;
           case 'tool':
             return <ToolChip key={b.toolUseId || i} block={b} />;
           case 'proposal':
@@ -76,17 +80,20 @@ function AssistantBlocks({ blocks, threadId, cards }: { blocks: UiBlock[]; threa
             return <MealIdeasBlock key={b.ideasId} id={b.ideasId} initial={mealIdeas.get(b.ideasId)} />;
           case 'recipe_ref':
             return <RecipeRefBlock key={b.draftId} id={b.draftId} initial={recipeDrafts.get(b.draftId)} />;
+          case 'food_log_offer':
+            return <FoodLogOfferBlock key={i} phrase={b.phrase} />;
         }
       })}
     </>
   );
 }
 
-function MessageRow({ message, view, cards }: { message: UiMessage; view: ThreadView | undefined; cards: CardData }) {
+/** Memoised: the live reply updates many times a second, and old messages shouldn't re-parse their markdown each time. */
+const MessageRow = memo(function MessageRow({ message, view, cards }: { message: UiMessage; view: ThreadView | undefined; cards: CardData }) {
   if (message.role === 'user') {
     const text = message.blocks.map((b) => (b.type === 'text' ? b.text : '')).join('\n');
     return (
-      <div className="max-w-[78%] self-end rounded-[16px_16px_4px_16px] bg-user-bubble px-4 py-3.5 whitespace-pre-wrap mobile:max-w-[85%] mobile:py-3">{text}</div>
+      <div data-user-row className="max-w-[78%] self-end rounded-[16px_16px_4px_16px] bg-user-bubble px-4 py-3.5 whitespace-pre-wrap mobile:max-w-[85%] mobile:py-3">{text}</div>
     );
   }
   return (
@@ -98,7 +105,7 @@ function MessageRow({ message, view, cards }: { message: UiMessage; view: Thread
       </div>
     </div>
   );
-}
+});
 
 /** In place of the composer while the coach can't take a message, so nobody writes one only to be refused (DECISIONS #76). */
 function CoachLocked({ refusal }: { refusal: { message: string; action?: { label: string; href: string } | undefined } }) {
@@ -207,11 +214,6 @@ function ThreadsMenu({ current, onPick }: { current?: string | undefined; onPick
   );
 }
 
-/** The window is the scroller; its very bottom puts the latest message just above the sticky composer. */
-function scrollToEnd() {
-  window.scrollTo({ top: document.documentElement.scrollHeight });
-}
-
 export function CoachPage({
   threadId,
   isNew,
@@ -266,6 +268,8 @@ export function CoachPage({
     const hhmm = new Intl.DateTimeFormat('en-GB', { timeZone: dashboard?.timezone, hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
     return slotForTime(lib.settings.slots, hhmm);
   }, [lib, dashboard?.timezone]);
+  // Log this works from today, not the strip's planning day, or "yesterday" would be counted from there.
+  const flows = useFoodFlows({ lib, date: today, dateLabel: dayLabel(today, today), defaultSlot: nowSlot });
   // The coach's latest ideas name the meal it's planning ("Ideas for dinner" at 11 pm is still dinner).
   const lastIdeas = thread.data?.mealIdeas.at(-1);
   const planned = lastIdeas && lastIdeas.date >= today ? lastIdeas : undefined;
@@ -335,31 +339,8 @@ export function CoachPage({
     if (!mobile) openRecipe(readyRecipe);
   }, [readyRecipe]);
 
-  useEffect(() => {
-    scrollToEnd();
-  }, [threadId, thread.data?.messages.length, live?.blocks]);
-
-  // Opening a thread lands on the latest message. Workout charts and proposal cards load after the
-  // first scroll and push the bottom down, so stay pinned while they settle — unless the user scrolls.
-  const conversationRef = useRef<HTMLDivElement>(null);
-  const loaded = !!thread.data;
-  useEffect(() => {
-    const el = conversationRef.current;
-    if (!el || !loaded) return;
-    const observer = new ResizeObserver(scrollToEnd);
-    const stop = () => {
-      observer.disconnect();
-      clearTimeout(timer);
-      for (const ev of ['wheel', 'touchmove', 'keydown'] as const) window.removeEventListener(ev, stop);
-    };
-    const timer = setTimeout(stop, 2000);
-    for (const ev of ['wheel', 'touchmove', 'keydown'] as const) window.addEventListener(ev, stop, { passive: true });
-    observer.observe(el);
-    scrollToEnd();
-    return stop;
-  }, [threadId, loaded]);
-
   const streaming = !!live && !live.done;
+  const scroll = useChatScroll({ threadId, loaded: !!thread.data, turnStart: live?.startedAt, streaming });
   // Fails open: a check that can't be read leaves the composer, and the server still refuses.
   const blocked = useCoachCheck().data?.refused ?? null;
   // A turn just spent money, which may have been the last of it.
@@ -400,6 +381,7 @@ export function CoachPage({
       // Only while still on Coach: the app never pulls the user back here (DECISIONS #46).
       if (mountedRef.current) void navigate({ to: '/', search: { t: id }, replace: true });
     }
+    scroll.anchorNext();
     const { refused } = await startTurn({
       threadId: id,
       input: { text: trimmed, ...(foodPick ? { food: foodPick } : {}), ...(useBuildModel ? { useBuildModel } : {}) },
@@ -419,7 +401,7 @@ export function CoachPage({
   }
 
   const view = thread.data;
-  const messages = view?.messages ?? [];
+  const stored = view?.messages ?? [];
   const cards = useMemo<CardData>(
     () =>
       view
@@ -434,8 +416,11 @@ export function CoachPage({
   );
   const isFood = !!view?.thread.tags.includes('food') || !!live?.blocks.some(isFoodBlock);
   const quickPrompts = [...QUICK_PROMPTS.slice(0, 3), `Ideas for ${foodSlot.toLowerCase()}`, QUICK_PROMPTS[3]!];
-  const showLive = !!live && (!live.done || messages.length === live.baseCount);
+  const showLive = !!live && (!live.synced || stored.length === live.baseCount);
   const lateError = live?.error && !showLive ? live.error : null;
+  // A running turn stores its messages as it goes, and anything can refetch them (accepting its card,
+  // its title, coming back to the window). The live copy is the one on screen until it's finished.
+  const messages = showLive ? stored.slice(0, live.baseCount) : stored;
   // A retry of an unanswered message: the server reuses it, so don't draw the bubble twice.
   const lastMessage = messages[messages.length - 1];
   const retryingLast =
@@ -443,7 +428,7 @@ export function CoachPage({
     lastMessage?.role === 'user' &&
     lastMessage.blocks.some((b) => b.type === 'text' && b.text === live.userText);
 
-  const foodActions: CoachFoodActions = { send: (t, o) => void send(t, o), openRecipe, openId: recipe, openIdea, openIdeaKey: idea, busy: streaming, makingKey, servingsFor, setServings };
+  const foodActions: CoachFoodActions = { send: (t, o) => void send(t, o), openRecipe, openId: recipe, openIdea, openIdeaKey: idea, busy: streaming, makingKey, servingsFor, setServings, logWords: (p) => flows.words(p) };
   const title = view?.thread.title ?? (threadId ? '…' : 'Coach');
   const newChat = () => {
     clearDoneTurn(threadId);
@@ -499,7 +484,7 @@ export function CoachPage({
 
         <CoachFoodContext value={foodActions}>
         <RequestChangesContext value={requestChanges}>
-        <div ref={conversationRef} className="mx-auto box-border flex w-full max-w-[860px] grow flex-col gap-[22px] p-7 mobile:gap-4 mobile:p-4">
+        <div ref={scroll.conversationRef} className="mx-auto box-border flex w-full max-w-[860px] grow flex-col gap-[22px] p-7 mobile:gap-4 mobile:p-4">
           {messages.length === 0 && !live && (
             <div className="flex flex-col items-start gap-3 text-muted">
               <CoachAvatar />
@@ -524,15 +509,14 @@ export function CoachPage({
           {showLive && live && (
             <>
               {!retryingLast && (
-                <div className="max-w-[78%] self-end rounded-[16px_16px_4px_16px] bg-user-bubble px-4 py-3.5 whitespace-pre-wrap mobile:max-w-[85%] mobile:py-3">
+                <div data-user-row className="max-w-[78%] self-end rounded-[16px_16px_4px_16px] bg-user-bubble px-4 py-3.5 whitespace-pre-wrap mobile:max-w-[85%] mobile:py-3">
                   {live.userText}
                 </div>
               )}
               <div className="flex items-start gap-3">
                 <CoachAvatar />
-                <div className="flex min-w-0 flex-auto flex-col gap-3.5">
-                  <AssistantBlocks blocks={live.blocks} threadId={threadId ?? ''} cards={NO_CARDS} />
-                  {!live.done && <CoachWorking turn={live} />}
+                <div className="coach-live flex min-w-0 flex-auto flex-col gap-3.5">
+                  <AssistantBlocks blocks={live.blocks} threadId={threadId ?? ''} cards={cards} live />
                   {live.error && <TurnError error={live.error} onRetry={() => void send(live.userText)} />}
                 </div>
               </div>
@@ -540,12 +524,22 @@ export function CoachPage({
           )}
           {lateError && live && <TurnError error={lateError} onRetry={() => void send(live.userText)} />}
           {refused && !blocked && <TurnError error={refused} onRetry={() => {}} />}
+          <div ref={scroll.endRef} className="h-px" aria-hidden />
         </div>
         </RequestChangesContext>
         </CoachFoodContext>
 
         {/* Pinned above the tab bar on mobile, with the chips scrolling sideways. */}
-        <div className="sticky bottom-0 mx-auto box-border flex w-full max-w-[860px] flex-col gap-2.5 bg-bg px-7 pt-2 pb-6 mobile:bottom-[calc(64px+env(safe-area-inset-bottom))] mobile:gap-2 mobile:border-t mobile:border-line mobile:px-3 mobile:pb-2.5">
+        <div ref={scroll.dockRef} className="sticky bottom-0 mx-auto box-border flex w-full max-w-[860px] flex-col gap-2.5 bg-bg px-7 pt-2 pb-6 mobile:bottom-[calc(64px+env(safe-area-inset-bottom))] mobile:gap-2 mobile:border-t mobile:border-line mobile:px-3 mobile:pb-2.5">
+          {scroll.showLatest && (
+            <button
+              type="button"
+              onClick={scroll.toLatest}
+              className="absolute -top-11 left-1/2 flex h-9 -translate-x-1/2 items-center gap-1.5 rounded-full border border-line-strong bg-surface px-3.5 text-[13px] font-medium whitespace-nowrap text-ink shadow-sm"
+            >
+              <span aria-hidden>↓</span> Latest
+            </button>
+          )}
           {CoachNotice && <CoachNotice />}
           {threadId && view?.contextLong && !blocked && !streaming && <LongChatNotice threadId={threadId} onNewChat={newChat} />}
           {blocked ? (
@@ -553,7 +547,14 @@ export function CoachPage({
           ) : (
             <>
               {isFood && <FoodStrip slot={foodSlot} date={foodDate} today={today} onChange={(slot, date) => setFoodPick({ slot, date })} />}
-              <div className="flex flex-wrap gap-2 mobile:scrollbar-none mobile:flex-nowrap mobile:gap-1.5 mobile:overflow-x-auto">
+              {/* The status sits over the chips, which can't be used during a turn and keep the row's height. */}
+              <div className="relative">
+              {streaming && live && (
+                <div className="absolute inset-0 flex items-center">
+                  <CoachWorking turn={live} />
+                </div>
+              )}
+              <div className={`flex flex-wrap gap-2 mobile:scrollbar-none mobile:flex-nowrap mobile:gap-1.5 mobile:overflow-x-auto ${streaming ? 'invisible' : ''}`}>
                 {buildModel && (
                   <button
                     type="button"
@@ -578,6 +579,7 @@ export function CoachPage({
                     {p}
                   </button>
                 ))}
+              </div>
               </div>
               <div className="flex items-end gap-2.5 rounded-[14px] border border-[#CDD2DA] bg-surface py-2.5 pr-2.5 pl-4 mobile:gap-2 mobile:rounded-[22px] mobile:py-1.5 mobile:pr-1.5 mobile:pl-3.5">
                 <label htmlFor="msg" className="sr-only">
@@ -642,6 +644,7 @@ export function CoachPage({
         !mobile && <RightRail onAsk={(p) => void send(p)} />
       )}
       </CoachFoodContext>
+      {flows.element}
     </div>
   );
 }

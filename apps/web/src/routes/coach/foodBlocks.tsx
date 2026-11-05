@@ -31,6 +31,8 @@ export interface CoachFoodActions {
   /** Servings picked for an idea before Make this, by key (card and Details pane share it). */
   servingsFor: (key: string, idea: MealIdea) => number;
   setServings: (key: string, n: number) => void;
+  /** Open the food logger on these words: it matches them and they confirm there. */
+  logWords: (phrase: string) => void;
 }
 
 export const CoachFoodContext = createContext<CoachFoodActions>({
@@ -40,6 +42,7 @@ export const CoachFoodContext = createContext<CoachFoodActions>({
   busy: false,
   servingsFor: (_k, idea) => idea.servings,
   setServings: () => {},
+  logWords: () => {},
 });
 
 export const servingsText = (n: number) => `${formatQuantity(n)} serving${n === 1 ? '' : 's'}`;
@@ -176,6 +179,28 @@ export function LoggedPill({ log }: { log: RecipeDraft['logged'][number] }) {
         </Link>
       </span>
     </div>
+  );
+}
+
+/**
+ * The coach can't log food, so it hands over: Log this opens the food logger on the athlete's words, and
+ * the fixed line teaches the way that skips the coach. Fixed so the path is never misremembered.
+ */
+export function FoodLogOfferBlock({ phrase }: { phrase: string }) {
+  const { logWords } = useContext(CoachFoodContext);
+  return (
+    <Card className="flex flex-col items-start gap-2.5 self-start p-3.5">
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="flex h-9 w-9 flex-none items-center justify-center rounded-[9px] bg-[#FFF4E5] text-[#B54708]">
+          <ForkKnifeIcon size={17} />
+        </span>
+        <span className="min-w-0 font-semibold break-words">{phrase}</span>
+      </div>
+      <Button variant="primary" size="sm" onClick={() => logWords(phrase)}>
+        Log this
+      </Button>
+      <p className="m-0 text-xs text-muted">Quicker next time: open a day in Calendar, tap + Food, then Log with AI. It skips the coach, so it's faster and uses less AI.</p>
+    </Card>
   );
 }
 

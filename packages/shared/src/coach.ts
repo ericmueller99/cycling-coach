@@ -135,7 +135,9 @@ export type UiBlock =
   /** Meal idea cards; the ideas live in `meal_ideas`. */
   | { type: 'meal_ideas'; ideasId: string }
   /** A generated recipe; it opens in the recipe pane and lives in `recipe_drafts`. */
-  | { type: 'recipe_ref'; draftId: string };
+  | { type: 'recipe_ref'; draftId: string }
+  /** A Log this button: the athlete's words, opened in the food logger. Nothing is stored but the words. */
+  | { type: 'food_log_offer'; phrase: string };
 
 export interface UiMessage {
   id: string;
@@ -198,6 +200,8 @@ export type CoachEvent =
   | { type: 'turn_start'; messageId: string }
   | { type: 'text_delta'; text: string }
   | { type: 'thinking'; active: boolean }
+  /** What the turn is busy with, for the working indicator: this tool, or none now that the tools are done. */
+  | { type: 'working'; tool: string | null }
   | { type: 'block'; block: Exclude<UiBlock, { type: 'text' }> }
   | { type: 'thread_title'; title: string }
   | { type: 'done'; usage: CoachUsage }

@@ -95,6 +95,32 @@ const OPUS = { model: 'claude-opus-5-5', effort: 'medium' as const };
 const config = { apiKey: 'test', router: () => ({ chat: OPUS, build: OPUS, small: 'claude-haiku-5-5' }) };
 
 describe('CoachEngine.runTurn', () => {
+  it('says what it is working on for every tool, card tools included, and when the tools are done', async () => {
+    const { client } = fakeClient([
+      {
+        content: [
+          { type: 'tool_use', id: 'tu1', name: 'get_recent_activities', input: { start: '2026-10-22', end: '2026-10-28' } },
+          { type: 'tool_use', id: 'tu2', name: 'get_fitness', input: { start: '2026-10-22', end: '2026-10-28' } },
+        ],
+        stop_reason: 'tool_use',
+      },
+      { content: [{ type: 'text', text: 'Done.' }], stop_reason: 'end_turn' },
+    ]);
+    const { events } = await run(new CoachEngine(config, client));
+    expect(events.filter((e) => e.type === 'working').map((e) => (e as { tool: string | null }).tool)).toEqual([
+      // While the model writes each call,
+      'get_recent_activities',
+      'get_fitness',
+      // while each one runs,
+      'get_recent_activities',
+      'get_fitness',
+      // and the tools are over before the closing words.
+      null,
+    ]);
+    const types = events.map((e) => e.type);
+    expect(types.lastIndexOf('working')).toBeLessThan(types.indexOf('text_delta'));
+  });
+
   it('runs a training-data tool, returns results in one user message, and streams the final text', async () => {
     const { client, calls } = fakeClient([
       {

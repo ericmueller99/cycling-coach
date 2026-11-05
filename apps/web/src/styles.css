@@ -130,6 +130,22 @@
   text-align: left;
 }
 
+/* What lands in a live coach reply fades in, so a card doesn't snap into place. Text comes in by itself. */
+@keyframes coachFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .coach-live > :not(.prose-coach) {
+    animation: coachFadeIn 180ms ease-out;
+  }
+}
+
 /* Onboarding steps fade up as they change (DECISIONS #62); off with reduced motion via motion-safe. */
 @keyframes obIn {
   from {

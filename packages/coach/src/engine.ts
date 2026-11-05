@@ -206,6 +206,8 @@ export class CoachEngine {
                 if (tier === 'build') await args.onBuildTool?.(new Date(startedAt));
               }
               yield { type: 'thinking', active: false };
+              // Every tool, not just those with a chip: writing a plan's input is the longest quiet stretch of a turn.
+              yield { type: 'working', tool: block.name };
               if (tool && 'runningLabel' in tool && tool.runningLabel) {
                 shownChips.push(block.id);
                 yield {
@@ -343,6 +345,7 @@ export class CoachEngine {
       // Sequential on purpose: keeps intervals.icu request bursts small, and tool calls in one turn
       // are rarely independent enough for parallelism to matter.
       for (const use of toolUses) {
+        yield { type: 'working', tool: use.name };
         const outcome = await runTool(use.name, use.input, { toolUseId: use.id, ports: args.ports, today: args.today });
         results.push({
           type: 'tool_result',
@@ -355,6 +358,7 @@ export class CoachEngine {
           yield { type: 'block', block: outcome.ui };
         }
       }
+      yield { type: 'working', tool: null };
 
       // All results in ONE user message — splitting them teaches the model to stop calling tools
       // in parallel.
