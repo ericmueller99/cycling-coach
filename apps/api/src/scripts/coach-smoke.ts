@@ -1,14 +1,26 @@
 /**
  * Live check that Claude accepts the coach's exact request shape (tools, strict schemas, fallbacks,
- * thinking, cache breakpoints, the context message), that prompt caching works, and that a turn can
- * move to the build model and a thread can cross between models. A few tiny turns — a few cents.
+ * thinking, cache breakpoints, the context message), that prompt caching works, that a turn can move
+ * to the build model, that a thread can cross between models, and that a chat can restart from a
+ * recap. A few tiny turns — a few cents.
  *
  *   pnpm --filter @cycling-coach/api coach:smoke
  *
  * Run after changing tools, schemas, the persona or engine request parameters: some failures (like
  * "compiled grammar is too large") only show up against the real API.
  */
-import { CoachEngine, COACH_PERSONA, DEFAULT_ROUTER, type ApiMessageParam, type CallUsage, type CoachPorts, type TurnRoute } from '@cycling-coach/coach';
+import {
+  CoachEngine,
+  COACH_PERSONA,
+  DEFAULT_ROUTER,
+  renderRecapSource,
+  renderRestartRecap,
+  type ApiMessageParam,
+  type CallUsage,
+  type CoachPorts,
+  type StoredMessage,
+  type TurnRoute,
+} from '@cycling-coach/coach';
 import { loadEnv } from '../lib/env';
 
 const env = loadEnv(process.env);
@@ -30,6 +42,7 @@ const ports: CoachPorts = {
   createProposal: async (p) => ({ ...p, id: 'smoke', threadId: 'smoke', itemStatus: p.items.map(() => 'pending' as const) }) as never,
   createWorkout: unused,
   remember: unused,
+  updateMemory: unused,
   forget: unused,
   findEvents: unused,
   feedbackForActivities: unused,
@@ -41,14 +54,14 @@ const ports: CoachPorts = {
 const context = { role: 'system', content: 'Today is Thursday, 2026-01-01. Smoke test.' } as unknown as ApiMessageParam;
 const persona = [COACH_PERSONA, '# Athlete\nSmoke test — no real athlete data.'];
 
-async function turn(label: string, messages: ApiMessageParam[], route?: TurnRoute) {
+async function turn(label: string, messages: ApiMessageParam[], route?: TurnRoute, system = persona) {
   const usage: CallUsage[] = [];
   const kept: ApiMessageParam[] = [];
   let text = '';
   let error: string | null = null;
   let moved: string | null = null;
   for await (const e of engine.runTurn({
-    system: persona,
+    system,
     messages,
     ports,
     today: '2026-01-01',
@@ -107,4 +120,19 @@ const history = [...thread, ...followUp('Smoke test: reply with just "OK".'), ..
 const backUp = await turn('back to build', [...history, ...followUp('Smoke test: reply with just "OK".')], { start: 'build', canBuild: true });
 if (!backUp.ok) fail('The build model rejected the mixed thread.');
 console.log('one thread across both models ✓');
+
+// A restart (DECISIONS #80): the summary comes back, the third system block is accepted, and the new
+// context caches and replays like any other.
+const said = (kind: 'user' | 'assistant', text: string): StoredMessage => ({ id: kind, kind, content: [{ type: 'text', text }], createdAt: new Date() });
+const chat = [said('user', 'Smoke test: my legs are tired, move my workout to Friday.'), said('assistant', 'Done: Friday it is.')];
+const recap = await engine.recap(renderRecapSource(chat, 'Etc/UTC'));
+if (!recap) fail('The recap came back empty.');
+console.log(`recap: ok, "${recap!.text.slice(0, 40).replace(/\n/g, ' ')}" · ${recap!.usage.model} · ~$${recap!.usage.costUsd.toFixed(5)}`);
+const fresh = [...persona, renderRestartRecap({ summary: recap!.text, messages: chat, cards: { proposals: [], mealIdeas: [] }, today: '2026-01-01' })];
+const restarted = await turn('restart', hello, undefined, fresh);
+if (!restarted.ok) fail('The coach rejected a recap block.');
+const carried = await turn('after restart', [...hello, ...restarted.kept, ...followUp('Smoke test: reply with just "OK".')], undefined, fresh);
+if (!carried.ok) fail('The coach rejected a turn after a restart.');
+if (carried.cacheRead === 0) fail('prompt cache: MISS after a restart');
+console.log('a chat restarts from a recap ✓');
 process.exit(0);

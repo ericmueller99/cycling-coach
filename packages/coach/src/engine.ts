@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { CoachEvent, CoachTier, CoachUsage, IsoDate, TurnStop, UiBlock } from '@cycling-coach/shared';
 import { estimateOutputTokens, priceUsage } from './pricing';
 import { defaultRouter, routes, type Effort, type ModelRouter, type RouterSource } from './router';
+import { RECAP_INSTRUCTIONS } from './recap';
 import { findTool, runTool, TOOL_DEFINITIONS, type CoachPorts } from './tools';
 
 export interface CoachConfig {
@@ -64,6 +65,8 @@ export interface RunTurnArgs {
 const MAX_ITERATIONS = 10;
 const MAX_TOKENS = 64_000;
 const FALLBACK_BETA = 'server-side-fallback-2026-07-01';
+/** A recap holds up the athlete's message, so a slow one gives way to the fallback text. */
+const RECAP_TIMEOUT_MS = 20_000;
 
 const emptyUsage = (): CoachUsage => ({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 });
 
@@ -128,10 +131,10 @@ export class CoachEngine {
     const system: Anthropic.Beta.BetaTextBlockParam[] = args.system.map((text, i) => ({
       type: 'text',
       text,
-      // Breakpoints on both system blocks. The persona (+ tools before it) is shared by every thread,
+      // Breakpoints on the first two blocks. The persona (+ tools before it) is shared by every thread,
       // so it gets the long TTL; the athlete block is shared by every turn of this context. A longer
-      // TTL must come before shorter ones.
-      cache_control: i === 0 ? { type: 'ephemeral', ttl: '1h' } : { type: 'ephemeral' },
+      // TTL must come before shorter ones. A recap block needs none: the history's breakpoint covers it.
+      ...(i < 2 ? { cache_control: i === 0 ? { type: 'ephemeral' as const, ttl: '1h' as const } : { type: 'ephemeral' as const } } : {}),
     }));
     let jsonRetries = 0;
     let iteration = 0;
@@ -402,6 +405,32 @@ export class CoachEngine {
       };
     } catch {
       return null; // A missing title is cosmetic; never fail the turn over it.
+    }
+  }
+
+  /**
+   * A summary of a chat for the coach to carry on from (DECISIONS #80). Null if it can't be written:
+   * the caller falls back to the last messages word for word, and a recap never fails a turn. It has
+   * no tier, so it counts toward a trial's total but not chat fair use.
+   */
+  async recap(transcript: string, signal?: AbortSignal): Promise<{ text: string; usage: CallUsage } | null> {
+    try {
+      const { small } = await this.router();
+      const res = await this.client.messages.create(
+        {
+          model: small,
+          max_tokens: 4000,
+          output_config: { effort: 'low' },
+          messages: [{ role: 'user', content: `${RECAP_INSTRUCTIONS}\n\n<chat>\n${transcript}\n</chat>` }],
+        },
+        { timeout: RECAP_TIMEOUT_MS, maxRetries: 0, ...(signal ? { signal } : {}) },
+      );
+      const text = res.content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('\n').trim();
+      if (!text) return null;
+      const { usage, costUsd } = priceUsage(res.model, res.usage);
+      return { text, usage: { ...usage, model: res.model, costUsd, stopReason: res.stop_reason, effort: 'low' } };
+    } catch {
+      return null;
     }
   }
 

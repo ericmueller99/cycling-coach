@@ -15,6 +15,7 @@ exports[`strict tool schemas > keeps the tool list in a fixed order (it is the c
   "propose_goal",
   "create_workout",
   "remember",
+  "update_memory",
   "forget",
   "find_events",
   "suggest_meals",

@@ -1,8 +1,8 @@
-import { slotForTime, todayIn } from '@cycling-coach/core';
+import { landsOnNewChat, slotForTime, todayIn } from '@cycling-coach/core';
 import type { IsoDate, MealIdeas, Proposal, RecipeDraft, ThreadSummary, ThreadView, UiBlock, UiMessage, Workout } from '@cycling-coach/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { AppBar, IconButton } from '../../components/AppBar';
 import { BrandTile } from '../../components/BrandTile';
 import { ArrowUpIcon, ComposeIcon, MenuIcon, SendIcon } from '../../components/icons';
@@ -13,13 +13,14 @@ import { api, unwrap } from '../../lib/api';
 import { useFoodLibrary } from '../../lib/foodQueries';
 import { modelName } from '../../lib/models';
 import { keys, useCoachCheck, useDashboard, useThread, useThreads, useUsage } from '../../lib/queries';
-import { abortTurn, clearDoneTurn, patchTurn, setWatching, startTurn, useLiveTurn, type LiveTurn, type TurnError as TurnErrorInfo, type TurnOrigin } from '../../lib/coachTurn';
+import { abortTurn, clearDoneTurn, patchTurn, runningThreadId, setWatching, startTurn, useLiveTurn, type LiveTurn, type TurnError as TurnErrorInfo, type TurnOrigin } from '../../lib/coachTurn';
 import { useIsMobile } from '../../lib/useIsMobile';
 import { MemoryChip, ProposalBlock, RequestChangesContext, TextBlock, ToolChip, WorkoutBlock } from './blocks';
 import { CoachFoodContext, MealIdeasBlock, RecipeRefBlock, type CoachFoodActions } from './foodBlocks';
 import { FoodStrip } from './FoodStrip';
 import { IdeaDetailsPane } from './IdeaDetailsPane';
 import { CoachWorking } from './CoachWorking';
+import { LongChatNotice } from './LongChatNotice';
 import { RecipePane, RecipePaneSkeleton } from './RecipePane';
 import { RightRail, TodayStrip } from './RightRail';
 
@@ -37,6 +38,17 @@ const NO_CARDS: CardData = { proposals: new Map(), workouts: new Map(), mealIdea
 const isFoodBlock = (b: UiBlock) => b.type === 'meal_ideas' || b.type === 'recipe_ref';
 
 type ThreadFilter = 'all' | 'training' | 'food';
+
+/** Where the coach started afresh from a recap, so a forgotten detail isn't a surprise (DECISIONS #80). */
+function ContextBreak() {
+  return (
+    <div role="separator" className="flex items-center gap-3 text-xs text-muted">
+      <span className="h-px flex-auto bg-line" />
+      Earlier messages are summarized for your coach
+      <span className="h-px flex-auto bg-line" />
+    </div>
+  );
+}
 
 /** Mobile drops the avatar so coach messages run full width. */
 function CoachAvatar() {
@@ -58,7 +70,7 @@ function AssistantBlocks({ blocks, threadId, cards }: { blocks: UiBlock[]; threa
           case 'workout':
             return <WorkoutBlock key={b.workoutId} id={b.workoutId} initial={workouts.get(b.workoutId)} />;
           case 'memory':
-            return <MemoryChip key={`${b.memoryId}-${b.action}`} block={b} />;
+            return <MemoryChip key={`${b.memoryId}-${b.action}-${i}`} block={b} />;
           case 'meal_ideas':
             return <MealIdeasBlock key={b.ideasId} id={b.ideasId} initial={mealIdeas.get(b.ideasId)} />;
           case 'recipe_ref':
@@ -262,12 +274,15 @@ export function CoachPage({
   const servingsFor = (key: string, i: { servings: number }) => ideaServings[key] ?? i.servings;
   const setServings = (key: string, n: number) => setIdeaServings((m) => ({ ...m, [key]: n }));
 
-  // Land on the most recent conversation, like reopening the claude.ai chat.
+  // Land on a recent conversation, like reopening the claude.ai chat. After a break it's a new one,
+  // or one chat would grow for ever (DECISIONS #80). A running turn always wins (#46).
+  const latest = threads.data?.[0];
+  const wentQuiet = !!latest && landsOnNewChat(new Date(latest.lastMessageAt), new Date());
   useEffect(() => {
-    if (!threadId && !isNew && threads.data?.[0] && !live) {
-      void navigate({ to: '/', search: { t: threads.data[0].id }, replace: true });
-    }
-  }, [threadId, isNew, threads.data, live, navigate]);
+    if (threadId || isNew || live) return;
+    const target = runningThreadId() ?? (latest && !wentQuiet ? latest.id : undefined);
+    if (target) void navigate({ to: '/', search: { t: target }, replace: true });
+  }, [threadId, isNew, latest, wentQuiet, live, navigate]);
 
   // Tell the store which thread is on screen (a turn that finishes elsewhere leaves a notice), and
   // drop a finished turn's error once the user moves on — it belongs to the thread it happened in.
@@ -459,10 +474,18 @@ export function CoachPage({
                 Ask me to pull your recent rides, plan your week around races, or build a workout. I can see your
                 profile, goals, memory, workout library and calendar.
               </p>
+              {!threadId && !isNew && wentQuiet && latest && (
+                <button type="button" className="min-h-9 text-left text-accent-ink underline" onClick={() => void navigate({ to: '/', search: { t: latest.id } })}>
+                  Continue: {latest.title} · {new Date(latest.lastMessageAt).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
+                </button>
+              )}
             </div>
           )}
           {messages.map((m) => (
-            <MessageRow key={m.id} message={m} view={view} cards={cards} />
+            <Fragment key={m.id}>
+              {view?.contextBreaks.includes(m.id) && <ContextBreak />}
+              <MessageRow message={m} view={view} cards={cards} />
+            </Fragment>
           ))}
           {showLive && live && (
             <>
@@ -490,6 +513,7 @@ export function CoachPage({
         {/* Pinned above the tab bar on mobile, with the chips scrolling sideways. */}
         <div className="sticky bottom-0 mx-auto box-border flex w-full max-w-[860px] flex-col gap-2.5 bg-bg px-7 pt-2 pb-6 mobile:bottom-[calc(64px+env(safe-area-inset-bottom))] mobile:gap-2 mobile:border-t mobile:border-line mobile:px-3 mobile:pb-2.5">
           {CoachNotice && <CoachNotice />}
+          {threadId && view?.contextLong && !blocked && !streaming && <LongChatNotice threadId={threadId} onNewChat={newChat} />}
           {blocked ? (
             <CoachLocked refusal={blocked} />
           ) : (

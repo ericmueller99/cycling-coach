@@ -1,6 +1,6 @@
 import type { CalendarEvent, SessionFeedback } from '@cycling-coach/shared';
 import { describe, expect, it } from 'vitest';
-import { renderAthleteBlock, renderCalendarBlock, renderTurnContext } from './context';
+import { buildSystemSnapshot, renderAthleteBlock, renderCalendarBlock, renderShortTermBlock, renderTurnContext } from './context';
 import { feedbackRollup, formatActivityForModel, formatFeedbackForModel } from './tools';
 
 const ctx = (zwift?: object) =>
@@ -9,6 +9,7 @@ const ctx = (zwift?: object) =>
     powerBests: [],
     goals: [],
     memories: [],
+    shortTerm: [],
     workouts: [],
   }) as unknown as Parameters<typeof renderAthleteBlock>[0];
 
@@ -97,7 +98,7 @@ describe('renderAthleteBlock — FTP not known yet (DECISIONS #62)', () => {
 });
 
 describe('renderTurnContext calendar', () => {
-  const base = { today: '2026-11-03', localTime: '9:14 PM', timezone: 'UTC', training: 'connected', athleteBlock: 'athlete' } as const;
+  const base = { today: '2026-11-03', localTime: '9:14 PM', timezone: 'UTC', training: 'connected', athleteBlock: 'athlete', shortTermBlock: '' } as const;
   const calendar = (from: string, to: string, body: string) => `# Calendar ${from} → ${to} (id · date)\n${body}`;
 
   it('calls the calendar unchanged when only the window moved', () => {
@@ -130,5 +131,75 @@ describe('renderTurnContext calendar', () => {
   it('adds a note from the deployment', () => {
     const block = calendar('2026-10-27', '2026-11-17', '- e1');
     expect(renderTurnContext({ ...base, calendarBlock: block, seen: { athlete: 'athlete' }, coachNote: 'Allowance used up.' })).toContain('Allowance used up.');
+  });
+});
+
+describe('short-term notes (DECISIONS #79)', () => {
+  const base = { today: '2026-11-04', localTime: '9:14 PM', timezone: 'UTC', training: 'connected', athleteBlock: 'athlete', calendarBlock: '# Calendar\n- e1' } as const;
+  const note = { id: 'm1', text: "Away for work Wed Nov 11, can't train", until: '2026-11-11', source: 'coach', createdAt: '' } as const;
+  const block = renderShortTermBlock([note]);
+
+  it('gives each note its id and date and says the list is complete', () => {
+    expect(block).toContain("- m1 (until Wed Nov 11): Away for work Wed Nov 11, can't train");
+    expect(block).toContain('full current list');
+  });
+
+  it('is empty with no notes', () => {
+    expect(renderShortTermBlock([])).toBe('');
+  });
+
+  it('sends the list when the coach has not seen it, then leaves it out', () => {
+    expect(renderTurnContext({ ...base, shortTermBlock: block, seen: { athlete: 'athlete' } })).toContain(block);
+    expect(renderTurnContext({ ...base, shortTermBlock: block, seen: { athlete: 'athlete', shortTerm: block } })).not.toContain('Short-term');
+  });
+
+  it('sends it again when a note is added or changes', () => {
+    const changed = renderShortTermBlock([{ ...note, until: '2026-11-12' }]);
+    expect(renderTurnContext({ ...base, shortTermBlock: changed, seen: { athlete: 'athlete', shortTerm: block } })).toContain('until Thu Nov 12');
+  });
+
+  it('says so when the last note has gone', () => {
+    expect(renderTurnContext({ ...base, shortTermBlock: '', seen: { athlete: 'athlete', shortTerm: block } })).toContain('Short-term notes: none current');
+  });
+
+  it('says nothing to a thread that never had any', () => {
+    expect(renderTurnContext({ ...base, shortTermBlock: '', seen: { athlete: 'athlete' } })).not.toContain('Short-term');
+    expect(renderTurnContext({ ...base, shortTermBlock: '', seen: { athlete: 'athlete', shortTerm: '' } })).not.toContain('Short-term');
+  });
+
+  it('never reaches the block a thread freezes', () => {
+    const athlete = { ...ctx(), shortTerm: [note] };
+    expect(buildSystemSnapshot(athlete).join('\n')).not.toContain('Away for work');
+  });
+});
+
+describe('the athlete block stays the same when only the trend weight moves', () => {
+  const bests = [{ durationSec: 300, period: '90d', watts: 405, date: '2026-04-01', source: 'intervals.icu' }];
+  const weightGoal = { id: 'g1', horizon: 'long', title: 'Race weight', measure: { kind: 'weight' }, target: 72, progress: { current: 84.3, target: 72, unit: 'kg', fraction: 0.8, label: 'Trend weight', onTrendWeight: true } };
+  const athlete = (kg: number) => {
+    const base = ctx() as unknown as { profile: object };
+    return {
+      ...base,
+      powerBests: bests,
+      goals: [{ ...weightGoal, progress: { ...weightGoal.progress, current: kg } }],
+      profile: { ...base.profile, weightKg: kg },
+    } as unknown as Parameters<typeof renderAthleteBlock>[0];
+  };
+
+  it('renders identical text at two trend weights', () => {
+    expect(renderAthleteBlock(athlete(84.3))).toBe(renderAthleteBlock(athlete(83.9)));
+  });
+
+  it('prints power bests as watts and date', () => {
+    expect(renderAthleteBlock(athlete(84.3))).toContain('5 min 405 W (Apr 1)');
+  });
+
+  it('keeps the target of a goal on trend weight and points at the context message', () => {
+    expect(renderAthleteBlock(athlete(84.3))).toContain('Trend weight target 72 kg, current value from the weight in the context message');
+  });
+
+  it('still shows the current value of a goal that does not follow the trend', () => {
+    const ftp = { ...weightGoal, measure: { kind: 'ftp' }, progress: { current: 345, target: 360, unit: 'W', fraction: 0.95, label: 'FTP' } };
+    expect(renderAthleteBlock({ ...athlete(84.3), goals: [ftp] } as unknown as Parameters<typeof renderAthleteBlock>[0])).toContain('FTP now 345 W, target 360');
   });
 });

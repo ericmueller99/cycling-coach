@@ -1,12 +1,12 @@
-import { dayOfMonth, formatDayLabel, formatLongDay, WEEKDAY_LABELS } from '@cycling-coach/core';
+import { dayOfMonth, formatDayLabel, formatLongDay, isShortTerm, WEEKDAY_LABELS } from '@cycling-coach/core';
 import type { CalendarEvent, DashboardPayload } from '@cycling-coach/shared';
 import { Link } from '@tanstack/react-router';
 import { useState, type ReactNode } from 'react';
-import { ChevronDown } from '../../components/icons';
+import { ChevronDown, TrashIcon } from '../../components/icons';
 import { Button, Card, ProgressBar, SectionLabel, SessionTag, StatTile } from '../../components/ui';
 import { ZwiftWeightAlert } from '../../components/ZwiftWeightAlert';
 import { SESSION_STYLE, durationText } from '../../lib/session';
-import { useCalendarMutations, useDashboard } from '../../lib/queries';
+import { useCalendarMutations, useDashboard, useProfile, useProfileMutations } from '../../lib/queries';
 import { RIGHT_COL } from './rightColumn';
 
 /** The session the Today card and strip show: the first still planned, else whatever today held. */
@@ -106,6 +106,40 @@ export function TodayStrip({ onAsk }: { onAsk: (prompt: string) => void }) {
   );
 }
 
+/** What the coach is holding onto for now, beside the chat that put it there. Hidden when there's nothing. */
+function ShortTermMemory() {
+  const { data } = useProfile();
+  const { deleteMemory } = useProfileMutations();
+  const notes = (data?.memories ?? []).filter(isShortTerm).sort((a, b) => (a.until ?? '').localeCompare(b.until ?? ''));
+  if (notes.length === 0) return null;
+  return (
+    <Card className="flex flex-col gap-2 p-4">
+      <div className="flex items-center justify-between">
+        <SectionLabel>Short-term memory</SectionLabel>
+        <Link to="/athlete/$tab" params={{ tab: 'goals' }} className="text-[13px]">
+          All notes
+        </Link>
+      </div>
+      {notes.map((m) => (
+        <div key={m.id} className="flex items-start gap-1.5">
+          <div className="flex min-w-0 flex-auto flex-col">
+            <span className="text-[13px]">{m.text}</span>
+            <span className="text-xs text-muted">Until {formatLongDay(m.until!)}</span>
+          </div>
+          <button
+            type="button"
+            aria-label="Delete note"
+            onClick={() => deleteMemory.mutate(m.id)}
+            className="flex h-7 w-7 flex-none items-center justify-center rounded-lg border-0 bg-transparent text-muted"
+          >
+            <TrashIcon />
+          </button>
+        </div>
+      ))}
+    </Card>
+  );
+}
+
 export function RightRail({ onAsk }: { onAsk: (prompt: string) => void }) {
   const { data } = useDashboard();
   if (!data) return <aside className={`bg-surface-alt ${RIGHT_COL}`} />;
@@ -135,6 +169,8 @@ export function RightRail({ onAsk }: { onAsk: (prompt: string) => void }) {
           </>
         )}
       </Card>
+
+      <ShortTermMemory />
 
       <Card className="flex flex-col gap-3 p-4">
         <div className="flex items-center justify-between">

@@ -1,4 +1,6 @@
+import type { RestartReason } from '@cycling-coach/core';
 import type {
+  IsoDate,
   Activity,
   ActivityInterval,
   FullSyncProgress,
@@ -68,6 +70,10 @@ export interface MemoryDoc {
   text: string;
   source: 'user' | 'coach';
   createdAt: Date;
+  /** The last local day a short-term note matters. A note without one is long-term (DECISIONS #79). */
+  until?: IsoDate;
+  /** When the athlete last confirmed it; `createdAt` until they do. */
+  reviewedAt?: Date;
   /** Soft delete, so a coach `forget` can be undone from the chat chip. */
   deletedAt?: Date;
 }
@@ -126,16 +132,22 @@ export interface ThreadDoc {
   createdAt: Date;
   lastMessageAt: Date;
   /**
-   * System prompt blocks frozen when the API context started. Never re-rendered for this context:
-   * changing them would invalidate the prompt cache and the replayed thinking blocks. Profile and
-   * memory changes after this point reach the coach as appended context messages instead.
+   * System prompt blocks frozen when the API context started: [persona, athlete, recap?]. Never
+   * re-rendered within a context: changing them would invalidate the prompt cache and the replayed
+   * thinking blocks. Profile and memory changes after this point reach the coach as appended context
+   * messages instead. Only `restartContext` replaces them, for a new context (DECISIONS #80).
    */
   systemSnapshot: string[];
   /**
-   * The calendar and athlete text the coach has already been shown in this context, so per-turn
-   * context messages only repeat what changed (packages/coach/src/context.ts).
+   * Each API context this thread has had, oldest first. The last is the one in use, and only messages
+   * from its `startSeq` on are sent to Claude. Unset on threads from before contexts existed.
    */
-  seen: { calendar?: string; athlete: string; extra?: string };
+  contexts?: ThreadContext[];
+  /**
+   * The calendar, athlete and short-term note text the coach has already been shown in this context,
+   * so per-turn context messages only repeat what changed (packages/coach/src/context.ts).
+   */
+  seen: { calendar?: string; athlete: string; extra?: string; shortTerm?: string };
   /** When a call last started on the build model, for the one warm follow-up (`warmFollowUp`). */
   lastBuildStartedAt?: Date;
   /** That one follow-up has been used, so the next turn goes back to the chat model. */
@@ -144,6 +156,18 @@ export interface ThreadDoc {
   buildPending?: boolean;
   /** `food` once the coach has suggested meals or built a recipe here. */
   tags?: ThreadTag[];
+}
+
+/** Why an API context began: a thread's first, a recap of the last chat, or a restart. */
+export type ThreadContextReason = 'start' | 'carry' | RestartReason;
+
+export interface ThreadContext {
+  /** The first message of this context. */
+  startSeq: number;
+  at: Date;
+  reason: ThreadContextReason;
+  /** The tool definitions it began with: replayed thinking is only valid with the same ones. */
+  toolsHash: string;
 }
 
 /** One API message, stored verbatim. `content` is an Anthropic content-block array. */
@@ -438,7 +462,7 @@ export interface AiCallDoc {
   _id?: ObjectId;
   userId: string;
   threadId?: ObjectId;
-  purpose: 'coach' | 'title' | 'food_parse' | 'food_vision' | 'food_match' | 'food_adjust';
+  purpose: 'coach' | 'title' | 'recap' | 'food_parse' | 'food_vision' | 'food_match' | 'food_adjust';
   model: string;
   inputTokens: number;
   outputTokens: number;

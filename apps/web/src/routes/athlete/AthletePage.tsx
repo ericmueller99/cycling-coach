@@ -98,7 +98,7 @@ export function AthletePage({ tab, addWeightGoal }: { tab: AthleteTab; addWeight
         }
         right={
           <>
-            <MemorySection memories={data.memories} />
+            <MemorySection memories={data.memories} today={today} />
             <ConnectionsSection />
             <div className="text-xs text-muted">Timezone is on your Account page.</div>
           </>

@@ -1,25 +1,33 @@
 import {
   buildSystemSnapshot,
+  hasOpenToolUse,
   renderAthleteBlock,
+  renderCarryRecap,
+  renderRecapSource,
+  renderRestartRecap,
+  renderShortTermBlock,
   renderCalendarBlock,
   renderTurnContext,
   toUiMessages,
+  TOOLS_HASH,
   type ApiMessageParam,
   type CallUsage,
   type CoachEngine,
   type CoachPorts,
+  type OpenCards,
   type StoredMessage,
 } from '@cycling-coach/coach';
 import {
   appendMessage,
-  createMemory,
+  contextStartSeq,
+  contextTokens,
   createThread,
   createWorkout,
   feedbackForActivities,
-  forgetMemory,
   getProfile,
   getThread,
   idOf,
+  latestChat,
   listEvents,
   listLog,
   listThreadMealIdeas,
@@ -30,15 +38,17 @@ import {
   listProposals,
   oid,
   recordAiCall,
+  restartContext,
   toThreadSummary,
   updateThread,
   type AiRouteStart,
   type Collections,
   type MessageDoc,
+  type ThreadContextReason,
   type ThreadDoc,
   type WorkoutDoc,
 } from '@cycling-coach/db';
-import { dayTotals, slotForTime } from '@cycling-coach/core';
+import { activeShortTerm, CACHE_TTL_MS, carrySince, dayTotals, NUDGE_TOKENS, restartReason, slotForTime, todayIn } from '@cycling-coach/core';
 import type { CoachEvent, CoachTier, FitnessDay, IntegrationStatus, IsoDate, SendMessageInput, ThreadSummary, ThreadView, Workout } from '@cycling-coach/shared';
 import type { FoodTurnContext } from '@cycling-coach/coach';
 import type { ObjectId } from 'mongodb';
@@ -46,6 +56,7 @@ import { coachCalendarWindow, loadAthleteContext, localNow } from './athlete';
 import type { CoachFoodService } from './coach-food';
 import type { EnergyService } from './energy';
 import type { FoodService } from './food';
+import { MemoryService } from './memory';
 import { createCoachProposal } from './proposals';
 import type { TrainingData } from './training-data';
 import type { SpendDecision, SpendGuard } from '../lib/spend';
@@ -105,7 +116,7 @@ export function toApiMessages(docs: MessageDoc[]): ApiMessageParam[] {
 export async function startThread(deps: CoachDeps, userId: string): Promise<ThreadSummary | null> {
   const athlete = await loadAthleteContext(deps.c, userId);
   if (!athlete) return null;
-  const thread = await createThread(deps.c, userId, buildSystemSnapshot(athlete), deps.now());
+  const thread = await createThread(deps.c, userId, buildSystemSnapshot(athlete), TOOLS_HASH, deps.now());
   return toThreadSummary(thread);
 }
 
@@ -126,9 +137,15 @@ export async function getThreadView(deps: CoachDeps, userId: string, threadId: s
   const workoutDocs = workoutIds.length
     ? await deps.c.workouts.find({ _id: { $in: workoutIds }, userId }).toArray()
     : [];
+  const contextBreaks = (thread.contexts ?? []).flatMap((x) => {
+    const first = x.startSeq > 0 ? docs.find((d) => d.seq === x.startSeq) : undefined;
+    return first ? [idOf(first)] : [];
+  });
   return {
     thread: toThreadSummary(thread),
     messages,
+    contextBreaks,
+    contextLong: (await contextTokens(deps.c, thread)) >= NUDGE_TOKENS,
     proposals,
     workouts: workoutDocs.map(toWorkoutDto),
     mealIdeas: ideaDocs.map(toMealIdeas),
@@ -140,9 +157,6 @@ function toWorkoutDto(doc: WorkoutDoc): Workout {
   const { _id, userId: _u, createdAt, archivedAt: _a, ...rest } = doc;
   return { ...rest, id: idOf(doc), createdAt: createdAt.toISOString() } as Workout;
 }
-
-/** How long a cached prompt lasts, counted from the start of the request that wrote or read it. */
-const CACHE_TTL_MS = 5 * 60 * 1000;
 
 /**
  * True for the one turn after a build while its cache is warm. Reading that cache on the build model
@@ -166,7 +180,7 @@ interface TurnRef {
   routeStart: AiRouteStart;
 }
 
-async function logUsage(deps: CoachDeps, userId: string, threadId: ObjectId, purpose: 'coach' | 'title', u: CallUsage, turn: TurnRef) {
+async function logUsage(deps: CoachDeps, userId: string, threadId: ObjectId, purpose: 'coach' | 'title' | 'recap', u: CallUsage, turn: TurnRef) {
   await recordAiCall(deps.c, {
     userId,
     threadId,
@@ -226,6 +240,74 @@ async function foodContext(deps: CoachDeps, userId: string, today: IsoDate, time
   }
 }
 
+/** A new API context, ready to start once the athlete's message has a place in the thread. */
+interface NextContext {
+  recap: string;
+  reason: ThreadContextReason;
+  usage?: CallUsage | undefined;
+}
+
+/** What's still open in a thread: the ids behind these cards aren't anywhere else the coach can see. */
+async function openCards(c: CoachDeps['c'], userId: string, threadId: ObjectId): Promise<OpenCards> {
+  const [proposals, ideas] = await Promise.all([listProposals(c, userId, threadId), listThreadMealIdeas(c, userId, threadId)]);
+  return {
+    proposals: proposals.filter((p) => p.itemStatus.includes('pending')).map((p) => ({ id: p.id, kind: p.kind, title: p.title })),
+    mealIdeas: ideas
+      .filter((m) => m.picked.length === 0)
+      .slice(-3)
+      .map((m) => ({ id: idOf(m), names: m.ideas.map((i) => i.name) })),
+  };
+}
+
+/** The recap to restart a thread from, over the messages of its current context. */
+async function restartRecap(
+  engine: CoachEngine,
+  c: CoachDeps['c'],
+  userId: string,
+  thread: ThreadDoc & { _id: ObjectId },
+  docs: MessageDoc[],
+  reason: ThreadContextReason,
+  when: { today: IsoDate; timezone: string },
+  signal?: AbortSignal,
+): Promise<NextContext> {
+  const messages = docs.map(toStored);
+  const [cards, written] = await Promise.all([
+    openCards(c, userId, thread._id),
+    engine.recap(renderRecapSource(messages, when.timezone, thread.systemSnapshot[2]), signal),
+  ]);
+  return {
+    recap: renderRestartRecap({ summary: written?.text ?? null, messages, cards, today: when.today }),
+    reason,
+    usage: written?.usage,
+  };
+}
+
+/** The recap for a new chat: how the athlete's latest one went. Null when they haven't had one lately. */
+async function carryRecap(
+  engine: CoachEngine,
+  c: CoachDeps['c'],
+  userId: string,
+  thread: ThreadDoc & { _id: ObjectId },
+  now: Date,
+  when: { today: IsoDate; timezone: string },
+  signal?: AbortSignal,
+): Promise<NextContext | null> {
+  const source = await latestChat(c, userId, thread._id, carrySince(now));
+  if (!source) return null;
+  const messages = (await listMessages(c, source._id, contextStartSeq(source))).map(toStored);
+  const written = await engine.recap(renderRecapSource(messages, when.timezone, source.systemSnapshot[2]), signal);
+  return {
+    recap: renderCarryRecap({
+      summary: written?.text ?? null,
+      messages,
+      lastDate: todayIn(when.timezone, source.lastMessageAt),
+      today: when.today,
+    }),
+    reason: 'carry',
+    usage: written?.usage,
+  };
+}
+
 export async function* sendMessage(
   deps: CoachDeps,
   userId: string,
@@ -235,11 +317,12 @@ export async function* sendMessage(
 ): AsyncGenerator<CoachEvent> {
   const { text } = input;
   const { c, engine } = deps;
-  const thread = await getThread(c, userId, threadId);
-  if (!thread?._id) {
+  const found = await getThread(c, userId, threadId);
+  if (!found?._id) {
     yield { type: 'error', message: 'Thread not found.', retryable: false };
     return;
   }
+  let thread = found;
   if (!engine) {
     yield { type: 'error', message: 'The coach is offline: CLAUDE_API_KEY is not set on the server.', retryable: false };
     return;
@@ -264,8 +347,33 @@ export async function* sendMessage(
 
   // Retrying a turn that failed before the coach replied: reuse the stored message instead of
   // showing the user's text twice. Its orphaned context message is skipped by toApiMessages.
-  const [beforeLast, last] = (await listMessages(c, tid)).slice(-2);
+  const context = await listMessages(c, tid, contextStartSeq(thread));
+  const [beforeLast, last] = context.slice(-2);
   const isRetry = last?.kind === 'context' && beforeLast?.kind === 'user' && textOf(beforeLast) === text;
+
+  // Before the message is stored, so a Stop while the recap is written leaves nothing behind and the
+  // draft comes back. A long chat, a stale one, or a new one that follows another (DECISIONS #80).
+  const when = { today, timezone: profile.timezone };
+  const openToolUse = hasOpenToolUse(context);
+  const restart = restartReason({
+    tokens: last ? await contextTokens(c, thread) : 0,
+    lastMessageAt: thread.lastMessageAt,
+    toolsHash: thread.contexts?.at(-1)?.toolsHash,
+    currentToolsHash: TOOLS_HASH,
+    tail: last ? { finished: last.kind === 'assistant' && !openToolUse, at: last.createdAt } : null,
+    openToolUse,
+    now,
+  });
+  const next = restart
+    ? await restartRecap(engine, c, userId, thread, context, restart, when, signal)
+    : last
+      ? null
+      : await carryRecap(engine, c, userId, thread, now, when, signal);
+  if (signal?.aborted) {
+    yield { type: 'error', message: 'Stopped.', retryable: true };
+    return;
+  }
+
   const userDoc = isRetry
     ? beforeLast
     : await appendMessage(c, {
@@ -276,6 +384,14 @@ export async function* sendMessage(
         content: [{ type: 'text', text }],
         createdAt: now,
       });
+  if (next) {
+    const restarted = await restartContext(c, thread, {
+      systemSnapshot: buildSystemSnapshot(athlete, next.recap),
+      context: { startSeq: userDoc.seq, at: now, reason: next.reason, toolsHash: TOOLS_HASH },
+    });
+    // Null when another tab restarted it first, so carry on from what that one wrote.
+    thread = restarted ?? (await getThread(c, userId, threadId)) ?? thread;
+  }
   yield { type: 'turn_start', messageId: idOf(userDoc) };
 
   const window = coachCalendarWindow(today);
@@ -285,6 +401,7 @@ export async function* sendMessage(
   ]);
   const calendarBlock = renderCalendarBlock(windowEvents, window.from, window.to, windowFeedback);
   const athleteBlock = renderAthleteBlock(athlete);
+  const shortTermBlock = renderShortTermBlock(activeShortTerm(athlete.shortTerm, today));
   const food = await foodContext(deps, userId, today, profile.timezone, input.food);
   // Nice to have: a failure costs the coach this line, never the turn.
   const extra = await deps.coachContext?.(userId, today).catch((err: Error) => {
@@ -313,6 +430,7 @@ export async function* sendMessage(
           },
           calendarBlock,
           athleteBlock,
+          shortTermBlock,
           food,
           extra: extra ?? undefined,
           seen: thread.seen,
@@ -324,13 +442,15 @@ export async function* sendMessage(
   });
   await updateThread(c, tid, { lastMessageAt: now });
 
+  const memories = new MemoryService(c, deps.now);
   const ports: CoachPorts = {
     training: training.status !== 'not_configured' ? deps.training.port(userId) : null,
     listCalendar: (from, to) => listEvents(c, userId, from, to),
     createProposal: (p) => createCoachProposal(c, userId, tid, p, deps.now()),
     createWorkout: (input) => createWorkout(c, userId, input, 'coach', deps.now()),
-    remember: (memoryText) => createMemory(c, userId, memoryText, 'coach', deps.now()),
-    forget: (memoryId) => forgetMemory(c, userId, memoryId, deps.now()),
+    remember: (input) => memories.create(userId, input, 'coach'),
+    updateMemory: (memoryId, patch) => memories.update(userId, memoryId, patch),
+    forget: (memoryId) => memories.remove(userId, memoryId),
     findEvents: async (query) => ({ result: await deps.events.query(userId, query), timeZone: profile.timezone }),
     feedbackForActivities: (ids) => feedbackForActivities(c, userId, ids),
     listFeedback: ({ start, end, workoutId }) => listFeedback(c, userId, { from: start, to: end, workoutId }),
@@ -340,7 +460,7 @@ export async function* sendMessage(
     },
   };
 
-  const history = await listMessages(c, tid);
+  const history = await listMessages(c, tid, contextStartSeq(thread));
   let assistantText = '';
   let textBefore = 0;
   let replied = false;
@@ -349,6 +469,7 @@ export async function* sendMessage(
   const start = canBuild && (input.useBuildModel || thread.buildPending || warm) ? 'build' : 'chat';
   if (start === 'build' && warm) await updateThread(c, tid, { buildFollowUpUsed: true });
   const turn: TurnRef = { turnId: idOf(userDoc), routeStart: routeStartOf(start, input.useBuildModel, thread.buildPending) };
+  if (next?.usage) await logUsage(deps, userId, tid, 'recap', next.usage, turn);
 
   for await (const event of engine.runTurn({
     system: thread.systemSnapshot,
@@ -372,7 +493,7 @@ export async function* sendMessage(
       // and "unchanged" on the retry would point at something it never received.
       if (m.kind === 'assistant' && !replied) {
         replied = true;
-        await updateThread(c, tid, { seen: { calendar: calendarBlock, athlete: athleteBlock, ...(extra ? { extra } : {}) } });
+        await updateThread(c, tid, { seen: { calendar: calendarBlock, athlete: athleteBlock, shortTerm: shortTermBlock, ...(extra ? { extra } : {}) } });
       }
       if (m.kind === 'assistant') textBefore = assistantText.length;
     },

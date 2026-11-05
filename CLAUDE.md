@@ -57,8 +57,9 @@ deleted it from intervals.icu (DECISIONS #17).
 
 ### 2. Transcripts are append-only
 `messages` is the verbatim Anthropic transcript, thinking blocks included. Never edit or delete a
-stored message, and never re-render a thread's `systemSnapshot`. New facts reach the coach as
-appended context messages (DECISIONS #6).
+stored message, and never re-render `systemSnapshot` within an API context. New facts reach the coach
+as appended context messages (DECISIONS #6). Only `restartContext` replaces the snapshot, for a new
+context that sends nothing older (DECISIONS #80).
 
 ### 3. `packages/core` is pure
 No I/O, no clock, no `new Date()` without an argument, no `fetch`, no `process`. ESLint enforces it.
@@ -69,7 +70,7 @@ the coach package never imports the database or the intervals.icu provider.
 
 ### 5. The coach proposes; the user confirms
 Plans, calendar changes, profile updates and goals go through `proposals` (DECISIONS #7). Only
-`create_workout` and `remember`/`forget` write directly, and both are undoable. Goals store a
+`create_workout` and `remember`/`update_memory`/`forget` write directly, and all are undoable. Goals store a
 measure and target, never a current value (DECISIONS #19).
 
 ### 6. `apps/api/src/app.ts` stays Node-free
@@ -91,12 +92,13 @@ Fixtures use made-up ids, names and domains. Never commit `.env`, keys or a real
 | Everyday coaching | `claude-sonnet-5-5` (router `chat`) | adaptive thinking, effort `medium` (set it: Sonnet's own default is `high`), `fallbacks: "default"` |
 | Plans and workouts | `claude-opus-5-5` (router `build`) | effort `medium`. Tools marked `tier: 'build'` move the turn here (DECISIONS #65). The same model as `chat` means no routing |
 | Thread titles | router `small` | effort `low` |
+| Chat recaps | router `small` | effort `low`; `engine.recap`, text only, no tier (DECISIONS #80) |
 | Food: label photos, "log with words" | `claude-haiku-5-5` (router `small`) | `FoodAi` in `packages/coach/src/food.ts`; structured outputs, Zod-validated; never Opus (DECISIONS #33–34) |
 
 The defaults are `DEFAULT_ROUTER` in `packages/coach/src/router.ts`, not env (DECISIONS #69). `createCore`'s `router` option replaces them.
 
 Opus 5.5 and Sonnet 5.5: forced `tool_choice` (`any`/`tool`) returns 400 — use `auto` + prompt + strict tools.
-Minimum cacheable prefix 512 tokens. Tools and persona alone are about 15.5K tokens, in front of every
+Minimum cacheable prefix 512 tokens. Tools and persona alone are about 16.4K tokens, in front of every
 call, so keep that prefix byte-stable: `pnpm --filter @cycling-coach/api coach:smoke` checks it.
 Caches are per model. Effort is pinned per route, because changing it invalidates the messages cache.
 

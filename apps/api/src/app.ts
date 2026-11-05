@@ -8,6 +8,8 @@ import {
   goalInputSchema,
   goalPatchSchema,
   memoryInputSchema,
+  memoryPatchSchema,
+  memoryRevertSchema,
   powerBestSchema,
   profileSchema,
   savedSearchInputSchema,
@@ -34,6 +36,10 @@ import {
   type MealIdeaFix,
   type MealIdeas,
   type Memory,
+  type MemoryInput,
+  type MemoryPatch,
+  type MemoryRevert,
+  type MemoryUpdate,
   type PowerBest,
   type Profile,
   type FullSyncProgress,
@@ -113,10 +119,12 @@ export interface AppServices {
     remove(userId: string, id: string): Promise<boolean>;
   };
   memories: {
-    create(userId: string, text: string): Promise<Memory>;
-    update(userId: string, id: string, text: string): Promise<Memory | null>;
+    create(userId: string, input: MemoryInput): Promise<Memory | { error: string }>;
+    update(userId: string, id: string, patch: MemoryPatch): Promise<MemoryUpdate | { error: string } | null>;
     remove(userId: string, id: string): Promise<Memory | null>;
     restore(userId: string, id: string): Promise<Memory | null>;
+    review(userId: string, id: string): Promise<Memory | null>;
+    revert(userId: string, id: string, input: MemoryRevert): Promise<Memory | null>;
   };
   workouts: {
     list(userId: string): Promise<Workout[]>;
@@ -337,12 +345,14 @@ export function createApp(deps: AppDeps) {
     .delete('/goals/:id', async (c) =>
       (await services.goals.remove(c.get('user')!.id, c.req.param('id'))) ? c.json({ ok: true }) : c.json({ error: 'Not found' }, 404),
     )
-    .post('/memories', json(memoryInputSchema), async (c) =>
-      c.json(await services.memories.create(c.get('user')!.id, c.req.valid('json').text), 201),
-    )
-    .patch('/memories/:id', json(memoryInputSchema), async (c) => {
-      const m = await services.memories.update(c.get('user')!.id, c.req.param('id'), c.req.valid('json').text);
-      return m ? c.json(m) : c.json({ error: 'Not found' }, 404);
+    .post('/memories', json(memoryInputSchema), async (c) => {
+      const m = await services.memories.create(c.get('user')!.id, c.req.valid('json'));
+      return 'error' in m ? c.json({ error: m.error }, 400) : c.json(m, 201);
+    })
+    .patch('/memories/:id', json(memoryPatchSchema), async (c) => {
+      const result = await services.memories.update(c.get('user')!.id, c.req.param('id'), c.req.valid('json'));
+      if (!result) return c.json({ error: 'Not found' }, 404);
+      return 'error' in result ? c.json({ error: result.error }, 400) : c.json(result.memory);
     })
     .delete('/memories/:id', async (c) => {
       const m = await services.memories.remove(c.get('user')!.id, c.req.param('id'));
@@ -351,6 +361,14 @@ export function createApp(deps: AppDeps) {
     .post('/memories/:id/restore', async (c) => {
       const m = await services.memories.restore(c.get('user')!.id, c.req.param('id'));
       return m ? c.json(m) : c.json({ error: 'Not found' }, 404);
+    })
+    .post('/memories/:id/review', async (c) => {
+      const m = await services.memories.review(c.get('user')!.id, c.req.param('id'));
+      return m ? c.json(m) : c.json({ error: 'Not found' }, 404);
+    })
+    .post('/memories/:id/revert', json(memoryRevertSchema), async (c) => {
+      const m = await services.memories.revert(c.get('user')!.id, c.req.param('id'), c.req.valid('json'));
+      return m ? c.json(m) : c.json({ error: 'That note has changed since, so it was left as it is.' }, 409);
     })
 
     // ── Workouts ────────────────────────────────────────────────────────────

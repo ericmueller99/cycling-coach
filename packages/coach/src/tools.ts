@@ -26,6 +26,9 @@ import {
   type Nutrients,
   type RecipeDraft,
   type Memory,
+  type MemoryInput,
+  type MemoryPatch,
+  type MemoryUpdate,
   type PlanItem,
   type PowerCurve,
   type PowerCurvePeriod,
@@ -53,7 +56,8 @@ export interface CoachPorts {
   listCalendar(from: IsoDate, to: IsoDate): Promise<CalendarEvent[]>;
   createProposal(p: NewProposal): Promise<Proposal>;
   createWorkout(input: WorkoutInput): Promise<Workout>;
-  remember(text: string): Promise<Memory>;
+  remember(input: MemoryInput): Promise<Memory | { error: string }>;
+  updateMemory(memoryId: string, patch: MemoryPatch): Promise<MemoryUpdate | { error: string } | null>;
   forget(memoryId: string): Promise<Memory | null>;
   /** Zwift events from the app's own synced copy (never calls Zwift), and the zone to show times in. */
   findEvents(query: EventQuery): Promise<{ result: EventQueryResult; timeZone: string }>;
@@ -607,21 +611,63 @@ export const COACH_TOOLS = [
   defineTool({
     name: 'remember',
     description:
-      'Save a durable note that should shape future coaching (schedule patterns, preferences, equipment, injuries, constraints). Not for ride-by-ride numbers — those are fetched fresh. The athlete can see and undo it.',
-    schema: z.object({ text: z.string().min(1).max(500) }),
+      "Save a note about the athlete, when they ask you to or when something they mention would change coaching in the days ahead, even if they play it down: a niggle, feeling ill, a trip, a busy spell. Not for small talk or ride-by-ride numbers, which are fetched fresh. Keep to what they said, without your own guesses, and write it as a plain note with no name or pronoun. Choose a list with until. Short-term, for anything with an end (a trip, illness, a busy week, a temporary niggle): until is the last day it matters, and the note is forgotten the day after. Give your best date when they don't say. Long-term, for durable facts (schedule patterns, preferences, equipment, lasting injuries, constraints): until is null. Write the note so it still reads right later, with absolute dates: \"Away for work Wed Nov 11, can't train\", never \"next Wednesday\". If a note already covers this, use update_memory instead. The athlete can see and undo it.",
+    schema: z.object({
+      text: z.string().min(1).max(500),
+      until: isoDateSchema.nullable().describe('Last local day it matters, YYYY-MM-DD, for a short-term note. null for a long-term note.'),
+    }),
     source: 'app',
-    async run({ text }, { ports }) {
-      const memory = await ports.remember(text);
+    async run({ text, until }, { ports }) {
+      const memory = await ports.remember({ text, ...(until ? { until } : {}) });
+      if ('error' in memory) return { content: memory.error, isError: true };
       return {
-        content: `Saved to memory (id ${memory.id}).`,
-        ui: { type: 'memory', memoryId: memory.id, action: 'remember', text: memory.text },
+        content: `Saved ${until ? `as a short-term note until ${until}` : 'to long-term memory'} (id ${memory.id}).`,
+        ui: { type: 'memory', memoryId: memory.id, action: 'remember', text: memory.text, ...(memory.until ? { until: memory.until } : {}) },
+      };
+    },
+  }),
+
+  defineTool({
+    name: 'update_memory',
+    description:
+      "Change a saved note, by its id from either memory list, when a fact changes rather than ends: reword it, move its date, or switch its list. Prefer this to saving a near-duplicate. Keep absolute dates in the text. The athlete can see and undo it.",
+    schema: z.object({
+      memory_id: z.string(),
+      text: z.string().min(1).max(500).optional().describe('The new wording. Leave out to keep it.'),
+      until: isoDateSchema
+        .nullable()
+        .optional()
+        .describe('Last local day it matters, YYYY-MM-DD, which makes it short-term. null makes it long-term. Leave out to keep it.'),
+    }),
+    source: 'app',
+    strict: false,
+    async run({ memory_id, text, until }, { ports }) {
+      if (text === undefined && until === undefined) return { content: 'Nothing to change: give text, until or both.', isError: true };
+      const result = await ports.updateMemory(memory_id, {
+        ...(text !== undefined ? { text } : {}),
+        ...(until ? { until } : {}),
+        ...(until === null ? { unset: ['until' as const] } : {}),
+      });
+      if (!result) return { content: `No memory with id ${memory_id}.`, isError: true };
+      if ('error' in result) return { content: result.error, isError: true };
+      const { memory, previous } = result;
+      return {
+        content: `Updated memory ${memory_id}.`,
+        ui: {
+          type: 'memory',
+          memoryId: memory.id,
+          action: 'update',
+          text: memory.text,
+          ...(memory.until ? { until: memory.until } : {}),
+          previous: { text: previous.text, ...(previous.until ? { until: previous.until } : {}) },
+        },
       };
     },
   }),
 
   defineTool({
     name: 'forget',
-    description: 'Remove a saved memory note that is no longer true, by its id from the Memory section.',
+    description: 'Remove a saved note that is no longer true, by its id from either memory list.',
     schema: z.object({ memory_id: z.string() }),
     source: 'app',
     async run({ memory_id }, { ports }) {
@@ -629,7 +675,7 @@ export const COACH_TOOLS = [
       if (!memory) return { content: `No memory with id ${memory_id}.`, isError: true };
       return {
         content: `Forgot memory ${memory_id}.`,
-        ui: { type: 'memory', memoryId: memory.id, action: 'forget', text: memory.text },
+        ui: { type: 'memory', memoryId: memory.id, action: 'forget', text: memory.text, ...(memory.until ? { until: memory.until } : {}) },
       };
     },
   }),
@@ -808,6 +854,19 @@ export const TOOL_DEFINITIONS: Anthropic.Beta.BetaTool[] = COACH_TOOLS.map((t) =
   strict: t.strict !== false,
   eager_input_streaming: true,
 }));
+
+/**
+ * Identifies this exact tool list, descriptions included (FNV-1a, so `app.ts` stays Node-free). Replayed
+ * thinking is tied to the tools it was written with, so a chat restarts when this changes (DECISIONS #80).
+ */
+export const TOOLS_HASH: string = (() => {
+  let hash = 0x811c9dc5;
+  for (const ch of JSON.stringify(TOOL_DEFINITIONS)) {
+    hash ^= ch.codePointAt(0)!;
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16);
+})();
 
 export function findTool(name: string) {
   return COACH_TOOLS.find((t) => t.name === name);

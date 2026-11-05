@@ -515,21 +515,37 @@ export function WorkoutBlock({ id, initial }: { id: string; initial?: Workout | 
   return <WorkoutCard workout={workout} />;
 }
 
+/** What the chip says a note became. Chips stored before DECISIONS #79 have no date and were long-term. */
+function memoryChipLabel(block: Extract<UiBlock, { type: 'memory' }>): string {
+  if (block.action === 'forget') return 'Forgot: ';
+  const when = block.until ? ` until ${formatLongDay(block.until)}` : '';
+  if (block.action === 'update') return block.until ? `Updated (${when.trim()}): ` : 'Updated long-term memory: ';
+  return block.until ? `Remembering${when}: ` : 'Saved to long-term memory: ';
+}
+
 export function MemoryChip({ block }: { block: Extract<UiBlock, { type: 'memory' }> }) {
-  const { deleteMemory, restoreMemory } = useProfileMutations();
+  const { deleteMemory, restoreMemory, revertMemory } = useProfileMutations();
   const [undone, setUndone] = useState(false);
+  const [refused, setRefused] = useState<string | null>(null);
   const undo = () => {
-    const m = block.action === 'remember' ? deleteMemory : restoreMemory;
-    m.mutate(block.memoryId, { onSuccess: () => setUndone(true) });
+    const onSuccess = () => setUndone(true);
+    if (block.action === 'remember') deleteMemory.mutate(block.memoryId, { onSuccess });
+    else if (block.action === 'forget') restoreMemory.mutate(block.memoryId, { onSuccess });
+    else if (block.previous) {
+      revertMemory.mutate(
+        { id: block.memoryId, from: { text: block.text, ...(block.until ? { until: block.until } : {}) }, to: block.previous },
+        { onSuccess, onError: (err) => setRefused(errorMessage(err)) },
+      );
+    }
   };
   return (
     <div className="flex items-center gap-2 self-start rounded-[10px] border border-accent-line bg-accent-tint px-3 py-2 text-[13px]">
       <MemoryIcon className="shrink-0 text-accent-ink" />
       <span>
-        {undone ? 'Undone: ' : block.action === 'remember' ? 'Saved to memory: ' : 'Forgot: '}
-        <span className="text-muted">{block.text}</span>
+        {undone ? 'Undone: ' : refused ? 'Couldn’t undo: ' : memoryChipLabel(block)}
+        <span className="text-muted">{refused ?? block.text}</span>
       </span>
-      {!undone && (
+      {!undone && !refused && (
         <button type="button" onClick={undo} className="ml-1 border-0 bg-transparent p-0 text-[13px] text-accent-ink">
           Undo
         </button>

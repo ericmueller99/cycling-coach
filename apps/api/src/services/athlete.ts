@@ -1,5 +1,5 @@
 import type { AthleteContext } from '@cycling-coach/coach';
-import { addDays, goalProgress, todayIn, wattsPerKg, weekDates } from '@cycling-coach/core';
+import { addDays, goalProgress, isShortTerm, todayIn, wattsPerKg, weekDates } from '@cycling-coach/core';
 import {
   getProfile,
   getUserName,
@@ -31,7 +31,7 @@ export function withProgress(goals: Goal[], profile: Profile, powerBests: PowerB
 
 /** @param ctl today's fitness, when known, for fitness goals */
 export async function loadAthleteContext(c: Collections, userId: string, ctl?: number): Promise<AthleteContext | null> {
-  const [profile, name, powerBests, goals, memories, workouts] = await Promise.all([
+  const [profile, name, powerBests, goals, notes, workouts] = await Promise.all([
     getProfile(c, userId),
     getUserName(c, userId),
     listPowerBests(c, userId),
@@ -40,7 +40,16 @@ export async function loadAthleteContext(c: Collections, userId: string, ctl?: n
     listWorkouts(c, userId),
   ]);
   if (!profile) return null;
-  return { ...(name ? { name } : {}), profile, powerBests, goals: withProgress(goals, profile, powerBests, ctl), memories, workouts };
+  return {
+    ...(name ? { name } : {}),
+    profile,
+    powerBests,
+    goals: withProgress(goals, profile, powerBests, ctl),
+    // Split here so a short-term note can never reach the block a new thread freezes.
+    memories: notes.filter((m) => !isShortTerm(m)),
+    shortTerm: notes.filter(isShortTerm),
+    workouts,
+  };
 }
 
 /** The athlete's local date and wall-clock time at `now`. */

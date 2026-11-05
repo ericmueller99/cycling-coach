@@ -21,6 +21,18 @@ function textOf(content: unknown[]): string[] {
   return out;
 }
 
+/** A tool call with no result, which the API rejects. Only a crash between the two leaves one behind. */
+export function hasOpenToolUse(messages: Pick<StoredMessage, 'kind' | 'content'>[]): boolean {
+  const open = new Set<unknown>();
+  for (const m of messages) {
+    for (const block of m.content as { type?: string; id?: unknown; tool_use_id?: unknown }[]) {
+      if (m.kind === 'assistant' && block?.type === 'tool_use') open.add(block.id);
+      if (m.kind === 'tool_results' && block?.type === 'tool_result') open.delete(block.tool_use_id);
+    }
+  }
+  return open.size > 0;
+}
+
 /**
  * Derive chat bubbles from the verbatim transcript. One assistant bubble spans the whole tool loop
  * (text, chips, cards, more text) until the next user message — that's how the chat shows it.

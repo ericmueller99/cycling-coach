@@ -30,12 +30,14 @@ export function goalProgress(goal: Pick<Goal, 'measure' | 'target'>, s: GoalSnap
   let unit: string;
   let label: string;
   let lowerIsBetter = false;
+  let onTrendWeight = false;
   switch (measure.kind) {
     case 'wkg': {
       const zwift = measure.weight === 'zwift' && s.zwiftWeightKg !== undefined;
       current = s.ftp !== undefined ? round(s.ftp / (zwift ? s.zwiftWeightKg! : s.weightKg), 2) : undefined;
       unit = 'W/kg';
       label = zwift ? 'W/kg (Zwift weight)' : 'W/kg (trend weight)';
+      onTrendWeight = !zwift;
       break;
     }
     case 'zwift_wkg': {
@@ -44,6 +46,7 @@ export function goalProgress(goal: Pick<Goal, 'measure' | 'target'>, s: GoalSnap
       current = watts !== undefined ? round(watts / (zwift ? s.zwiftWeightKg! : s.weightKg), 2) : undefined;
       unit = 'W/kg';
       label = `${measure.metric === 'zftp' ? 'zFTP' : 'zMAP'} W/kg (${zwift ? 'Zwift' : 'trend'} weight)`;
+      onTrendWeight = !zwift;
       break;
     }
     case 'ftp':
@@ -61,6 +64,7 @@ export function goalProgress(goal: Pick<Goal, 'measure' | 'target'>, s: GoalSnap
       unit = 'kg';
       label = 'Trend weight';
       lowerIsBetter = true;
+      onTrendWeight = true;
       break;
     case 'fitness':
       current = s.ctl !== undefined ? round(s.ctl, 1) : undefined;
@@ -75,5 +79,5 @@ export function goalProgress(goal: Pick<Goal, 'measure' | 'target'>, s: GoalSnap
   }
   if (current === undefined || current <= 0) return undefined;
   const fraction = Math.max(0, Math.min(1, lowerIsBetter ? target / current : current / target));
-  return { current, target, unit, fraction, label };
+  return { current, target, unit, fraction, label, ...(onTrendWeight ? { onTrendWeight } : {}) };
 }

@@ -1642,3 +1642,113 @@ proposes a change, and **Apply** puts it on the form. Nothing is saved until Sav
 - *Applying straight to the form*: an estimate would replace a label value without a look (rule 5).
 - *Resending the photo*: costs far more per turn and adds nothing the form doesn't hold.
 - *Using the coach thread*: heavier and far dearer for a one-food question, and it would leave a thread behind.
+
+## 79. Coach memory has two buckets: short-term and long-term (Nov 4)
+
+**2026-11-04** · One flat list meant a passing fact like "I'm away next Wednesday" either got lost or was sent forever. Onboarding already
+promised the split (#62). Now a note is **short-term** if it has an `until` date and **long-term** if it doesn't. No `term` field and no
+migration: existing notes are long-term as they stand.
+
+- **Short-term notes go a day after their date.** `until` is the last day a note matters, and that's what's stored and shown. A 1-day
+  grace is applied only when filtering, so "away Wed Nov 11" is sent through Thursday and gone on Friday, in the athlete's own timezone.
+  Expiry is a filter on read, so there's no job. Expired notes stay in the database, hidden.
+- **Short-term notes live in the per-turn context, not the athlete block.** The block is frozen per thread and any change re-sends all of
+  it, workout library included, into the permanent transcript. In the block, every add and every expiry would do that in every open
+  thread. In the context message, the list is sent only when it changes (`seen.shortTerm`). It says it's the complete list, so a note the
+  athlete deleted isn't saved again. The compare is strict, unlike `extra`, because an empty list after a full one is news.
+- **The coach must pick a bucket.** `until` is required and nullable on `remember`, so a note can't go permanent by omission. That matters
+  because running threads keep their old persona, which is also why the guidance is in the tool descriptions.
+- **New tool `update_memory`**, alongside `remember` and `forget`: reword, move a date, or switch bucket. `strict: false`, to stay clear of
+  the grammar limit. It writes directly and is undoable, so rule 5 now names it.
+- **Undo on an update can't overwrite a later edit.** Chips don't remember being undone across a reload, so `POST /memories/:id/revert`
+  applies only while the note still matches what the coach left. It skips the date check, because the old date may have passed.
+- **Long-term notes never expire.** Six months without a look shows "Still true?" in the panel, with Keep, Edit and Delete. Any edit
+  counts as a look.
+- **The chat and the panel share `MemoryService`**, so both follow the same date rules: a real date (`isoDateSchema` only checks the shape),
+  not past, within a year. Editing an expired note needs a new date.
+- **The daily trend weight is out of the athlete block.** W/kg on power bests and the "now" value of goals on trend weight changed the
+  block's text whenever the trend moved, which re-sent all of it. Power bests are now watts and date; those goals keep their target. The
+  coach still gets the weight every turn. A zFTP with no Zwift weight still uses the trend in the Zwift metrics line.
+
+**What it doesn't do.** An expired note leaves the coach's list and never reaches a new thread, but the words the athlete typed stay in
+that thread's history (rule 2). The saving is mostly across threads.
+
+**Verified.** Tests cover expiry over real turns through `sendMessage`. Real Sonnet turns with the production persona: right bucket and
+date for "next Wednesday", a date range, a trip moved or cancelled, a note made permanent. Passing mentions of a sore knee (4 of 4) and a
+cold (3 of 3) were saved; none of 6 small-talk or question turns were. "Work's crazy, only two rides this week" wasn't saved (0 of 5): the
+coach planned the rides straight away instead.
+
+**Rejected.**
+- *Short-term notes in the athlete block*: see above.
+- *A `term` field*: a second source of truth, and it allows a long-term note with a date.
+- *Storing `until` + 1*: the coach reads the date back, so each update would add a day.
+- *Expiry dates on long-term notes*: a dated long-term note is just a short-term note, and undated ones still go stale.
+- *The coach raising stale notes in chat*: it needs throttling so it doesn't nag in every new thread. The panel is enough for now.
+- *Sending only the memory section when a long-term note changes*: new threads seed `seen.athlete` with memory in it, so both sides of the
+  comparison need care, for changes that are rare now that short-term notes are out of the block.
+- *A job to delete expired notes*: filtering on read does the job. Purging them for good is still open.
+- *Limits on the number of notes*: short-term notes expire, and a long-term note is about 30 tokens in a cached block.
+
+## 80. A chat can have more than one API context (Nov 4)
+
+**2026-11-04** · Every turn sent the whole thread, nothing limited a thread's size, and opening Coach reopened the latest one, so one chat
+tended to grow for ever. The message cache lasts 5 minutes, so each return after a break rewrote the whole history at the cache-write price:
+about $0.25 on Sonnet or $0.50 on Opus for 100K tokens, against about $0.07 for a new chat. This reverses #14's "threads have no context
+expiry", and it's the idea #8 had for Strava, for a different reason.
+
+- **A restart starts a new API context in the same chat.** The next request holds a fresh system prompt, a recap and the new message, and
+  nothing older. Stored messages never change and the athlete still sees the whole chat, so rule 2 holds. #6 always said "per context".
+  `ThreadDoc.contexts` records each one, and only messages from the last one's `startSeq` are sent.
+- **Replaying nothing older is what makes it safe.** Dropping old turns while keeping recent ones verbatim breaks preserved thinking: their
+  signatures record the full history. A summary plus the new turn is the shape the API docs recommend.
+- **When** (`restartReason`, `packages/core/src/coach-context.ts`):
+  - 80K+ tokens and idle 5 minutes or more. This is the saver, and it only fires on a return, because reads are cheap mid-conversation.
+  - 200K+ tokens, even mid-conversation: the ceiling, which also limits a cold switch to the build model.
+  - Idle 14+ days, whatever the size: the cut-off date. It adds freshness, not savings.
+  - The tool definitions changed since the context began. `TOOLS_HASH` is stored per context. Thinking is tied to the tools it was written with,
+    so on an enforced account a reworded description is a 400 on every open chat. Chats from before contexts existed restart once for the same reason.
+  - A tool call has no result, which the API rejects. Such a chat was stuck; a restart frees it.
+  - Never while a turn may be running (the last message isn't a finished reply and is under 20 minutes old). Restarting under another
+    tab's turn would strand its tool results. `restartContext` is compare-and-set, so two tabs can't both restart.
+- **Size comes from `ai_calls`:** the latest finished coach call after the boundary. No counter to keep in step. A fallback can double the
+  figure and bring a restart forward, which is harmless.
+- **The recap is a third system block,** `[persona, athlete, recap]`, because `seen.athlete` is compared against the athlete block alone. It has
+  no cache breakpoint. `restartContext` is the only writer of `systemSnapshot` after creation. It resets `seen`, so the full calendar goes out again.
+- **What's in it:**
+  - A header saying the latest context message wins, so expired or deleted notes (#79) lose to the current list.
+  - Haiku's summary of the athlete and coach text. Never thinking, tool results or context messages: they're most of the tokens and none of
+    the conversation. It uses absolute dates and builds on the previous recap, so it never re-reads a whole chat. Input is capped at about
+    50K tokens, under Haiku's 100K price step.
+  - Open cards with their ids, written by code. Ids exist only in tool results, so without this "change X" made a second live card and "make the
+    X" lost the idea's matches.
+  - The last two exchanges word for word, so "yes, do that" still means something.
+- **A recap never fails a turn.** It has 20 seconds and no retries, then the last few exchanges stand in. It's written before the message is
+  stored, so Stop leaves nothing behind and the draft comes back. It has no tier, so it counts toward a total but not a chat allowance.
+- **New chats get a recap too:** the athlete's latest other chat with a coach reply from the past 7 days, through the same path. It says
+  to use it only if relevant. No open cards, because `replaces` only works within a chat. This closes #79's "only two rides this week" gap.
+- **Opening Coach reopens the latest chat only if it was active in the last 12 hours,** or has a turn running (#46). Otherwise it's a new chat with a
+  "Continue" link. A deep link or a refresh of `?t=` still opens that chat.
+- **At 60K tokens a banner above the composer suggests a new chat,** dismissed per chat. It's only a suggestion: the rules above cap the
+  cost whether it's pressed or not.
+- **A divider marks each restart** ("Earlier messages are summarized for your coach"), so a forgotten detail isn't a surprise. It's on
+  `ThreadView.contextBreaks`, not in `messages`, which leaves the live-turn counting alone. A carried recap shows none, because nothing was cut out.
+
+**What it doesn't do.** A note the athlete deleted can come back as a question: the recap keeps what was said, so the coach may ask how the knee
+is. An expired note already stayed in a chat's history (#79), so this is no worse. A chat that's warm on the chat model still writes its whole
+context to the build model on a switch; only the ceiling limits that. Two tabs sending at the same moment can still interleave, as they could before.
+
+**Verified.** Tests through `sendMessage` on a real Mongo, including stored messages unchanged, a retry keeping one user message, and Stop
+during a recap. Live, with the check forced on (`prefix_mismatch_behavior: "error"`): the restart shape was accepted, with thinking, and hit the
+cache on the next turn. A reworded tool description was rejected the same way, which is why the hash exists. On made-up chats with real Haiku
+and Sonnet: "yes, do that" moved the right session, a plan change used `replaces`, a finished trip read as past, a newer note beat the
+recap, "only two rides this week" reached a new chat, and an unrelated question stayed on topic. Recaps of those short chats cost under $0.001.
+
+**Rejected.**
+- *A date cut-off that keeps recent turns verbatim*: see above, it's a 400 on enforced accounts.
+- *Anthropic's on-demand compaction*: it reads the raw history, thinking included, needs a beta header and a signed block on every later
+  request, and that block can't seed a new chat. We keep no verbatim turns, so its one advantage goes unused.
+- *Closing old chats or making them read-only*: a dead end for the athlete, and the restart already caps the cost.
+- *A per-thread lease*: a heavier answer to two tabs. The in-flight check and compare-and-set stop restarts making that worse, and it's rare.
+- *Thresholds as settings*: nothing real to set them from yet. They're constants until there is.
+- *A 1-hour message cache*: it doubles every write to help gaps of 5–60 minutes. Worth measuring once sizes are capped.
+

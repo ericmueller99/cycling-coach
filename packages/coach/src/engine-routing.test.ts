@@ -285,6 +285,49 @@ describe('prompt caching', () => {
     expect(calls[0]!.system.map((b) => b.cache_control)).toEqual([{ type: 'ephemeral', ttl: '1h' }, { type: 'ephemeral' }]);
     expect(calls[0]).toMatchObject({ cache_control: { type: 'ephemeral' } });
   });
+
+  it('adds no breakpoint for a recap block: four is the limit, and the history covers it', async () => {
+    const { engine, calls } = engineWith([{ content: [text('ok')] }]);
+    await run(engine, { system: ['persona', 'athlete', 'recap'] });
+    expect(calls[0]!.system.map((b) => b.cache_control)).toEqual([{ type: 'ephemeral', ttl: '1h' }, { type: 'ephemeral' }, undefined]);
+  });
+});
+
+describe('recap', () => {
+  const haiku = (create: (params: Record<string, unknown>, options: Record<string, unknown>) => unknown) =>
+    new CoachEngine({ apiKey: 'k', router: () => ROUTER }, { messages: { create } } as unknown as Anthropic);
+  const reply = (content: Block[], stop_reason = 'end_turn') => ({
+    model: 'claude-haiku-5-5',
+    content,
+    stop_reason,
+    usage: { input_tokens: 1000, output_tokens: 100, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+  });
+
+  it('uses the small model with a short leash, and gives the text and its cost', async () => {
+    let seen: { params: Record<string, unknown>; options: Record<string, unknown> } | undefined;
+    const signal = new AbortController().signal;
+    const engine = haiku((params, options) => {
+      seen = { params, options };
+      return reply([{ type: 'thinking', thinking: '' }, text('- Rest Friday')]);
+    });
+    const result = await engine.recap('Athlete: hi', signal);
+    expect(seen!.params).toMatchObject({ model: 'claude-haiku-5-5', output_config: { effort: 'low' } });
+    expect(JSON.stringify(seen!.params.messages)).toContain('Athlete: hi');
+    expect(seen!.options).toMatchObject({ maxRetries: 0, signal });
+    expect(result!.text).toBe('- Rest Friday');
+    expect(result!.usage.costUsd).toBeGreaterThan(0);
+  });
+
+  it('has no tier, so it stays out of chat fair use', async () => {
+    const result = await haiku(() => reply([text('x')])).recap('t');
+    expect(result!.usage.tier).toBeUndefined();
+  });
+
+  it('gives null rather than throwing, so a recap never fails a turn', async () => {
+    expect(await haiku(() => { throw overloaded(); }).recap('t')).toBeNull();
+    expect(await haiku(() => reply([])).recap('t')).toBeNull();
+    expect(await haiku(() => reply([text('   ')], 'refusal')).recap('t')).toBeNull();
+  });
 });
 
 describe('withoutDeclinedAttempt', () => {

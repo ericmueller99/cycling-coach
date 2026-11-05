@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { calendarEventInputSchema, calendarEventPatchSchema, calendarEventSchema } from './calendar';
-import { isoDateSchema } from './common';
+import { isoDateSchema, type IsoDate } from './common';
 import { goalMeasureSchema } from './profile';
 
 /**
@@ -122,7 +122,16 @@ export type UiBlock =
   | ToolChipBlock
   | { type: 'proposal'; proposalId: string; kind: Proposal['kind'] }
   | { type: 'workout'; workoutId: string }
-  | { type: 'memory'; memoryId: string; action: 'remember' | 'forget'; text: string }
+  | {
+      type: 'memory';
+      memoryId: string;
+      action: 'remember' | 'forget' | 'update';
+      text: string;
+      /** Set on a short-term note. */
+      until?: IsoDate | undefined;
+      /** An update's earlier text and date, for Undo. */
+      previous?: { text: string; until?: IsoDate | undefined } | undefined;
+    }
   /** Meal idea cards; the ideas live in `meal_ideas`. */
   | { type: 'meal_ideas'; ideasId: string }
   /** A generated recipe; it opens in the recipe pane and lives in `recipe_drafts`. */

@@ -1,4 +1,4 @@
-import { addDays, inferSessionType, RAMP_TEST, STARTER_WORKOUTS, todayIn, workoutMetrics } from '@cycling-coach/core';
+import { addDays, inferSessionType, isShortTerm, RAMP_TEST, STARTER_WORKOUTS, todayIn, workoutMetrics } from '@cycling-coach/core';
 import {
   createGoal,
   createWorkout,
@@ -93,7 +93,7 @@ export class OnboardingService {
       body: profile ? { weightKg: profile.weightKg, unit: doc?.unit ?? 'kg' } : null,
       goals: doc?.goals ?? null,
       createdGoals: goals.filter((g) => mine.has(g.id)),
-      memories,
+      memories: memories.filter((m) => !isShortTerm(m)),
       rampTest: doc?.rampTest ?? null,
       completedAt: doc?.completedAt?.toISOString() ?? null,
     };

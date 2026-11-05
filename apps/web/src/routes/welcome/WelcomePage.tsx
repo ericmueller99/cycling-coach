@@ -173,7 +173,7 @@ function Wizard({ initial }: { initial: OnboardingState }) {
     const t = text.trim();
     if (!t) return;
     try {
-      await createMemory.mutateAsync(t);
+      await createMemory.mutateAsync({ text: t });
       set({ note: '' });
       await m.refresh();
     } catch (err) {

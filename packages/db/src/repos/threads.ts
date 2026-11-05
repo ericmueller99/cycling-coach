@@ -1,6 +1,6 @@
 import type { Proposal, ProposalItemStatus, ThreadSummary, ThreadTag } from '@cycling-coach/shared';
 import type { ObjectId } from 'mongodb';
-import type { AiCallDoc, Collections, MessageDoc, ProposalDoc, ThreadDoc } from '../collections';
+import type { AiCallDoc, Collections, MessageDoc, ProposalDoc, ThreadContext, ThreadDoc } from '../collections';
 import { idOf, oid } from './util';
 
 export const toThreadSummary = (doc: ThreadDoc): ThreadSummary => ({
@@ -26,6 +26,7 @@ export async function createThread(
   c: Collections,
   userId: string,
   systemSnapshot: string[],
+  toolsHash: string,
   now: Date,
 ): Promise<ThreadDoc & { _id: ObjectId }> {
   const doc: ThreadDoc = {
@@ -35,6 +36,7 @@ export async function createThread(
     lastMessageAt: now,
     systemSnapshot,
     seen: { athlete: systemSnapshot[1] ?? '' },
+    contexts: [{ startSeq: 0, at: now, reason: 'start', toolsHash }],
   };
   const res = await c.threads.insertOne(doc);
   return { ...doc, _id: res.insertedId };
@@ -53,8 +55,66 @@ export async function addThreadTag(c: Collections, threadId: ObjectId, tag: Thre
   await c.threads.updateOne({ _id: threadId }, { $addToSet: { tags: tag } });
 }
 
-export async function listMessages(c: Collections, threadId: ObjectId) {
-  return c.messages.find({ threadId }).sort({ seq: 1 }).toArray();
+/** Where the thread's current API context starts. */
+export const contextStartSeq = (thread: Pick<ThreadDoc, 'contexts'>): number => thread.contexts?.at(-1)?.startSeq ?? 0;
+
+/** A thread's messages in order, from `fromSeq` on when only one API context is wanted. */
+export async function listMessages(c: Collections, threadId: ObjectId, fromSeq = 0) {
+  return c.messages.find({ threadId, ...(fromSeq > 0 ? { seq: { $gte: fromSeq } } : {}) }).sort({ seq: 1 }).toArray();
+}
+
+/**
+ * Start a new API context (DECISIONS #80). The one place a thread's system prompt changes after it's
+ * created: nothing from before `startSeq` is sent again, so no replayed thinking depends on the old
+ * one. `seen` goes back to the snapshot alone, so the next context message repeats the full calendar.
+ * `buildPending` stays, because it records an unfinished build that a retry still has to honour.
+ *
+ * Returns the updated thread, or null when another request restarted it first.
+ */
+export async function restartContext(
+  c: Collections,
+  thread: ThreadDoc & { _id: ObjectId },
+  next: { systemSnapshot: string[]; context: ThreadContext },
+) {
+  const count = thread.contexts?.length ?? 0;
+  return c.threads.findOneAndUpdate(
+    { _id: thread._id, contexts: count > 0 ? { $size: count } : { $exists: false } },
+    {
+      $set: { systemSnapshot: next.systemSnapshot, seen: { athlete: next.systemSnapshot[1] ?? '' } },
+      $push: { contexts: next.context },
+      $unset: { lastBuildStartedAt: '', buildFollowUpUsed: '' },
+    },
+    { returnDocument: 'after' },
+  );
+}
+
+/**
+ * The size of the current context: the latest finished coach call's prompt and reply. Stopped calls
+ * only have an estimate, so they don't count. 0 for a context that hasn't had a call yet.
+ */
+export async function contextTokens(c: Collections, thread: ThreadDoc & { _id: ObjectId }): Promise<number> {
+  const since = thread.contexts?.at(-1)?.at;
+  const row = await c.aiCalls.findOne(
+    { userId: thread.userId, threadId: thread._id, purpose: 'coach', estimated: { $ne: true }, ...(since ? { createdAt: { $gte: since } } : {}) },
+    { sort: { createdAt: -1 } },
+  );
+  return row ? row.inputTokens + row.cacheReadTokens + row.cacheWriteTokens + row.outputTokens : 0;
+}
+
+/**
+ * The athlete's latest chat with a coach reply since `since`, apart from `exceptId`: the one a new chat
+ * gets a recap of. A few recent threads is plenty, because empty ones are rare.
+ */
+export async function latestChat(c: Collections, userId: string, exceptId: ObjectId, since: Date) {
+  const recent = await c.threads
+    .find({ userId, _id: { $ne: exceptId }, lastMessageAt: { $gte: since } })
+    .sort({ lastMessageAt: -1 })
+    .limit(5)
+    .toArray();
+  for (const thread of recent) {
+    if (await c.messages.findOne({ threadId: thread._id, kind: 'assistant' }, { projection: { _id: 1 } })) return thread;
+  }
+  return null;
 }
 
 /**

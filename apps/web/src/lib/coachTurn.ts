@@ -95,6 +95,9 @@ export function dismissNotice() {
   emit();
 }
 
+/** A thread with a turn still running, so opening Coach goes there and not to a new chat. */
+export const runningThreadId = (): string | undefined => [...turns.values()].find((t) => !t.done)?.threadId;
+
 export const useLiveTurn = (threadId: string | undefined) =>
   useSyncExternalStore(subscribe, () => (threadId ? (turns.get(threadId) ?? null) : null));
 
@@ -209,6 +212,8 @@ export async function startTurn(opts: {
   await qc.refetchQueries({ queryKey: keys.thread(id) });
   void qc.invalidateQueries({ queryKey: keys.threads });
   void qc.invalidateQueries({ queryKey: keys.dashboard });
+  // The coach may have saved, changed or forgotten a note.
+  void qc.invalidateQueries({ queryKey: keys.profile });
   // The turn cost something, which can change what's on offer.
   void qc.invalidateQueries({ queryKey: keys.usage });
   // A revised card closes the one it replaces.
@@ -219,5 +224,6 @@ export async function startTurn(opts: {
   if (watching !== id && !abort.signal.aborted) notice = { threadId: id, recipeId, error: failed };
   if (!failed) turns.delete(id);
   emit();
-  return { refused };
+  // Stopped before the server stored the message: a recap was still being written.
+  return { refused: refused || (abort.signal.aborted && !started) };
 }

@@ -1,6 +1,7 @@
 export * from './context';
 export * from './engine';
 export * from './pricing';
+export * from './recap';
 export { COACH_PERSONA } from './prompt';
 export * from './router';
 export {
@@ -9,6 +10,7 @@ export {
   formatActivityForModel,
   runTool,
   TOOL_DEFINITIONS,
+  TOOLS_HASH,
   type CoachFoodPort,
   type CoachPorts,
   type NewMealIdeas,

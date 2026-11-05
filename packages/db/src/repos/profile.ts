@@ -1,4 +1,4 @@
-import type { Goal, GoalInput, GoalPatch, Memory, PowerBest, Profile, ProfileUpdate } from '@cycling-coach/shared';
+import type { Goal, GoalInput, GoalPatch, IsoDate, Memory, MemoryPatch, MemoryRevert, PowerBest, Profile, ProfileUpdate } from '@cycling-coach/shared';
 import type { Collections, GoalDoc, MemoryDoc } from '../collections';
 import { compact, idOf, oid } from './util';
 
@@ -141,8 +141,11 @@ const toMemory = (doc: MemoryDoc): Memory => ({
   text: doc.text,
   source: doc.source,
   createdAt: doc.createdAt.toISOString(),
+  ...(doc.until ? { until: doc.until } : {}),
+  ...(doc.reviewedAt ? { reviewedAt: doc.reviewedAt.toISOString() } : {}),
 });
 
+/** Every note that hasn't been deleted, expired ones included: `core`'s memory helpers sort them out. */
 export async function listMemories(c: Collections, userId: string): Promise<Memory[]> {
   const docs = await c.memories
     .find({ userId, deletedAt: { $exists: false } })
@@ -151,24 +154,60 @@ export async function listMemories(c: Collections, userId: string): Promise<Memo
   return docs.map(toMemory);
 }
 
+export async function getMemory(c: Collections, userId: string, id: string): Promise<Memory | null> {
+  const _id = oid(id);
+  if (!_id) return null;
+  const doc = await c.memories.findOne({ _id, userId, deletedAt: { $exists: false } });
+  return doc ? toMemory(doc) : null;
+}
+
 export async function createMemory(
   c: Collections,
   userId: string,
   text: string,
   source: 'user' | 'coach',
   now: Date,
+  until?: IsoDate,
 ): Promise<Memory> {
-  const doc: MemoryDoc = { userId, text, source, createdAt: now };
+  const doc: MemoryDoc = { userId, text, source, createdAt: now, ...(until ? { until } : {}) };
   const res = await c.memories.insertOne(doc);
   return toMemory({ ...doc, _id: res.insertedId });
 }
 
-export async function updateMemory(c: Collections, userId: string, id: string, text: string) {
+/** Any edit counts as the athlete looking at the note, so it also resets its review date. */
+export async function updateMemory(c: Collections, userId: string, id: string, patch: MemoryPatch, now: Date) {
+  const _id = oid(id);
+  if (!_id) return null;
+  const { unset = [], ...fields } = patch;
+  // Mongo refuses to $set and $unset the same field.
+  const set = compact({ ...fields, ...(unset.includes('until') ? { until: undefined } : {}) });
+  const doc = await c.memories.findOneAndUpdate(
+    { _id, userId, deletedAt: { $exists: false } },
+    { $set: { ...set, reviewedAt: now }, ...(unset.length ? { $unset: Object.fromEntries(unset.map((k) => [k, ''])) } : {}) },
+    { returnDocument: 'after' },
+  );
+  return doc ? toMemory(doc) : null;
+}
+
+/** "Still true": the note stays as it is and its review date starts again. */
+export async function reviewMemory(c: Collections, userId: string, id: string, now: Date) {
   const _id = oid(id);
   if (!_id) return null;
   const doc = await c.memories.findOneAndUpdate(
     { _id, userId, deletedAt: { $exists: false } },
-    { $set: { text } },
+    { $set: { reviewedAt: now } },
+    { returnDocument: 'after' },
+  );
+  return doc ? toMemory(doc) : null;
+}
+
+/** Puts a note back, but only while it still matches `from`: a later edit is never overwritten. */
+export async function revertMemory(c: Collections, userId: string, id: string, { from, to }: MemoryRevert) {
+  const _id = oid(id);
+  if (!_id) return null;
+  const doc = await c.memories.findOneAndUpdate(
+    { _id, userId, deletedAt: { $exists: false }, text: from.text, until: from.until ?? { $exists: false } },
+    { $set: { text: to.text, ...(to.until ? { until: to.until } : {}) }, ...(to.until ? {} : { $unset: { until: '' } }) },
     { returnDocument: 'after' },
   );
   return doc ? toMemory(doc) : null;

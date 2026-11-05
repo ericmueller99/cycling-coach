@@ -31,6 +31,10 @@ export interface WeightHistoryPayload {
 export interface ThreadView {
   thread: ThreadSummary;
   messages: UiMessage[];
+  /** Messages the coach started afresh from: it has only a recap of what's above them (DECISIONS #80). */
+  contextBreaks: string[];
+  /** Big enough to suggest a new chat. */
+  contextLong: boolean;
   proposals: Proposal[];
   /** Workouts referenced by workout cards in this thread (may include archived ones). */
   workouts: Workout[];

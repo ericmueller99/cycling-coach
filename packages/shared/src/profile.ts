@@ -116,16 +116,37 @@ export interface GoalProgress {
   fraction: number;
   /** e.g. "W/kg (Zwift weight)" */
   label: string;
+  /** `current` follows the daily trend weight, so it must stay out of cached prompt text. */
+  onTrendWeight?: boolean | undefined;
 }
 
 export const goalSchema = goalInputSchema.extend({ id: z.string() });
 /** Goals as the API returns them: with live progress when they're measurable. */
 export type Goal = z.infer<typeof goalSchema> & { progress?: GoalProgress | undefined };
 
-export const memoryInputSchema = z.object({ text: z.string().min(1).max(500) });
+const memoryFields = z.object({
+  text: z.string().min(1).max(500),
+  /** The last local day a short-term note matters. A note without one is long-term (DECISIONS #79). */
+  until: isoDateSchema,
+});
+export const memoryInputSchema = memoryFields.partial({ until: true });
+export type MemoryInput = z.infer<typeof memoryInputSchema>;
+/** A partial update; `unset: ['until']` makes a note long-term (JSON has no way to send `undefined`). */
+export const memoryPatchSchema = memoryFields.partial().extend({ unset: z.array(z.enum(['until'])).optional() });
+export type MemoryPatch = z.infer<typeof memoryPatchSchema>;
+/** Undo for a coach's update: applies only while the note is still what the coach left (`from`). */
+export const memoryRevertSchema = z.object({ from: memoryInputSchema, to: memoryInputSchema });
+export type MemoryRevert = z.infer<typeof memoryRevertSchema>;
 export const memorySchema = memoryInputSchema.extend({
   id: z.string(),
   source: z.enum(['user', 'coach']),
   createdAt: z.string(),
+  /** When the athlete last confirmed it; `createdAt` until they do. */
+  reviewedAt: z.string().optional(),
 });
 export type Memory = z.infer<typeof memorySchema>;
+/** An update and what it replaced, which is what a chat chip needs to undo it. */
+export interface MemoryUpdate {
+  memory: Memory;
+  previous: Memory;
+}

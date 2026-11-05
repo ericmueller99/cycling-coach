@@ -64,7 +64,8 @@ function ports(overrides: Partial<CoachPorts> = {}): CoachPorts {
     createWorkout: async () => {
       throw new Error('unused');
     },
-    remember: async (text) => ({ id: 'm1', text, source: 'coach', createdAt: '' }),
+    remember: async ({ text }) => ({ id: 'm1', text, source: 'coach', createdAt: '' }),
+    updateMemory: async () => null,
     forget: async () => null,
     findEvents: async () => ({ result: { items: [], total: 0, all: 0, facets: { types: {}, worlds: {} } }, timeZone: 'UTC' }),
     feedbackForActivities: async () => [],

@@ -6,12 +6,10 @@ import {
   collections,
   type Collections,
   createGoal,
-  createMemory,
   createMongo,
   deleteGoal,
   getEvent,
   ensureIndexes,
-  forgetMemory,
   getProfile,
   getProposalDoc,
   getWorkout,
@@ -25,19 +23,17 @@ import {
   migrate,
   getUserName,
   ownerUserId,
-  restoreMemory,
   saveProfile,
   savePowerBest,
   toProposal,
   updateGoal,
-  updateMemory,
   createEventSearch,
   deleteEventSearch,
   listEventSearches,
   saveActivities,
   deleteActivities,
 } from '@cycling-coach/db';
-import { addDays, sessionRideIds, todayIn } from '@cycling-coach/core';
+import { addDays, sessionRideIds, todayIn, visibleMemories } from '@cycling-coach/core';
 import type { Activity, IntegrationStatus, ZwiftStatus } from '@cycling-coach/shared';
 import type { Db } from 'mongodb';
 import { createApp, type AppServices } from './app';
@@ -54,6 +50,7 @@ import { FoodService } from './services/food';
 import { RecipeShareService } from './services/recipe-share';
 import { StaplesService } from './services/food-staples';
 import { FoodAiService } from './services/food-ai';
+import { MemoryService } from './services/memory';
 import { OpenFoodFacts } from './providers/openfoodfacts';
 import { photoStoreFromEnv } from './providers/storage/s3';
 import { UsdaClient } from './providers/usda';
@@ -184,6 +181,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   await ensureIndexes(mongo.db);
   await migrate(mongo.db);
   const c = collections(mongo.db);
+  const memories = new MemoryService(c, now);
   const auth = createAuth(mongo, env, opts.auth);
 
   /**
@@ -329,13 +327,18 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
       get: async (userId) => {
         const profile = await getProfile(c, userId);
         if (!profile) return null;
-        const [powerBests, goals, memories, ctl] = await Promise.all([
+        const [powerBests, goals, notes, ctl] = await Promise.all([
           listPowerBests(c, userId),
           listGoals(c, userId),
           listMemories(c, userId),
           ctlToday(userId, profile.timezone),
         ]);
-        return { profile, powerBests, goals: withProgress(goals, profile, powerBests, ctl), memories };
+        return {
+          profile,
+          powerBests,
+          goals: withProgress(goals, profile, powerBests, ctl),
+          memories: visibleMemories(notes, todayIn(profile.timezone, now())),
+        };
       },
       save: async (userId, profile) => {
         // A synced weight belongs to intervals.icu; the form can't overwrite it.
@@ -371,10 +374,12 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     },
 
     memories: {
-      create: (userId, text) => createMemory(c, userId, text, 'user', now()),
-      update: (userId, id, text) => updateMemory(c, userId, id, text),
-      remove: (userId, id) => forgetMemory(c, userId, id, now()),
-      restore: (userId, id) => restoreMemory(c, userId, id),
+      create: (userId, input) => memories.create(userId, input, 'user'),
+      update: (userId, id, patch) => memories.update(userId, id, patch),
+      remove: (userId, id) => memories.remove(userId, id),
+      restore: (userId, id) => memories.restore(userId, id),
+      review: (userId, id) => memories.review(userId, id),
+      revert: (userId, id, input) => memories.revert(userId, id, input),
     },
 
     workouts: {

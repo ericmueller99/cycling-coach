@@ -5,6 +5,9 @@ import type {
   SavedSearchInput,
   GoalInput,
   GoalPatch,
+  MemoryInput,
+  MemoryPatch,
+  MemoryRevert,
   OnboardingBody,
   OnboardingFitness,
   OnboardingGoals,
@@ -364,12 +367,12 @@ export function useProfileMutations() {
       onSuccess: invalidate,
     }),
     createMemory: useMutation({
-      mutationFn: async (text: string) => unwrap(await api.api.memories.$post({ json: { text } })),
+      mutationFn: async (input: MemoryInput) => unwrap(await api.api.memories.$post({ json: input })),
       onSuccess: invalidate,
     }),
     updateMemory: useMutation({
-      mutationFn: async ({ id, text }: { id: string; text: string }) =>
-        unwrap(await api.api.memories[':id'].$patch({ param: { id }, json: { text } })),
+      mutationFn: async ({ id, ...patch }: MemoryPatch & { id: string }) =>
+        unwrap(await api.api.memories[':id'].$patch({ param: { id }, json: patch })),
       onSuccess: invalidate,
     }),
     deleteMemory: useMutation({
@@ -378,6 +381,15 @@ export function useProfileMutations() {
     }),
     restoreMemory: useMutation({
       mutationFn: async (id: string) => unwrap(await api.api.memories[':id'].restore.$post({ param: { id } })),
+      onSuccess: invalidate,
+    }),
+    reviewMemory: useMutation({
+      mutationFn: async (id: string) => unwrap(await api.api.memories[':id'].review.$post({ param: { id } })),
+      onSuccess: invalidate,
+    }),
+    revertMemory: useMutation({
+      mutationFn: async ({ id, ...body }: MemoryRevert & { id: string }) =>
+        unwrap(await api.api.memories[':id'].revert.$post({ param: { id }, json: body })),
       onSuccess: invalidate,
     }),
   };

@@ -33,6 +33,7 @@ describe('strict tool schemas', () => {
       'propose_plan',
       'propose_profile_update',
       'suggest_meals',
+      'update_memory',
     ]);
   });
 

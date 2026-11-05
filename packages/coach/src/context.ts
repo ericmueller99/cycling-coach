@@ -31,7 +31,10 @@ export interface AthleteContext {
   profile: Profile;
   powerBests: PowerBest[];
   goals: Goal[];
+  /** Long-term notes. They go in the athlete block. */
   memories: Memory[];
+  /** Short-term notes, expired ones included. They go in the per-turn context, never the block. */
+  shortTerm: Memory[];
   workouts: Workout[];
 }
 
@@ -90,7 +93,8 @@ export function renderAthleteBlock(ctx: AthleteContext): string {
       `${PERIOD_LABEL[period]}: ${rows
         .map((b) => {
           const extra = [b.date ? formatShortDate(b.date) : '', b.source && b.source !== 'intervals.icu' ? b.source : ''].filter(Boolean).join(', ');
-          return `${durationLabel(b.durationSec)} ${b.watts} W (${wattsPerKg(b.watts!, p.weightKg).toFixed(2)} W/kg${extra ? `; ${extra}` : ''})`;
+          // Watts only: W/kg here would move with the trend weight and resend this block.
+          return `${durationLabel(b.durationSec)} ${b.watts} W${extra ? ` (${extra})` : ''}`;
         })
         .join(' · ')}`,
     );
@@ -102,12 +106,14 @@ export function renderAthleteBlock(ctx: AthleteContext): string {
     const parts = [`[${g.horizon === 'long' ? 'long term' : 'short term'}${g.primary ? ', main goal' : ''}${g.done ? ', done' : ''}] ${g.title}`];
     if (g.detail) parts.push(g.detail);
     if (g.targetLabel) parts.push(`horizon: ${g.targetLabel}`);
-    if (g.progress) parts.push(`${g.progress.label} now ${g.progress.current} ${g.progress.unit}, target ${g.progress.target}`);
+    // A value on the trend weight would resend this block every time the trend moves.
+    if (g.progress?.onTrendWeight) parts.push(`${g.progress.label} target ${g.progress.target} ${g.progress.unit}, current value from the weight in the context message`);
+    else if (g.progress) parts.push(`${g.progress.label} now ${g.progress.current} ${g.progress.unit}, target ${g.progress.target}`);
     else if (g.measure && g.target !== undefined) parts.push(`target ${g.target} (${g.measure.kind}; no current data yet)`);
     lines.push(`- ${parts.join(' — ')}`);
   }
 
-  lines.push('', '# Memory (id: note)');
+  lines.push('', '# Long-term memory (id: note)');
   if (ctx.memories.length === 0) lines.push('Nothing saved yet.');
   for (const m of ctx.memories) lines.push(`- ${m.id}: ${m.text}`);
 
@@ -143,9 +149,25 @@ function renderZwiftMetrics(p: Profile): string | null {
   return `Zwift race metrics (as of ${z.asOf}, ${z.source === 'zwift' ? 'synced from Zwift' : 'entered by hand'}): ${metrics.join(' · ')} on ${p.zwiftWeightKg ? 'Zwift' : 'trend'} weight ${kg} kg → category ${cat?.category}${shown}.${next}${score}`;
 }
 
-/** The frozen system prompt for a new API context: [persona, athlete]. */
-export function buildSystemSnapshot(ctx: AthleteContext): string[] {
-  return [COACH_PERSONA, renderAthleteBlock(ctx)];
+/**
+ * The short-term notes for the per-turn context (DECISIONS #79). They stay out of the athlete block,
+ * where every note added or lapsed would resend the whole block into every open thread. Empty when
+ * there are none. No relative dates, so the text only changes when the notes do.
+ */
+export function renderShortTermBlock(notes: Memory[]): string {
+  if (notes.length === 0) return '';
+  return [
+    "# Short-term notes (id (until): note). This is the full current list: anything earlier that isn't here has lapsed or been deleted, so don't save it again.",
+    ...notes.map((m) => `- ${m.id} (until ${formatLongDay(m.until!)}): ${m.text}`),
+  ].join('\n');
+}
+
+/**
+ * The frozen system prompt for a new API context: [persona, athlete, recap?]. The recap is its own block
+ * because `seen.athlete` is compared against the athlete block alone.
+ */
+export function buildSystemSnapshot(ctx: AthleteContext, recap?: string): string[] {
+  return [COACH_PERSONA, renderAthleteBlock(ctx), ...(recap ? [recap] : [])];
 }
 
 /** "Zwift workout", "Zwift race 17:30 (B)", "ride" — what and where, for the coach. */
@@ -205,12 +227,14 @@ export interface TurnContextInput {
     | undefined;
   calendarBlock: string;
   athleteBlock: string;
+  /** Today's short-term notes, from `renderShortTermBlock`. */
+  shortTermBlock: string;
   /** Today's food against the budget, when the food module has data. */
   food?: FoodTurnContext | undefined;
   /** Anything else the deployment knows about the athlete today (DECISIONS #72). */
   extra?: string | undefined;
   /** What the coach has already been shown in this API context. */
-  seen: { calendar?: string | undefined; athlete: string; extra?: string | undefined };
+  seen: { calendar?: string | undefined; athlete: string; extra?: string | undefined; shortTerm?: string | undefined };
 }
 
 export interface FoodTurnContext {
@@ -283,6 +307,10 @@ export function renderTurnContext(input: TurnContextInput): string {
   if (input.food) parts.push(renderFoodLine(input.food));
   // Only when it changed: the coach already has it, and each copy stays in the transcript.
   if (input.extra && input.extra !== input.seen.extra) parts.push(input.extra);
+  // Strict, unlike `extra`: an empty list after a full one is news the coach needs.
+  if (input.shortTermBlock !== (input.seen.shortTerm ?? '')) {
+    parts.push(input.shortTermBlock || "Short-term notes: none current. Earlier ones have lapsed or been deleted, so don't save them again.");
+  }
   parts.push(
     sameCalendar(input.seen.calendar, input.calendarBlock)
       ? 'Calendar: unchanged since the previous context message.'
