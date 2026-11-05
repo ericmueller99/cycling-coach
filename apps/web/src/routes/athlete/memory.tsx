@@ -103,10 +103,28 @@ function AddNote({ today, short, onDone }: { today: IsoDate; short: boolean; onD
   const [text, setText] = useState('');
   const [until, setUntil] = useState(addDays(today, 7));
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex flex-wrap gap-2">
-        <input autoFocus aria-label="New note" value={text} maxLength={500} onChange={(e) => setText(e.target.value)} className={`${INPUT} min-w-0 flex-[1_1_180px]`} />
-        {short && <input type="date" aria-label="Until" value={until} min={today} onChange={(e) => setUntil(e.target.value)} className={INPUT} />}
+    <div className="flex flex-col gap-2.5 rounded-xl border border-accent-ring p-3">
+      <label className="flex flex-col gap-1 text-xs font-semibold text-[#3A414D]">
+        Note
+        <input
+          autoFocus
+          value={text}
+          maxLength={500}
+          placeholder={short ? 'e.g. Away Wednesday, no ride' : 'e.g. Can’t ride before 6 am on weekdays'}
+          onChange={(e) => setText(e.target.value)}
+          className={`${INPUT} font-normal text-ink`}
+        />
+      </label>
+      {short && (
+        <label className="flex flex-col gap-1 text-xs font-semibold text-[#3A414D]">
+          Keep in mind until
+          <input type="date" value={until} min={today} onChange={(e) => setUntil(e.target.value)} className={`${INPUT} font-normal text-ink`} />
+        </label>
+      )}
+      <div className="flex justify-end gap-2">
+        <Button size="sm" variant="ghost" onClick={onDone}>
+          Cancel
+        </Button>
         <Button
           size="sm"
           variant="primary"
@@ -129,6 +147,7 @@ function NoteCard({
   notes,
   empty,
   today,
+  plain,
 }: {
   title: string;
   about: string;
@@ -137,16 +156,18 @@ function NoteCard({
   notes: Memory[];
   empty: string;
   today: IsoDate;
+  plain: boolean;
 }) {
   const [adding, setAdding] = useState(false);
-  return (
-    <Card className="flex flex-col gap-2.5 p-[18px]">
+  const Heading = plain ? 'h3' : 'h2';
+  const body = (
+    <>
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h2 className="m-0 flex flex-wrap items-center gap-2 text-base">
+          <Heading className="m-0 flex flex-wrap items-center gap-2 text-base">
             {title}
             {badge && <span className={AMBER_TAG}>{badge}</span>}
-          </h2>
+          </Heading>
           <div className="text-xs text-muted">{about}</div>
         </div>
         <Button size="sm" variant="ghost" className="flex-none" onClick={() => setAdding((a) => !a)}>
@@ -158,12 +179,13 @@ function NoteCard({
       {notes.map((m) => (
         <NoteRow key={m.id} note={m} today={today} />
       ))}
-    </Card>
+    </>
   );
+  return plain ? <section className="flex flex-col gap-2.5">{body}</section> : <Card className="flex flex-col gap-2.5 p-[18px]">{body}</Card>;
 }
 
-/** Coach memory, in its two buckets (DECISIONS #79). */
-export function MemorySection({ memories, today }: { memories: Memory[]; today: IsoDate }) {
+/** Coach memory, in its two buckets (DECISIONS #79). `plain` drops the cards, for the panel in the chat (#85). */
+export function MemorySection({ memories, today, plain = false }: { memories: Memory[]; today: IsoDate; plain?: boolean }) {
   const longTerm = memories.filter((m) => !isShortTerm(m));
   const toReview = longTerm.filter((m) => needsReview(m, today)).length;
   return (
@@ -173,8 +195,9 @@ export function MemorySection({ memories, today }: { memories: Memory[]; today: 
         about="What the coach keeps in mind for now. Each note is forgotten the day after its date."
         short
         notes={memories.filter(isShortTerm).sort(byDate)}
-        empty="Nothing right now. Tell the coach in chat, like “I’m away next Wednesday”, and it will show up here."
+        empty="Nothing right now. Tell the coach in chat, like “I’m away next Wednesday”, or add a note here."
         today={today}
+        plain={plain}
       />
       <NoteCard
         title="Long-term memory"
@@ -184,6 +207,7 @@ export function MemorySection({ memories, today }: { memories: Memory[]; today: 
         notes={longTerm}
         empty="Nothing yet. Add what the coach should always know, like when you can ride or what you’re working around."
         today={today}
+        plain={plain}
       />
     </>
   );

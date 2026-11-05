@@ -252,6 +252,18 @@ export const ExpandIcon = ({ size = 16, ...p }: P) => (
     <path d="M3 21l7-7" />
   </svg>
 );
+export const BookmarkIcon = ({ size = 16, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <path d="M6 4h12v17l-6-4-6 4z" />
+  </svg>
+);
+
+export const BulbIcon = ({ size = 14, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10.5c.8.8 1 1.5 1 2.5h6c0-1 .2-1.7 1-2.5A6 6 0 0 0 12 3z" />
+  </svg>
+);
+
 export const ClockIcon = ({ size = 14, ...p }: P) => (
   <svg {...base(size)} {...p}>
     <circle cx="12" cy="12" r="9" />

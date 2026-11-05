@@ -66,13 +66,15 @@ export function Tag({ children, tone = 'neutral' }: { children: ReactNode; tone?
   );
 }
 
-export function StatTile({ label, value, unit }: { label: string; value: ReactNode; unit?: string }) {
+/** A number and its label. With no value it shows a dash, and no unit. `compact` fits three across the rail. */
+export function StatTile({ label, value, unit, compact = false }: { label: string; value: ReactNode; unit?: string | undefined; compact?: boolean }) {
+  const known = value !== undefined && value !== null;
   return (
-    <div className="rounded-[10px] bg-surface-2 p-2.5">
+    <div className="min-w-0 rounded-[10px] bg-surface-2 p-2.5">
       <div className="text-xs text-muted">{label}</div>
-      <div className="font-mono text-xl font-semibold">
-        {value}
-        {unit && <span className="text-xs text-muted"> {unit}</span>}
+      <div className={`font-mono font-semibold ${compact ? 'text-base' : 'text-xl'}`}>
+        {known ? value : '—'}
+        {known && unit && <span className="text-xs text-muted"> {unit}</span>}
       </div>
     </div>
   );

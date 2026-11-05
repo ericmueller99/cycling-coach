@@ -5,13 +5,12 @@ import { useNavigate } from '@tanstack/react-router';
 import { Fragment, memo, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { AppBar, IconButton } from '../../components/AppBar';
 import { BrandTile } from '../../components/BrandTile';
-import { ArrowUpIcon, ComposeIcon, MenuIcon, SendIcon } from '../../components/icons';
+import { ArrowUpIcon, BookmarkIcon, BulbIcon, ComposeIcon, MenuIcon, SendIcon } from '../../components/icons';
 import { Sheet } from '../../components/Sheet';
 import { Button, ErrorNote, PageHeader } from '../../components/ui';
 import { useExtensions } from '../../extensions';
 import { api, unwrap } from '../../lib/api';
 import { useFoodLibrary } from '../../lib/foodQueries';
-import { modelName } from '../../lib/models';
 import { keys, threadQuery, THREADS_PAGE, threadsQuery, useCoachCheck, useDashboard, useThread, useThreads, useUsage } from '../../lib/queries';
 import { settleMarkdown } from '../../lib/textPacer';
 import { abortTurn, clearDoneTurn, patchTurn, runningThreadId, setWatching, startTurn, useLiveTurn, type LiveTurn, type TurnError as TurnErrorInfo, type TurnOrigin } from '../../lib/coachTurn';
@@ -26,10 +25,12 @@ import { IdeaDetailsPane } from './IdeaDetailsPane';
 import { CoachWorking } from './CoachWorking';
 import { useChatScroll } from './useChatScroll';
 import { LongChatNotice } from './LongChatNotice';
+import { MemoryPanel, useMemoryNotes } from './MemoryPanel';
 import { RecipePane, RecipePaneSkeleton } from './RecipePane';
 import { RightRail, TodayStrip } from './RightRail';
+import { SuggestionsMenu } from './SuggestionsMenu';
 
-const QUICK_PROMPTS = ['What should I ride today?', 'Pull my last 7 days', 'Build a new workout', 'Plan next week'];
+const SUGGESTIONS = ['What should I ride today?', 'Pull my last 7 days', 'Build a new workout', 'Plan next week'];
 
 /** What the thread view's id-only cards look up. */
 interface CardData {
@@ -101,7 +102,6 @@ const MessageRow = memo(function MessageRow({ message, view, cards }: { message:
       <CoachAvatar />
       <div className="flex min-w-0 flex-auto flex-col gap-3.5">
         <AssistantBlocks blocks={message.blocks} threadId={view?.thread.id ?? ''} cards={cards} />
-        {message.model && <div className="font-mono text-[11px] text-muted">{modelName(message.model)}</div>}
       </div>
     </div>
   );
@@ -110,10 +110,10 @@ const MessageRow = memo(function MessageRow({ message, view, cards }: { message:
 /** In place of the composer while the coach can't take a message, so nobody writes one only to be refused (DECISIONS #76). */
 function CoachLocked({ refusal }: { refusal: { message: string; action?: { label: string; href: string } | undefined } }) {
   return (
-    <div role="status" className="flex flex-col items-start gap-3 rounded-[14px] border border-line bg-surface p-4 text-[14px]">
-      <p className="m-0">{refusal.message}</p>
+    <div role="status" className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-xl border border-[#F3DFA4] bg-[#FFF6DD] px-3.5 py-2.5 text-[13px] text-[#5C3A05]">
+      <p className="m-0 min-w-0 flex-[1_1_240px]">{refusal.message}</p>
       {refusal.action && (
-        <a href={refusal.action.href} className="rounded-[10px] bg-accent px-4 py-2.5 font-semibold text-on-accent no-underline">
+        <a href={refusal.action.href} className="flex min-h-9 flex-none items-center rounded-[10px] bg-ink px-3.5 font-semibold text-white no-underline hover:text-white">
           {refusal.action.label}
         </a>
       )}
@@ -242,7 +242,8 @@ export function CoachPage({
   const [draft, setDraft] = useState(prompt ?? '');
   const [refused, setRefused] = useState<TurnErrorInfo | null>(null);
   const [forBuild, setForBuild] = useState(false);
-  const { coachNotice: CoachNotice } = useExtensions();
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const { coachNotice: CoachNotice, coachCopy } = useExtensions();
   const buildModel = useUsage().data?.buildModel ?? null;
   useEffect(() => {
     if (prompt) setDraft(prompt);
@@ -351,8 +352,9 @@ export function CoachPage({
   const makingKey = streaming && live?.origin?.kind === 'make' ? live.origin.ideaKey : undefined;
   const writingRecipe = !!makingKey && !live?.readyRecipe && !mobile;
 
-  function requestChanges(title: string) {
-    const text = `Change "${title}": `;
+  const requestChanges = (title: string) => fillDraft(`Change "${title}": `);
+
+  function fillDraft(text: string) {
     setDraft(text);
     requestAnimationFrame(() => {
       inputRef.current?.focus();
@@ -415,7 +417,7 @@ export function CoachPage({
     [view],
   );
   const isFood = !!view?.thread.tags.includes('food') || !!live?.blocks.some(isFoodBlock);
-  const quickPrompts = [...QUICK_PROMPTS.slice(0, 3), `Ideas for ${foodSlot.toLowerCase()}`, QUICK_PROMPTS[3]!];
+  const suggestions = [...SUGGESTIONS, `Ideas for ${foodSlot.toLowerCase()}`];
   const showLive = !!live && (!live.synced || stored.length === live.baseCount);
   const lateError = live?.error && !showLive ? live.error : null;
   // A running turn stores its messages as it goes, and anything can refetch them (accepting its card,
@@ -430,6 +432,8 @@ export function CoachPage({
 
   const foodActions: CoachFoodActions = { send: (t, o) => void send(t, o), openRecipe, openId: recipe, openIdea, openIdeaKey: idea, busy: streaming, makingKey, servingsFor, setServings, logWords: (p) => flows.words(p) };
   const title = view?.thread.title ?? (threadId ? '…' : 'Coach');
+  const memory = useMemoryNotes(today);
+  const memoryLabel = `Coach memory, ${memory.notes.length} ${memory.notes.length === 1 ? 'note' : 'notes'}${memory.toReview > 0 ? `, ${memory.toReview} to review` : ''}`;
   const newChat = () => {
     clearDoneTurn(threadId);
     void navigate({ to: '/', search: { new: true } });
@@ -448,9 +452,15 @@ export function CoachPage({
               </IconButton>
             }
             actions={
-              <IconButton aria-label="New chat" disabled={streaming} onClick={newChat}>
-                <ComposeIcon />
-              </IconButton>
+              <>
+                <IconButton aria-label={memoryLabel} aria-haspopup="dialog" className="relative" onClick={() => setMemoryOpen(true)}>
+                  <BookmarkIcon size={20} />
+                  {memory.toReview > 0 && <span aria-hidden className="absolute top-2.5 right-2 h-2 w-2 rounded-full bg-[#E8A33D]" />}
+                </IconButton>
+                <IconButton aria-label="New chat" disabled={streaming} onClick={newChat}>
+                  <ComposeIcon />
+                </IconButton>
+              </>
             }
           >
             <TodayStrip onAsk={(p) => void send(p)} />
@@ -461,6 +471,14 @@ export function CoachPage({
           title={title}
           subtitle={view ? `Started ${new Date(view.thread.createdAt).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}` : 'Ask anything about your training'}
         >
+          <Button aria-label={memoryLabel} aria-haspopup="dialog" onClick={() => setMemoryOpen(true)}>
+            <BookmarkIcon size={16} />
+            Memory
+            <span aria-hidden className="flex h-5 min-w-5 items-center justify-center rounded-full bg-hover px-1.5 font-mono text-[11px] font-semibold text-[#3A414D]">
+              {memory.notes.length}
+            </span>
+            {memory.toReview > 0 && <span aria-hidden className="h-2 w-2 rounded-full bg-[#E8A33D]" />}
+          </Button>
           <ThreadsMenu current={threadId} onPick={(id) => void navigate({ to: '/', search: { t: id } })} />
           <Button variant="primary" disabled={streaming} onClick={newChat}>
             New chat
@@ -529,7 +547,7 @@ export function CoachPage({
         </RequestChangesContext>
         </CoachFoodContext>
 
-        {/* Pinned above the tab bar on mobile, with the chips scrolling sideways. */}
+        {/* Pinned above the tab bar on mobile. */}
         <div ref={scroll.dockRef} className="sticky bottom-0 mx-auto box-border flex w-full max-w-[860px] flex-col gap-2.5 bg-bg px-7 pt-2 pb-6 mobile:bottom-[calc(64px+env(safe-area-inset-bottom))] mobile:gap-2 mobile:border-t mobile:border-line mobile:px-3 mobile:pb-2.5">
           {scroll.showLatest && (
             <button
@@ -540,48 +558,13 @@ export function CoachPage({
               <span aria-hidden>↓</span> Latest
             </button>
           )}
-          {CoachNotice && <CoachNotice />}
           {threadId && view?.contextLong && !blocked && !streaming && <LongChatNotice threadId={threadId} onNewChat={newChat} />}
           {blocked ? (
             <CoachLocked refusal={blocked} />
           ) : (
             <>
               {isFood && <FoodStrip slot={foodSlot} date={foodDate} today={today} onChange={(slot, date) => setFoodPick({ slot, date })} />}
-              {/* The status sits over the chips, which can't be used during a turn and keep the row's height. */}
-              <div className="relative">
-              {streaming && live && (
-                <div className="absolute inset-0 flex items-center">
-                  <CoachWorking turn={live} />
-                </div>
-              )}
-              <div className={`flex flex-wrap gap-2 mobile:scrollbar-none mobile:flex-nowrap mobile:gap-1.5 mobile:overflow-x-auto ${streaming ? 'invisible' : ''}`}>
-                {buildModel && (
-                  <button
-                    type="button"
-                    aria-pressed={forBuild}
-                    title={`Send this one message to ${modelName(buildModel)}`}
-                    onClick={() => setForBuild(!forBuild)}
-                    className={`min-h-9 shrink-0 rounded-full border px-3 text-[13px] whitespace-nowrap mobile:min-h-[36px] ${
-                      forBuild ? 'border-accent bg-accent text-on-accent' : 'border-line-strong bg-surface text-ink'
-                    }`}
-                  >
-                    Use {modelName(buildModel)}
-                  </button>
-                )}
-                {quickPrompts.map((p) => (
-                  <button
-                    key={p}
-                    type="button"
-                    disabled={streaming}
-                    onClick={() => void send(p)}
-                    className="min-h-9 shrink-0 rounded-full border border-line-strong bg-surface px-3 text-[13px] whitespace-nowrap text-ink mobile:min-h-[36px]"
-                  >
-                    {p}
-                  </button>
-                ))}
-              </div>
-              </div>
-              <div className="flex items-end gap-2.5 rounded-[14px] border border-[#CDD2DA] bg-surface py-2.5 pr-2.5 pl-4 mobile:gap-2 mobile:rounded-[22px] mobile:py-1.5 mobile:pr-1.5 mobile:pl-3.5">
+              <div className="flex flex-col gap-2 rounded-2xl border border-[#CDD2DA] bg-surface pt-3 pr-3 pb-2.5 pl-4 mobile:pt-2.5 mobile:pr-2 mobile:pb-2 mobile:pl-3.5">
                 <label htmlFor="msg" className="sr-only">
                   Message your coach
                 </label>
@@ -593,28 +576,57 @@ export function CoachPage({
                   onChange={(e) => setDraft(e.target.value)}
                   onKeyDown={onKeyDown}
                   placeholder={mobile ? 'Message your coach' : "Ask your coach — e.g. I'm racing Wednesday after all, adjust the rest of the week"}
-                  className="min-w-0 flex-auto resize-none border-0 bg-transparent py-1.5 text-ink outline-none"
+                  className="w-full resize-none border-0 bg-transparent py-0.5 text-ink outline-none"
                 />
-                {streaming ? (
-                  <Button variant="ghost" className="h-11" onClick={() => abortTurn(threadId)}>
-                    Stop
-                  </Button>
-                ) : (
-                  <button
-                    type="button"
-                    aria-label="Send"
-                    disabled={!draft.trim()}
-                    onClick={() => void send(draft)}
-                    className="flex h-11 w-11 flex-none items-center justify-center rounded-[10px] border-0 bg-accent text-on-accent mobile:h-[40px] mobile:w-[40px] mobile:rounded-full"
-                  >
-                    {mobile ? <ArrowUpIcon /> : <SendIcon />}
-                  </button>
-                )}
+                {/* The status takes the buttons' place during a turn, when Send is off anyway, so the dock keeps its height (#84, #85). */}
+                <div className="flex min-h-10 items-center justify-between gap-2 mobile:min-h-[44px]">
+                  <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                    {streaming && live ? (
+                      <CoachWorking turn={live} />
+                    ) : (
+                      <>
+                        <SuggestionsMenu prompts={suggestions} onPick={fillDraft} />
+                        {buildModel && (
+                          <button
+                            type="button"
+                            aria-pressed={forBuild}
+                            title={coachCopy.thinkDeeperHint}
+                            onClick={() => setForBuild(!forBuild)}
+                            className={`flex min-h-9 items-center gap-1.5 rounded-full border px-3 text-[13px] font-medium whitespace-nowrap ${
+                              forBuild ? 'border-accent-ring bg-accent-tint-2 text-[#2B3A0A]' : 'border-line bg-surface text-[#3A414D]'
+                            }`}
+                          >
+                            <BulbIcon />
+                            Think deeper
+                          </button>
+                        )}
+                        {forBuild && <span className="text-xs text-muted">{coachCopy.thinkDeeperHint}</span>}
+                      </>
+                    )}
+                  </div>
+                  {streaming ? (
+                    <Button variant="ghost" className="h-10 flex-none" onClick={() => abortTurn(threadId)}>
+                      Stop
+                    </Button>
+                  ) : (
+                    <button
+                      type="button"
+                      aria-label="Send"
+                      disabled={!draft.trim()}
+                      onClick={() => void send(draft)}
+                      className="flex h-10 w-10 flex-none items-center justify-center rounded-xl border-0 bg-accent text-on-accent mobile:rounded-full"
+                    >
+                      {mobile ? <ArrowUpIcon /> : <SendIcon />}
+                    </button>
+                  )}
+                </div>
               </div>
             </>
           )}
+          {CoachNotice && <CoachNotice />}
         </div>
       </section>
+      {memoryOpen && <MemoryPanel today={today} onClose={() => setMemoryOpen(false)} />}
       <CoachFoodContext value={foodActions}>
       {recipe ? (
         <RecipePane
@@ -641,7 +653,7 @@ export function CoachPage({
           onClose={closeIdea}
         />
       ) : (
-        !mobile && <RightRail onAsk={(p) => void send(p)} />
+        !mobile && <RightRail onAsk={(p) => void send(p)} onOpenMemory={() => setMemoryOpen(true)} />
       )}
       </CoachFoodContext>
       {flows.element}

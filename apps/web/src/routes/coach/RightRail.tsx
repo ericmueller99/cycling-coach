@@ -1,12 +1,14 @@
 import { dayOfMonth, formatDayLabel, formatLongDay, isShortTerm, WEEKDAY_LABELS } from '@cycling-coach/core';
-import type { CalendarEvent, DashboardPayload } from '@cycling-coach/shared';
+import type { CalendarEvent, DashboardPayload, IsoDate } from '@cycling-coach/shared';
 import { Link } from '@tanstack/react-router';
 import { useState, type ReactNode } from 'react';
-import { ChevronDown, TrashIcon } from '../../components/icons';
+import { ChevronDown, ChevronRight, TrashIcon } from '../../components/icons';
 import { Button, Card, ProgressBar, SectionLabel, SessionTag, StatTile } from '../../components/ui';
 import { ZwiftWeightAlert } from '../../components/ZwiftWeightAlert';
+import { useExtensions } from '../../extensions';
 import { SESSION_STYLE, durationText } from '../../lib/session';
 import { useCalendarMutations, useDashboard, useProfile, useProfileMutations } from '../../lib/queries';
+import { useMemoryNotes } from './MemoryPanel';
 import { RIGHT_COL } from './rightColumn';
 
 /** The session the Today card and strip show: the first still planned, else whatever today held. */
@@ -106,41 +108,101 @@ export function TodayStrip({ onAsk }: { onAsk: (prompt: string) => void }) {
   );
 }
 
-/** What the coach is holding onto for now, beside the chat that put it there. Hidden when there's nothing. */
-function ShortTermMemory() {
-  const { data } = useProfile();
+/**
+ * What the coach is holding onto, beside the chat that put it there (DECISIONS #85). Always shown, so
+ * the way in to adding a note is always on screen: short-term notes, then a count of the rest.
+ */
+function CoachMemoryCard({ today, onOpen }: { today: IsoDate; onOpen: () => void }) {
+  const { notes, longTerm, toReview } = useMemoryNotes(today);
   const { deleteMemory } = useProfileMutations();
-  const notes = (data?.memories ?? []).filter(isShortTerm).sort((a, b) => (a.until ?? '').localeCompare(b.until ?? ''));
-  if (notes.length === 0) return null;
+  const short = notes.filter(isShortTerm).sort((a, b) => (a.until ?? '').localeCompare(b.until ?? ''));
   return (
-    <Card className="flex flex-col gap-2 p-4">
+    <Card className="flex flex-col gap-2.5 p-4">
       <div className="flex items-center justify-between">
-        <SectionLabel>Short-term memory</SectionLabel>
-        <Link to="/athlete/$tab" params={{ tab: 'goals' }} className="text-[13px]">
+        <SectionLabel>Coach memory</SectionLabel>
+        <button type="button" onClick={onOpen} className="min-h-8 border-0 bg-transparent px-1 text-[13px] font-semibold text-accent-ink">
           All notes
-        </Link>
+        </button>
       </div>
-      {notes.map((m) => (
-        <div key={m.id} className="flex items-start gap-1.5">
-          <div className="flex min-w-0 flex-auto flex-col">
-            <span className="text-[13px]">{m.text}</span>
-            <span className="text-xs text-muted">Until {formatLongDay(m.until!)}</span>
-          </div>
-          <button
-            type="button"
-            aria-label="Delete note"
-            onClick={() => deleteMemory.mutate(m.id)}
-            className="flex h-7 w-7 flex-none items-center justify-center rounded-lg border-0 bg-transparent text-muted"
-          >
-            <TrashIcon />
-          </button>
+      {short.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <span className="text-xs text-muted">For now</span>
+          {short.map((m) => (
+            <div key={m.id} className="flex items-start gap-1.5">
+              <div className="flex min-w-0 flex-auto flex-col">
+                <span className="text-[13px]">{m.text}</span>
+                <span className="text-xs text-muted">Until {formatLongDay(m.until!)}</span>
+              </div>
+              <button
+                type="button"
+                aria-label="Delete note"
+                onClick={() => deleteMemory.mutate(m.id)}
+                className="flex h-8 w-8 flex-none items-center justify-center rounded-lg border-0 bg-transparent text-muted hover:bg-hover"
+              >
+                <TrashIcon />
+              </button>
+            </div>
+          ))}
         </div>
-      ))}
+      )}
+      <button type="button" onClick={onOpen} className="flex min-h-10 items-center justify-between gap-2 rounded-[10px] border-0 bg-bg px-3 text-left text-[13px] text-ink">
+        <span>
+          <strong className="font-semibold">{longTerm.length}</strong> long-term {longTerm.length === 1 ? 'note' : 'notes'}
+          {toReview > 0 && <span className="text-[#B54708]"> · {toReview} to review</span>}
+        </span>
+        <ChevronRight size={14} />
+      </button>
     </Card>
   );
 }
 
-export function RightRail({ onAsk }: { onAsk: (prompt: string) => void }) {
+/** The trend weight, with the last weigh-in when it differs. */
+function WeightTile({ snapshot }: { snapshot: DashboardPayload['snapshot'] }) {
+  return (
+    <div className="rounded-[10px] bg-surface-2 p-2.5" title="Median of the last 7 days of weigh-ins">
+      <div className="text-xs text-muted">Weight</div>
+      <div className="font-mono text-base font-semibold">
+        {snapshot.weightKg ?? '—'}
+        {snapshot.weightKg !== undefined && <span className="text-xs text-muted"> kg</span>}
+      </div>
+      {snapshot.weightLatest && snapshot.weightLatest.kg !== snapshot.weightKg && <div className="font-mono text-[11px] text-faint">last {snapshot.weightLatest.kg} kg</div>}
+    </div>
+  );
+}
+
+/**
+ * Power from the 90-day bests only, because the heading says so: `best5minW` falls back to other
+ * periods. Whatever else a deployment knows about health comes in through `snapshotHealth` (#85).
+ */
+function Snapshot({ snapshot }: { snapshot: DashboardPayload['snapshot'] }) {
+  const { snapshotHealth: Health } = useExtensions();
+  const bests = useProfile().data?.powerBests;
+  const best = (durationSec: number) => bests?.find((b) => b.period === '90d' && b.durationSec === durationSec)?.watts;
+  const form = snapshot.fitness?.form;
+  return (
+    <Card className="flex flex-col gap-3 p-4">
+      <div className="flex items-center justify-between">
+        <SectionLabel>Snapshot</SectionLabel>
+        <Link to="/athlete/$tab" params={{ tab: 'performance' }} className="text-[13px]">
+          Athlete
+        </Link>
+      </div>
+      <span className="text-xs text-muted">Power · best in the last 90 days</span>
+      <div className="grid grid-cols-3 gap-2">
+        <StatTile compact label="FTP" value={snapshot.ftpZwift} unit="W" />
+        <StatTile compact label="W/kg" value={snapshot.wattsPerKg?.toFixed(2)} />
+        <StatTile compact label="Form" value={form === undefined ? undefined : `${form >= 0 ? '+' : ''}${Math.round(form)}`} />
+        <StatTile compact label="1 min" value={best(60)} unit="W" />
+        <StatTile compact label="5 min" value={best(300)} unit="W" />
+        <StatTile compact label="20 min" value={best(1200)} unit="W" />
+      </div>
+      <Health weightTile={<WeightTile snapshot={snapshot} />} />
+      <ZwiftWeightAlert zwiftKg={snapshot.zwiftWeightKg} trendKg={snapshot.weightKg} synced={snapshot.zwiftWeightSynced} compact />
+    </Card>
+  );
+}
+
+export function RightRail({ onAsk, onOpenMemory }: { onAsk: (prompt: string) => void; onOpenMemory: () => void }) {
   const { data } = useDashboard();
   if (!data) return <aside className={`bg-surface-alt ${RIGHT_COL}`} />;
   const today = todaysSession(data);
@@ -170,7 +232,7 @@ export function RightRail({ onAsk }: { onAsk: (prompt: string) => void }) {
         )}
       </Card>
 
-      <ShortTermMemory />
+      <CoachMemoryCard today={data.today} onOpen={onOpenMemory} />
 
       <Card className="flex flex-col gap-3 p-4">
         <div className="flex items-center justify-between">
@@ -207,39 +269,7 @@ export function RightRail({ onAsk }: { onAsk: (prompt: string) => void }) {
         </div>
       </Card>
 
-      <Card className="flex flex-col gap-3 p-4">
-        <div className="flex items-center justify-between">
-          <SectionLabel>Snapshot</SectionLabel>
-          <Link to="/athlete/$tab" params={{ tab: 'performance' }} className="text-[13px]">
-            Athlete
-          </Link>
-        </div>
-        <div className="grid grid-cols-2 gap-2.5">
-          <StatTile label="FTP (Zwift)" value={data.snapshot.ftpZwift ?? '—'} {...(data.snapshot.ftpZwift ? { unit: 'W' } : {})} />
-          <StatTile label="W/kg" value={data.snapshot.wattsPerKg?.toFixed(2) ?? '—'} />
-          <StatTile label="Best 5 min" value={data.snapshot.best5minW ?? '—'} {...(data.snapshot.best5minW ? { unit: 'W' } : {})} />
-          <div className="rounded-[10px] bg-surface-2 p-2.5" title="Median of the last 7 days of weigh-ins">
-            <div className="text-xs text-muted">Weight (trend)</div>
-            <div className="font-mono text-xl font-semibold">
-              {data.snapshot.weightKg}
-              <span className="text-xs text-muted"> kg</span>
-            </div>
-            {data.snapshot.weightLatest && data.snapshot.weightLatest.kg !== data.snapshot.weightKg && (
-              <div className="font-mono text-[11px] text-faint">last {data.snapshot.weightLatest.kg} kg</div>
-            )}
-          </div>
-          {data.snapshot.fitness && (
-            <>
-              <StatTile label="Fitness (CTL)" value={Math.round(data.snapshot.fitness.ctl)} />
-              <StatTile
-                label="Form (TSB)"
-                value={`${data.snapshot.fitness.form >= 0 ? '+' : ''}${Math.round(data.snapshot.fitness.form)}`}
-              />
-            </>
-          )}
-        </div>
-        <ZwiftWeightAlert zwiftKg={data.snapshot.zwiftWeightKg} trendKg={data.snapshot.weightKg} synced={data.snapshot.zwiftWeightSynced} compact />
-      </Card>
+      <Snapshot snapshot={data.snapshot} />
 
       {goal && (
         <Card className="flex flex-col gap-2.5 p-4">

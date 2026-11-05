@@ -1862,3 +1862,30 @@ renders from one per token to about 30 a second, and memoised rows stop re-parsi
 - *`runningLabel` on the card tools*: a chip that nothing ever finishes.
 - *Fading in each word*: needs a markdown plugin and spans through every re-parse, for very little beyond pacing.
 
+## 85. A quieter composer, and memory the athlete edits without asking the coach (Nov 5)
+
+**Problem.** The Coach page carried a row of prompt chips, a model toggle and a model name under every reply, and most of it was
+noise once someone knew the app. Changing a note meant asking the coach, which costs a turn, or leaving the chat for the Athlete page.
+
+**Decision.**
+- **The chips and the model toggle move inside the composer,** as **Suggestions** and **Think deeper**. Think deeper is the same
+  `useBuildModel` for the next message only. Picking a suggestion now fills the input instead of sending, so it can be changed first.
+- **No model name under replies.** It told the athlete nothing they could act on. `CoachWorking` still names a model while building.
+- **The working status takes the place of those two buttons during a turn.** #84 laid it over the chip row, which is gone. In the
+  toolbar it needs no row of its own, so the dock keeps its height and #84's no-jump behaviour holds.
+- **`coachNotice` moves under the composer,** and `CoachLocked` becomes an amber card.
+- **A Memory panel in the chat:** a header button with the note count, a card in the rail that always shows, and a drawer with the
+  same rows as Athlete › Goals & coach (`MemorySection plain`). It calls the memory routes directly, so nothing reaches the model.
+- **Two new slots.** `coachCopy` carries the words that depend on who pays for the AI: "allowance" is wrong on someone's own key.
+  `snapshotHealth` lets a deployment add health numbers to the snapshot, and it's handed the weight tile to place.
+- **Snapshot power comes from the 90-day bests only,** because the heading says so. `best5minW` falls back to other periods, so it's
+  no longer used here.
+
+**Why weight is passed into the slot.** Weight is the app's own data, with its trend and the Zwift alert. A deployment that adds
+health tiles wants it beside them, but one with no health data, or a self-hosted install, must keep it.
+
+**Rejected.**
+- *A new slot under the composer:* `coachNotice` has one job, so moving it is simpler than keeping two.
+- *Keeping a reserved row for the status:* an empty band above the composer for most of its life, to hold something shown during turns.
+- *A second copy of the note rows for the panel:* two editors would drift, and both write the same notes.
+

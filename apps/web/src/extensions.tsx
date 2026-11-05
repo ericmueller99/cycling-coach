@@ -64,8 +64,15 @@ export interface Extensions {
   usageCard: ComponentType | null;
   /** Extra cards at the end of the Account page. */
   accountCards: ReactNode;
-  /** Above the Coach composer, for anything the athlete should know before sending (plan limits). */
+  /** Under the Coach composer, for anything the athlete should know before sending (plan limits). */
   coachNotice: ComponentType | null;
+  /** Coach words that depend on who pays for the AI (DECISIONS #85). */
+  coachCopy: { thinkDeeperHint: string; memoryNote: string };
+  /**
+   * The end of the Coach snapshot card, given the weight tile to place. A deployment with more
+   * health numbers shows them around it (DECISIONS #85).
+   */
+  snapshotHealth: ComponentType<{ weightTile: ReactNode }>;
 }
 
 /** The core destinations. */
@@ -93,6 +100,11 @@ export const defaultExtensions: Extensions = {
   usageCard: ClaudeUsageRow,
   accountCards: null,
   coachNotice: null,
+  coachCopy: {
+    thinkDeeperHint: 'Slower, uses more AI',
+    memoryNote: 'Changes you make here don’t use any AI. Asking the coach to remember or forget something in chat does.',
+  },
+  snapshotHealth: ({ weightTile }) => <div className="grid grid-cols-3 gap-2">{weightTile}</div>,
 };
 
 const ExtensionsContext = createContext<Extensions>(defaultExtensions);

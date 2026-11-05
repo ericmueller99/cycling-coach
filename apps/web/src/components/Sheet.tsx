@@ -6,7 +6,8 @@ import { XIcon } from './icons';
  * Mobile bottom sheet: dimmed backdrop that closes on tap, 20px top
  * radius, grabber, close ×, a scrolling body and an optional sticky footer. Esc closes; the page
  * behind doesn't scroll while it's open. `tall` fills most of the screen (session details);
- * otherwise it sizes to its content. On desktop (the day view) it's a drawer on the right.
+ * otherwise it sizes to its content. On desktop (the day view) it's a drawer on the right. `panel`
+ * is a working space rather than a detail: the whole screen on a phone, a little wider on desktop.
  */
 export function Sheet({
   title,
@@ -16,6 +17,7 @@ export function Sheet({
   action,
   onClose,
   tall = false,
+  panel = false,
   children,
 }: {
   title: ReactNode;
@@ -27,6 +29,7 @@ export function Sheet({
   action?: ReactNode;
   onClose: () => void;
   tall?: boolean;
+  panel?: boolean;
   children: ReactNode;
 }) {
   const titleId = useId();
@@ -57,11 +60,13 @@ export function Sheet({
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className={`absolute inset-x-0 bottom-0 flex flex-col rounded-t-[20px] bg-surface shadow-[0_-8px_30px_rgba(0,0,0,.12)] outline-none ${tall ? 'h-[90dvh]' : 'max-h-[90dvh]'} desktop:top-0 desktop:left-auto desktop:h-full desktop:max-h-none desktop:w-[440px] desktop:rounded-none desktop:shadow-[-8px_0_30px_rgba(0,0,0,.12)]`}
+        className={`absolute inset-x-0 bottom-0 flex flex-col bg-surface shadow-[0_-8px_30px_rgba(0,0,0,.12)] outline-none ${panel ? 'h-dvh pt-[env(safe-area-inset-top)]' : `rounded-t-[20px] ${tall ? 'h-[90dvh]' : 'max-h-[90dvh]'}`} desktop:top-0 desktop:left-auto desktop:h-full desktop:max-h-none ${panel ? 'desktop:w-[460px]' : 'desktop:w-[440px]'} desktop:rounded-none desktop:shadow-[-8px_0_30px_rgba(0,0,0,.12)]`}
       >
-        <div className="flex flex-none justify-center pt-2 desktop:hidden">
-          <span aria-hidden="true" className="h-[5px] w-[40px] rounded-[3px] bg-line-strong" />
-        </div>
+        {!panel && (
+          <div className="flex flex-none justify-center pt-2 desktop:hidden">
+            <span aria-hidden="true" className="h-[5px] w-[40px] rounded-[3px] bg-line-strong" />
+          </div>
+        )}
         <div className="flex flex-none items-start gap-2 pt-2 pr-2 pl-5 desktop:pt-4">
           <div className="min-w-0 flex-auto">
             {eyebrow && <div className="text-xs font-semibold tracking-[0.06em] text-muted uppercase">{eyebrow}</div>}
