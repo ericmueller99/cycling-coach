@@ -4,6 +4,7 @@ import { collections, createProposal, ensureIndexes, listMessages, recordAiCall,
 import { MongoClient, ObjectId } from 'mongodb';
 import { MongoMemoryServer } from 'mongodb-memory-server-core';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import type { SpendGuard } from '../lib/spend';
 import { getThreadView, sendMessage, startThread, type CoachDeps } from './coach';
 
 let server: MongoMemoryServer;
@@ -103,6 +104,31 @@ async function longChat(clock: { now: Date }, d: CoachDeps) {
   await chatSize(thread.id, RESTART_TOKENS, clock.now);
   return thread.id;
 }
+
+describe('the spend guard', () => {
+  it('asks once to start a turn, then as a continuation between its calls', async () => {
+    const clock = { now: START };
+    const { d } = deps(clock);
+    const asked: string[] = [];
+    const spendGuard: SpendGuard = async (_userId, use) => {
+      asked.push(use);
+      return { allow: true };
+    };
+    const runTurn = d.engine!.runTurn.bind(d.engine);
+    const engine = {
+      ...d.engine,
+      async *runTurn(args: Parameters<typeof runTurn>[0]) {
+        yield* runTurn(args);
+        await args.checkLimit?.();
+        await args.checkLimit?.();
+      },
+    };
+    const guarded = { ...d, engine, spendGuard } as unknown as CoachDeps;
+    const thread = (await startThread(guarded, U))!;
+    await say(guarded, thread.id, 'Plan my week');
+    expect(asked).toEqual(['coach', 'coach_continue', 'coach_continue']);
+  });
+});
 
 describe('a restart (DECISIONS #80)', () => {
   it('leaves the old messages out, and leaves them alone', async () => {

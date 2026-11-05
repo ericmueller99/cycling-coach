@@ -411,7 +411,7 @@ export class CoachEngine {
   /**
    * A summary of a chat for the coach to carry on from (DECISIONS #80). Null if it can't be written:
    * the caller falls back to the last messages word for word, and a recap never fails a turn. It has
-   * no tier, so it counts toward a trial's total but not chat fair use.
+   * no tier: it's neither everyday coaching nor a build.
    */
   async recap(transcript: string, signal?: AbortSignal): Promise<{ text: string; usage: CallUsage } | null> {
     try {

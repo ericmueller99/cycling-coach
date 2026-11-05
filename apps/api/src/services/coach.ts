@@ -504,7 +504,7 @@ export async function* sendMessage(
     ...(deps.spendGuard
       ? {
           checkLimit: async () => {
-            const again = await deps.spendGuard!(userId, 'coach');
+            const again = await deps.spendGuard!(userId, 'coach_continue');
             return again.allow ? null : { message: again.message, ...(again.action ? { action: again.action } : {}) };
           },
         }

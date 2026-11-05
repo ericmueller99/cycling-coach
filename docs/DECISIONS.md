@@ -1752,3 +1752,13 @@ recap, "only two rides this week" reached a new chat, and an unrelated question 
 - *Thresholds as settings*: nothing real to set them from yet. They're constants until there is.
 - *A 1-hour message cache*: it doubles every write to help gaps of 5–60 minutes. Worth measuring once sizes are capped.
 
+## 81. A spend limit can tell a turn's start from its middle (Nov 4)
+
+**Decision.** `AiUse` gains `coach_continue`, which `sendMessage` passes for the checks between a turn's calls. `coach` is now only the check that starts a turn. Self-host never refuses, so nothing changes there.
+
+**Why.** The guard got `coach` both times, so a deployment with a limit had one choice: refuse a new turn and also cut off whichever turn was running when the limit passed. Stopping between tool calls leaves a half-finished answer that the athlete paid for. With the two apart, a deployment can stop new turns at its limit and let a started one finish, and still stop a runaway one later.
+
+**Rejected.**
+- *A second guard method*: one function with a `use` is the seam already, and every caller stays the same.
+- *A flag on the call*: `use` is already what says what a call is for.
+

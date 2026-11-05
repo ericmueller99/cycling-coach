@@ -1,7 +1,10 @@
 import type { TurnStop } from '@cycling-coach/shared';
 
-/** What a Claude call is for — the hosted version prices and limits them separately. */
-export type AiUse = 'coach' | 'food_parse' | 'food_vision' | 'food_adjust';
+/**
+ * What a Claude call is for — the hosted version prices and limits them separately. `coach` starts a
+ * turn and `coach_continue` is a later call in the same turn, so a limit can let a started turn finish.
+ */
+export type AiUse = 'coach' | 'coach_continue' | 'food_parse' | 'food_vision' | 'food_adjust';
 
 /**
  * The answer to "may this call go ahead?". `build: false` keeps a coach turn on the chat model, and
