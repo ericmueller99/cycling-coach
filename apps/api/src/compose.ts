@@ -18,7 +18,6 @@ import {
   listGoals,
   listMemories,
   listPowerBests,
-  listThreads,
   listWorkouts,
   migrate,
   getUserName,
@@ -54,7 +53,7 @@ import { MemoryService } from './services/memory';
 import { OpenFoodFacts } from './providers/openfoodfacts';
 import { photoStoreFromEnv } from './providers/storage/s3';
 import { UsdaClient } from './providers/usda';
-import { getThreadView, sendMessage, startThread, type CoachContext, type CoachDeps } from './services/coach';
+import { getThreadView, listThreadSummaries, sendMessage, startThread, type CoachContext, type CoachDeps } from './services/coach';
 import { CoachFoodService } from './services/coach-food';
 import { IntervalsSync, manualRetryAt } from './services/intervals-sync';
 import { MATCH_DAYS, settleRides } from './services/rides';
@@ -413,7 +412,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     },
 
     threads: {
-      list: (userId) => listThreads(c, userId),
+      list: (userId, limit) => listThreadSummaries(c, userId, limit),
       create: (userId) => startThread(coach, userId),
       check: async (userId) => {
         const decision = await spendGuard(userId, 'coach');

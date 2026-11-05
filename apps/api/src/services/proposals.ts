@@ -45,8 +45,9 @@ export async function createCoachProposal(c: Collections, userId: string, thread
           : { ...base, kind: 'profile_update', items: p.items };
   const proposal = await createProposal(c, doc);
   if (p.replaces) {
+    // From any of the athlete's chats: a new chat gets the last one's open cards (DECISIONS #82).
     const old = await getProposalDoc(c, userId, p.replaces);
-    if (old?.threadId.equals(threadId)) await dismissProposal(c, userId, p.replaces, undefined);
+    if (old) await dismissProposal(c, userId, p.replaces, undefined);
   }
   return proposal;
 }

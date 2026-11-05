@@ -1762,3 +1762,31 @@ recap, "only two rides this week" reached a new chat, and an unrelated question 
 - *A second guard method*: one function with a `use` is the seam already, and every caller stays the same.
 - *A flag on the call*: `use` is already what says what a call is for.
 
+## 82. A new chat after 30 minutes, and the last one comes with it (Nov 4)
+
+**Decision.** Coach starts a new chat once the latest has been quiet for 30 minutes, down from 12 hours (#80), the way other chat apps open on a blank page. What the old chat was doing comes with it, so a break doesn't lose the thread.
+- **Opening Coach:** the same rule as #80, at 30 minutes. A running turn still wins.
+- **Coming back to a page left open:** that page never reloads, so the rule above never ran, and a phone left on a chat overnight woke up on it. `useAwayReturn` notes what was on screen when the page went out of sight. Coming back after 30 minutes or more with nothing new in the chat goes to a new chat, with Continue pointing at the chat left behind. Both halves matter: a reply that landed while they were gone is what they came back to read.
+- **Staying put:** a turn running, a draft, a recipe or idea pane, any open dialog, or their own message last, which means a lost turn that needs its Try again. A reload stays where it is. Any failure to read the chat stays too.
+- **What a new chat gets:** a recap as before, plus the last two exchanges if the chat is under 12 hours old, and its open cards. Changing a carried card closes the old one, so `replaces` now works across the athlete's chats. This reverses #80's "new chats carry no open cards": at 12 hours that was rare, but at 30 minutes "swap Tuesday" in a new chat would make a second live plan, and adding both would duplicate sessions on the calendar and in intervals.icu.
+- **Keeping it quick:** a chat of 3,000 characters or fewer goes across as it is, with no model call, and a recap gets 6 seconds instead of 20, because the first reply is waiting and the last messages are there to fall back on.
+- **A recap passes on only what was said.** With short chats going across whole, each one carried the last one's heading, and a run of them stacked up headings in every prompt. Open cards and last words stay behind too, because they may be settled by the next chat.
+- **Finding old chats:** "Show older", because chats now add up quickly and the list stopped at 50. The list reads only what it shows. The latest chat says how many proposals are waiting, for the Continue link.
+
+**Why.** A chat that opens on yesterday's conversation feels wrong, and a long one rewrites its whole history on every return. It's a saving on mid-size and long chats only: a small chat costs about the same or slightly more as a new one, because it sends the calendar again and adds a title.
+
+**Real calls (about $0.87, made-up athlete, Sonnet with the real persona).** "yes, do that" after a break moved the right session 8 of 8 times. Changing a carried card used `replaces` 6 of 6 times. An unrelated question raised the old chat in 2 of 5 runs, because the last words ended on an unanswered offer. A line saying that chat is over took it to 1 of 9, a one-line aside about a session due the next day.
+
+**Known limits.**
+- A desktop window left visible behind another app never hides, so it stays on its chat.
+- Whether an installed iPhone app reopens at its start page or its last page, and whether Android restores it, hasn't been seen on a device.
+- The 3,000 characters and 12 hours are guesses.
+- The Continue link's card count is for the latest chat only, and counts proposals: meal ideas aren't waiting on anything.
+
+**Rejected.**
+- *Tracking sessions on the server*: the browser already knows, and there'd be one more thing to keep in step.
+- *Time away alone*: it would pull the athlete off a reply they came back to read.
+- *A new chat on reload*: a reload is the athlete staying.
+- *Skipping the recap for short chats*: it would lose everything chained from before them.
+- *Paging with a cursor*: a bigger limit does the job for a list this size.
+

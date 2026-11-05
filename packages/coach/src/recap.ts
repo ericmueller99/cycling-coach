@@ -15,6 +15,10 @@ const MAX_TAIL_MESSAGE_CHARS = 2_000;
 /** Exchanges kept word for word, and how many when there's no summary to go with them. */
 const TAIL_EXCHANGES = 2;
 const FALLBACK_TAIL_EXCHANGES = 6;
+/** A chat this short goes over as it is: a summary would cost a call and hold up the reply to lose words. A guess. */
+export const INLINE_SOURCE_CHARS = 3_000;
+/** A new chat's recap holds up the first reply, and it has the chat's last words to fall back on. */
+export const CARRY_RECAP_TIMEOUT_MS = 6_000;
 
 export const RECAP_INSTRUCTIONS = `You're writing a recap of a chat between a cycling coach and an athlete. The coach is about to lose the transcript, so this recap is all it will have of the conversation.
 
@@ -89,12 +93,12 @@ export function renderTail(messages: StoredMessage[], exchanges: number): string
     .join('\n');
 }
 
-function renderCards(cards: OpenCards): string {
+function renderCards(cards: OpenCards, where: string): string {
   const lines = [
     ...cards.proposals.map((p) => `- Proposal ${p.id} (${p.kind}): "${p.title}". Pass this id as \`replaces\` if the athlete asks to change it.`),
     ...cards.mealIdeas.map((m) => `- Meal ideas ${m.id}: ${m.names.map((n, i) => `${i} ${n}`).join(', ')}. Use this id and number as ideas_id and idea_index if the athlete picks one.`),
   ];
-  return lines.length ? `# Cards still open in this chat\n${lines.join('\n')}` : '';
+  return lines.length ? `# Cards still open in ${where}\n${lines.join('\n')}` : '';
 }
 
 const section = (...parts: string[]) => parts.filter(Boolean).join('\n\n');
@@ -104,15 +108,32 @@ export function renderRestartRecap(input: { summary: string | null; messages: St
   return section(
     `# Recap of this chat so far (as of ${formatLongDay(input.today)})\nEarlier messages are no longer in front of you, so this is background. The latest context message wins on the calendar, notes and profile: anything here that disagrees with it is out of date.`,
     input.summary ?? '',
-    renderCards(input.cards),
+    renderCards(input.cards, 'this chat'),
     `# The last messages, word for word\n${renderTail(input.messages, input.summary ? TAIL_EXCHANGES : FALLBACK_TAIL_EXCHANGES)}`,
   );
 }
 
-/** The recap block for a new chat: how the athlete's previous chat went. */
-export function renderCarryRecap(input: { summary: string | null; messages: StoredMessage[]; lastDate: IsoDate; today: IsoDate }): string {
+/**
+ * The recap block for a new chat: how the athlete's previous chat went. A new chat can come only half
+ * an hour after the last, so `withTail` adds its last words: "yes, do that" has to still mean something
+ * (DECISIONS #82). Its open cards come too, or changing one would make a second live card.
+ */
+export function renderCarryRecap(input: { summary: string | null; messages: StoredMessage[]; cards: OpenCards; withTail: boolean; lastDate: IsoDate; today: IsoDate }): string {
+  const tail = renderTail(input.messages, TAIL_EXCHANGES);
   return section(
     `# Recap of the athlete's previous chat, from ${formatLongDay(input.lastDate)} (as of ${formatLongDay(input.today)})\nBackground, in case it's relevant: don't bring it up otherwise. The latest context message wins on the calendar, notes and profile: anything here that disagrees with it is out of date.`,
-    input.summary ?? renderTail(input.messages, TAIL_EXCHANGES),
+    input.summary ?? tail,
+    input.summary && input.withTail ? `# The end of that chat, word for word\nIf the athlete's first message only makes sense as a reply to this, it is one. Otherwise that chat is over: don't pick it back up, even if it ended on a question or an offer.\n\n${tail}` : '',
+    renderCards(input.cards, 'that chat'),
   );
+}
+
+/**
+ * What a recap block said, to pass on to the next recap. What was open then may be settled by now, and
+ * the heading stays behind, or a run of short chats would stack one up for each.
+ */
+export function recapBackground(block: string | undefined): string | undefined {
+  const [said = ''] = block?.split(/\n\n# (?:The end of that chat|The last messages|Cards still open)/) ?? [];
+  const heading = said.indexOf('\n\n');
+  return heading < 0 ? undefined : said.slice(heading + 2);
 }

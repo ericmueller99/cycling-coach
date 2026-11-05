@@ -413,7 +413,7 @@ export class CoachEngine {
    * the caller falls back to the last messages word for word, and a recap never fails a turn. It has
    * no tier: it's neither everyday coaching nor a build.
    */
-  async recap(transcript: string, signal?: AbortSignal): Promise<{ text: string; usage: CallUsage } | null> {
+  async recap(transcript: string, signal?: AbortSignal, timeoutMs: number = RECAP_TIMEOUT_MS): Promise<{ text: string; usage: CallUsage } | null> {
     try {
       const { small } = await this.router();
       const res = await this.client.messages.create(
@@ -423,7 +423,7 @@ export class CoachEngine {
           output_config: { effort: 'low' },
           messages: [{ role: 'user', content: `${RECAP_INSTRUCTIONS}\n\n<chat>\n${transcript}\n</chat>` }],
         },
-        { timeout: RECAP_TIMEOUT_MS, maxRetries: 0, ...(signal ? { signal } : {}) },
+        { timeout: timeoutMs, maxRetries: 0, ...(signal ? { signal } : {}) },
       );
       const text = res.content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('\n').trim();
       if (!text) return null;

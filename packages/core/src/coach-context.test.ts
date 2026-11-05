@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { carrySince, HARD_TOKENS, landsOnNewChat, restartReason, RESTART_TOKENS, STALE_DAYS, type ContextState } from './coach-context';
+import { carriesTail, carrySince, HARD_TOKENS, LAND_IDLE_MINUTES, landsOnNewChat, RESTART_TOKENS, restartReason, returnsToNewChat, STALE_DAYS, TURN_IN_FLIGHT_MS, type ContextState } from './coach-context';
 
 const NOW = new Date('2026-11-04T12:00:00Z');
 const ago = (ms: number) => new Date(NOW.getTime() - ms);
@@ -94,9 +94,43 @@ describe('restartReason', () => {
 });
 
 describe('landsOnNewChat', () => {
-  it('reopens a chat from the last 12 hours and not one older', () => {
-    expect(landsOnNewChat(ago(12 * 60 * MIN - 1), NOW)).toBe(false);
-    expect(landsOnNewChat(ago(12 * 60 * MIN), NOW)).toBe(true);
+  it('reopens a chat from the last 30 minutes and not one older', () => {
+    expect(landsOnNewChat(ago(30 * MIN - 1), NOW)).toBe(false);
+    expect(landsOnNewChat(ago(30 * MIN), NOW)).toBe(true);
+  });
+
+  it('stays longer than a turn can run, so a quiet chat never has one going', () => {
+    expect(LAND_IDLE_MINUTES * MIN).toBeGreaterThan(TURN_IN_FLIGHT_MS);
+  });
+});
+
+describe('returnsToNewChat', () => {
+  const left = ago(40 * MIN);
+  const last = ago(45 * MIN);
+  const away = { hiddenAt: left, latestAt: last };
+
+  it('starts a new chat after half an hour away with nothing new', () => {
+    expect(returnsToNewChat(away, last, NOW)).toBe(true);
+    expect(returnsToNewChat({ ...away, hiddenAt: ago(30 * MIN) }, last, NOW)).toBe(true);
+  });
+
+  it('stays after a short break', () => {
+    expect(returnsToNewChat({ ...away, hiddenAt: ago(30 * MIN - 1) }, last, NOW)).toBe(false);
+  });
+
+  it('stays when a reply landed while they were away, which is what they came back for', () => {
+    expect(returnsToNewChat(away, ago(10 * MIN), NOW)).toBe(false);
+  });
+
+  it('stays on an old chat just reopened, however long ago it was last used', () => {
+    expect(returnsToNewChat({ hiddenAt: ago(2 * MIN), latestAt: ago(60 * 24 * MIN) }, ago(60 * 24 * MIN), NOW)).toBe(false);
+  });
+});
+
+describe('carriesTail', () => {
+  it('keeps the last words of a chat from the last 12 hours only', () => {
+    expect(carriesTail(ago(12 * 60 * MIN - 1), NOW)).toBe(true);
+    expect(carriesTail(ago(12 * 60 * MIN), NOW)).toBe(false);
   });
 });
 

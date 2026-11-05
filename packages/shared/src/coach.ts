@@ -156,7 +156,14 @@ export interface ThreadSummary {
   lastMessageAt: string;
   /** `food` once the coach has suggested meals or built a recipe in it. */
   tags: ThreadTag[];
+  /** On the latest chat only: proposals still waiting on the athlete, so a new chat can point back at them. */
+  openCards?: number | undefined;
 }
+
+/** A string, like every query param: the route turns it into a number. */
+export const threadListQuerySchema = z.object({ limit: z.string().regex(/^[1-9]\d{0,2}$/).optional() });
+/** The most chats one list asks for. */
+export const THREAD_LIST_MAX = 500;
 
 export const sendMessageSchema = z.object({
   text: z.string().min(1).max(8000),

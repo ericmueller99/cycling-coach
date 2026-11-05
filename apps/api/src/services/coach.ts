@@ -2,6 +2,9 @@ import {
   buildSystemSnapshot,
   hasOpenToolUse,
   renderAthleteBlock,
+  CARRY_RECAP_TIMEOUT_MS,
+  INLINE_SOURCE_CHARS,
+  recapBackground,
   renderCarryRecap,
   renderRecapSource,
   renderRestartRecap,
@@ -47,8 +50,9 @@ import {
   type ThreadContextReason,
   type ThreadDoc,
   type WorkoutDoc,
+  listThreads,
 } from '@cycling-coach/db';
-import { activeShortTerm, CACHE_TTL_MS, carrySince, dayTotals, NUDGE_TOKENS, restartReason, slotForTime, todayIn } from '@cycling-coach/core';
+import { activeShortTerm, CACHE_TTL_MS, carriesTail, carrySince, dayTotals, NUDGE_TOKENS, restartReason, slotForTime, todayIn } from '@cycling-coach/core';
 import type { CoachEvent, CoachTier, FitnessDay, IntegrationStatus, IsoDate, SendMessageInput, ThreadSummary, ThreadView, Workout } from '@cycling-coach/shared';
 import type { FoodTurnContext } from '@cycling-coach/coach';
 import type { ObjectId } from 'mongodb';
@@ -118,6 +122,16 @@ export async function startThread(deps: CoachDeps, userId: string): Promise<Thre
   if (!athlete) return null;
   const thread = await createThread(deps.c, userId, buildSystemSnapshot(athlete), TOOLS_HASH, deps.now());
   return toThreadSummary(thread);
+}
+
+/** The athlete's chats, newest first. The latest says if a card is waiting there, so a new chat can point back at it. */
+export async function listThreadSummaries(c: CoachDeps['c'], userId: string, limit?: number): Promise<ThreadSummary[]> {
+  const threads = await listThreads(c, userId, limit);
+  const [latest, ...rest] = threads;
+  const id = latest && oid(latest.id);
+  if (!id) return threads;
+  const waiting = (await openCards(c, userId, id)).proposals.length;
+  return waiting ? [{ ...latest, openCards: waiting }, ...rest] : threads;
 }
 
 export async function getThreadView(deps: CoachDeps, userId: string, threadId: string): Promise<ThreadView | null> {
@@ -294,12 +308,18 @@ async function carryRecap(
 ): Promise<NextContext | null> {
   const source = await latestChat(c, userId, thread._id, carrySince(now));
   if (!source) return null;
-  const messages = (await listMessages(c, source._id, contextStartSeq(source))).map(toStored);
-  const written = await engine.recap(renderRecapSource(messages, when.timezone, source.systemSnapshot[2]), signal);
+  const [docs, cards] = await Promise.all([listMessages(c, source._id, contextStartSeq(source)), openCards(c, userId, source._id)]);
+  const messages = docs.map(toStored);
+  const text = renderRecapSource(messages, when.timezone, recapBackground(source.systemSnapshot[2]));
+  // Short enough to send as it is, which is already word for word and keeps any earlier recap.
+  const inline = text.length <= INLINE_SOURCE_CHARS;
+  const written = inline ? null : await engine.recap(text, signal, CARRY_RECAP_TIMEOUT_MS);
   return {
     recap: renderCarryRecap({
-      summary: written?.text ?? null,
+      summary: inline ? text : (written?.text ?? null),
       messages,
+      cards,
+      withTail: !inline && carriesTail(source.lastMessageAt, now),
       lastDate: todayIn(when.timezone, source.lastMessageAt),
       today: when.today,
     }),

@@ -3,7 +3,7 @@ import type { ObjectId } from 'mongodb';
 import type { AiCallDoc, Collections, MessageDoc, ProposalDoc, ThreadContext, ThreadDoc } from '../collections';
 import { idOf, oid } from './util';
 
-export const toThreadSummary = (doc: ThreadDoc): ThreadSummary => ({
+export const toThreadSummary = (doc: Pick<ThreadDoc, '_id' | 'title' | 'createdAt' | 'lastMessageAt' | 'tags'>): ThreadSummary => ({
   id: idOf(doc),
   title: doc.title,
   createdAt: doc.createdAt.toISOString(),
@@ -11,8 +11,13 @@ export const toThreadSummary = (doc: ThreadDoc): ThreadSummary => ({
   tags: doc.tags ?? [],
 });
 
+/** Newest first. Just what a list shows: this runs after every turn, and a thread's prompt is big. */
 export async function listThreads(c: Collections, userId: string, limit = 50): Promise<ThreadSummary[]> {
-  const docs = await c.threads.find({ userId }).sort({ lastMessageAt: -1 }).limit(limit).toArray();
+  const docs = await c.threads
+    .find({ userId }, { projection: { title: 1, createdAt: 1, lastMessageAt: 1, tags: 1 } })
+    .sort({ lastMessageAt: -1 })
+    .limit(limit)
+    .toArray();
   return docs.map(toThreadSummary);
 }
 

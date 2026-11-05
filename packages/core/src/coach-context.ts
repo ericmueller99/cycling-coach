@@ -14,15 +14,18 @@ export const HARD_TOKENS = 200_000;
 export const NUDGE_TOKENS = 60_000;
 /** A chat left this long restarts whatever its size: the cut-off date. */
 export const STALE_DAYS = 14;
-/** Opening Coach reopens the latest chat only if it was active this recently. */
-export const LAND_IDLE_HOURS = 12;
+/** Opening Coach, or coming back to it, reopens a chat only if it was active this recently (DECISIONS #82). */
+export const LAND_IDLE_MINUTES = 30;
 /** A new chat gets a recap of the latest chat from this far back. */
 export const CARRY_DAYS = 7;
+/** A chat this recent is probably the same conversation, so a new chat gets its last words too. */
+export const CARRY_TAIL_HOURS = 12;
 /** Longer than any one model call, so an unfinished message older than this belongs to a dead turn. */
-const TURN_IN_FLIGHT_MS = 20 * 60 * 1000;
+export const TURN_IN_FLIGHT_MS = 20 * 60 * 1000;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
+const MINUTE_MS = 60 * 1000;
 
 export type RestartReason = 'tools' | 'repair' | 'size' | 'age';
 
@@ -58,7 +61,19 @@ export function restartReason(s: ContextState): RestartReason | null {
 }
 
 /** Opening Coach starts a new chat rather than reopening one last active at this time. */
-export const landsOnNewChat = (lastMessageAt: Date, now: Date): boolean => now.getTime() - lastMessageAt.getTime() >= LAND_IDLE_HOURS * HOUR_MS;
+export const landsOnNewChat = (lastMessageAt: Date, now: Date): boolean => now.getTime() - lastMessageAt.getTime() >= LAND_IDLE_MINUTES * MINUTE_MS;
+
+/**
+ * Coming back to a page left open on a chat, which never reloads, so `landsOnNewChat` never gets to
+ * run. A long time away is half of it. The other half is that nothing arrived while they were gone:
+ * a reply that landed is what they came back to read. Both times in that are the server's, so a
+ * device with a wrong clock can't get it wrong.
+ */
+export const returnsToNewChat = (away: { hiddenAt: Date; latestAt: Date }, latestNow: Date, now: Date): boolean =>
+  now.getTime() - away.hiddenAt.getTime() >= LAND_IDLE_MINUTES * MINUTE_MS && latestNow.getTime() <= away.latestAt.getTime();
 
 /** How far back a chat can be and still give a new chat its recap. */
 export const carrySince = (now: Date): Date => new Date(now.getTime() - CARRY_DAYS * DAY_MS);
+
+/** A new chat from a chat this recent gets its last exchanges as well as a recap. */
+export const carriesTail = (lastMessageAt: Date, now: Date): boolean => now.getTime() - lastMessageAt.getTime() < CARRY_TAIL_HOURS * HOUR_MS;

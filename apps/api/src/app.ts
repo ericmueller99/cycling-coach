@@ -72,6 +72,8 @@ import {
   type OnboardingGoals,
   type OnboardingState,
   type TurnStop,
+  THREAD_LIST_MAX,
+  threadListQuerySchema,
 } from '@cycling-coach/shared';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
@@ -156,7 +158,7 @@ export interface AppServices {
   threads: {
     /** Why a coach turn would be refused right now, or null. */
     check(userId: string): Promise<TurnStop | null>;
-    list(userId: string): Promise<ThreadSummary[]>;
+    list(userId: string, limit?: number): Promise<ThreadSummary[]>;
     create(userId: string): Promise<ThreadSummary | null>;
     view(userId: string, id: string): Promise<ThreadView | null>;
     send(userId: string, id: string, input: SendMessageInput, signal: AbortSignal): AsyncIterable<CoachEvent>;
@@ -441,7 +443,10 @@ export function createApp(deps: AppDeps) {
     .route('/energy', energyRoutes(services.energy))
 
     // ── Coach threads ───────────────────────────────────────────────────────
-    .get('/threads', async (c) => c.json(await services.threads.list(c.get('user')!.id)))
+    .get('/threads', query(threadListQuerySchema), async (c) => {
+      const { limit } = c.req.valid('query');
+      return c.json(await services.threads.list(c.get('user')!.id, limit ? Math.min(Number(limit), THREAD_LIST_MAX) : undefined));
+    })
     .get('/coach/check', async (c) => c.json({ refused: await services.threads.check(c.get('user')!.id) }))
     .post('/threads', async (c) => {
       const t = await services.threads.create(c.get('user')!.id);

@@ -110,9 +110,10 @@ export type AppRootRoute = typeof rootRoute;
 
 /**
  * `recipe` opens a coach recipe in the right-hand pane; `idea` ("{ideasId}.{index}")
- * opens a meal idea's Details pane. One pane at a time.
+ * opens a meal idea's Details pane. One pane at a time. `left` is the chat a long break left behind,
+ * for the Continue link.
  */
-type CoachSearch = { t?: string; new?: boolean; prompt?: string; recipe?: string; idea?: string };
+type CoachSearch = { t?: string; new?: boolean; left?: string; prompt?: string; recipe?: string; idea?: string };
 
 /**
  * One route for every conversation, with the thread in the search string: switching from "no
@@ -124,13 +125,14 @@ const coachRoute = createRoute({
   validateSearch: (s: Record<string, unknown>): CoachSearch => ({
     ...(typeof s['t'] === 'string' ? { t: s['t'] } : {}),
     ...(s['new'] === true || s['new'] === 'true' ? { new: true } : {}),
+    ...(typeof s['left'] === 'string' && /^[a-f0-9]{24}$/.test(s['left']) ? { left: s['left'] } : {}),
     ...(typeof s['prompt'] === 'string' ? { prompt: s['prompt'] } : {}),
     ...(typeof s['recipe'] === 'string' && /^[a-f0-9]{24}$/.test(s['recipe']) ? { recipe: s['recipe'] } : {}),
     ...(typeof s['idea'] === 'string' && /^[a-f0-9]{24}\.[0-3]$/.test(s['idea']) && typeof s['recipe'] !== 'string' ? { idea: s['idea'] } : {}),
   }),
   component: function CoachRoute() {
-    const { t, new: isNew, prompt, recipe, idea } = coachRoute.useSearch();
-    return <CoachPage threadId={t} isNew={isNew} prompt={prompt} recipe={recipe} idea={idea} />;
+    const { t, new: isNew, left, prompt, recipe, idea } = coachRoute.useSearch();
+    return <CoachPage threadId={t} isNew={isNew} left={left} prompt={prompt} recipe={recipe} idea={idea} />;
   },
 });
 

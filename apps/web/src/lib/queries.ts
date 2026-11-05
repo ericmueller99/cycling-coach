@@ -140,14 +140,27 @@ export function useArchiveWorkout() {
   });
 }
 
-export function useThreads() {
-  return useQuery({ queryKey: keys.threads, queryFn: async () => unwrap(await api.api.threads.$get()) });
+/** How many chats a list shows at first, and how many "Show older" adds. */
+export const THREADS_PAGE = 50;
+
+/** Options, so a read that has to be fresh can use `fetchQuery` on the same cache entry. */
+export const threadsQuery = (limit = THREADS_PAGE) => ({
+  queryKey: [...keys.threads, limit] as const,
+  queryFn: async () => unwrap(await api.api.threads.$get({ query: { limit: String(limit) } })),
+});
+
+export const threadQuery = (id: string) => ({
+  queryKey: keys.thread(id),
+  queryFn: async () => unwrap(await api.api.threads[':id'].$get({ param: { id } })),
+});
+
+export function useThreads(limit = THREADS_PAGE) {
+  return useQuery({ ...threadsQuery(limit), placeholderData: keepPreviousData });
 }
 
 export function useThread(id: string | undefined) {
   return useQuery({
-    queryKey: keys.thread(id ?? 'none'),
-    queryFn: async () => unwrap(await api.api.threads[':id'].$get({ param: { id: id! } })),
+    ...threadQuery(id ?? 'none'),
     enabled: !!id,
   });
 }

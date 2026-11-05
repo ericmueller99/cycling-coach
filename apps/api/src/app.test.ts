@@ -34,6 +34,30 @@ describe('manual intervals.icu syncs (DECISIONS #75)', () => {
   });
 });
 
+describe('listing chats', () => {
+  const auth = { api: { getSession: async () => ({ user: { id: 'u1' }, session: {} }) }, handler: () => new Response(null, { status: 404 }) } as unknown as Auth;
+  const env = loadEnv({ MONGO_DB_URI: 'mongodb://x', BETTER_AUTH_SECRET: 'x'.repeat(32) });
+  const make = () => {
+    const list = vi.fn(async () => []);
+    return { app: createApp({ auth, authConfig: authConfig(), env, services: { threads: { list } } as unknown as AppServices }), list };
+  };
+
+  it('uses the default with no limit, and the limit it is given', async () => {
+    const { app, list } = make();
+    expect((await app.request('/api/threads')).status).toBe(200);
+    expect(list).toHaveBeenLastCalledWith('u1', undefined);
+    await app.request('/api/threads?limit=100');
+    expect(list).toHaveBeenLastCalledWith('u1', 100);
+  });
+
+  it('caps a big limit and refuses a bad one', async () => {
+    const { app, list } = make();
+    await app.request('/api/threads?limit=999');
+    expect(list).toHaveBeenLastCalledWith('u1', 500);
+    for (const limit of ['0', '-1', 'abc', '1000']) expect((await app.request(`/api/threads?limit=${limit}`)).status).toBe(400);
+  });
+});
+
 /** The share page's API answers without a session; everything else under /api still needs one. */
 describe('public routes', () => {
   const auth = { api: { getSession: async () => null }, handler: () => new Response(null, { status: 404 }) } as unknown as Auth;

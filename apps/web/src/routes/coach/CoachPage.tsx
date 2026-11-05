@@ -1,4 +1,4 @@
-import { landsOnNewChat, slotForTime, todayIn } from '@cycling-coach/core';
+import { landsOnNewChat, returnsToNewChat, slotForTime, todayIn } from '@cycling-coach/core';
 import type { IsoDate, MealIdeas, Proposal, RecipeDraft, ThreadSummary, ThreadView, UiBlock, UiMessage, Workout } from '@cycling-coach/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
@@ -12,8 +12,9 @@ import { useExtensions } from '../../extensions';
 import { api, unwrap } from '../../lib/api';
 import { useFoodLibrary } from '../../lib/foodQueries';
 import { modelName } from '../../lib/models';
-import { keys, useCoachCheck, useDashboard, useThread, useThreads, useUsage } from '../../lib/queries';
+import { keys, threadQuery, THREADS_PAGE, threadsQuery, useCoachCheck, useDashboard, useThread, useThreads, useUsage } from '../../lib/queries';
 import { abortTurn, clearDoneTurn, patchTurn, runningThreadId, setWatching, startTurn, useLiveTurn, type LiveTurn, type TurnError as TurnErrorInfo, type TurnOrigin } from '../../lib/coachTurn';
+import { useAwayReturn } from '../../lib/useAwayReturn';
 import { useIsMobile } from '../../lib/useIsMobile';
 import { MemoryChip, ProposalBlock, RequestChangesContext, TextBlock, ToolChip, WorkoutBlock } from './blocks';
 import { CoachFoodContext, MealIdeasBlock, RecipeRefBlock, type CoachFoodActions } from './foodBlocks';
@@ -138,7 +139,8 @@ function FoodTag() {
 }
 
 function ThreadList({ current, onPick }: { current?: string | undefined; onPick: (id: string) => void }) {
-  const { data } = useThreads();
+  const [limit, setLimit] = useState(THREADS_PAGE);
+  const { data, isPlaceholderData } = useThreads(limit);
   const [filter, setFilter] = useState<ThreadFilter>('all');
   const hasFood = !!data?.some((t) => t.tags.includes('food'));
   const shown = data?.filter((t) => matchesFilter(t, filter));
@@ -174,6 +176,11 @@ function ThreadList({ current, onPick }: { current?: string | undefined; onPick:
           <span className="text-xs text-muted">{new Date(t.lastMessageAt).toLocaleString()}</span>
         </button>
       ))}
+      {data?.length === limit && (
+        <button type="button" disabled={isPlaceholderData} onClick={() => setLimit((n) => n + THREADS_PAGE)} className="min-h-9 w-full rounded-lg border-0 bg-transparent px-3 py-2 text-left text-[13px] font-medium text-accent-ink hover:bg-surface-2 mobile:min-h-[48px]">
+          {isPlaceholderData ? 'Loading…' : 'Show older'}
+        </button>
+      )}
     </>
   );
 }
@@ -208,12 +215,15 @@ function scrollToEnd() {
 export function CoachPage({
   threadId,
   isNew,
+  left,
   prompt,
   recipe,
   idea,
 }: {
   threadId?: string | undefined;
   isNew?: boolean | undefined;
+  /** The chat a long break left behind, which the Continue link goes back to. */
+  left?: string | undefined;
   /** Pre-fills the composer (Library "Edit with coach", Calendar "Ask coach"). */
   prompt?: string | undefined;
   /** A coach recipe open in the right-hand pane. */
@@ -275,14 +285,37 @@ export function CoachPage({
   const setServings = (key: string, n: number) => setIdeaServings((m) => ({ ...m, [key]: n }));
 
   // Land on a recent conversation, like reopening the claude.ai chat. After a break it's a new one,
-  // or one chat would grow for ever (DECISIONS #80). A running turn always wins (#46).
+  // or one chat would grow for ever (DECISIONS #80, #82). A running turn always wins (#46).
   const latest = threads.data?.[0];
+  const resume = threads.data?.find((t) => t.id === left) ?? latest;
   const wentQuiet = !!latest && landsOnNewChat(new Date(latest.lastMessageAt), new Date());
   useEffect(() => {
     if (threadId || isNew || live) return;
     const target = runningThreadId() ?? (latest && !wentQuiet ? latest.id : undefined);
     if (target) void navigate({ to: '/', search: { t: target }, replace: true });
   }, [threadId, isNew, latest, wentQuiet, live, navigate]);
+
+  // A page left open on a chat never reloads, so the rule above never runs: a phone left on a chat
+  // overnight would wake up on it. Anything the athlete is partway through keeps them there.
+  const shownThread = useRef(threadId);
+  shownThread.current = threadId;
+  const inTheMiddle = useRef<() => boolean>(() => true);
+  inTheMiddle.current = () => !!live || !!runningThreadId() || !!draft.trim() || !!recipe || !!idea || !!document.querySelector('[role="dialog"]');
+  useAwayReturn({
+    threadId,
+    latestAt: thread.data?.thread.lastMessageAt,
+    onReturn: async (away) => {
+      if (!threadId || inTheMiddle.current()) return;
+      // Fresh: a reply may have landed while they were gone, and landing has to see what's new.
+      const view = await Promise.all([qc.fetchQuery({ ...threadQuery(threadId), staleTime: 0 }), qc.fetchQuery({ ...threadsQuery(), staleTime: 0 })]).then(
+        ([fresh]) => fresh,
+        () => null,
+      );
+      // Their own message last means a turn that was lost, which needs its Try again.
+      if (!view || shownThread.current !== threadId || inTheMiddle.current() || view.messages.at(-1)?.role === 'user') return;
+      if (returnsToNewChat(away, new Date(view.thread.lastMessageAt), new Date())) void navigate({ to: '/', search: { left: threadId } });
+    },
+  });
 
   // Tell the store which thread is on screen (a turn that finishes elsewhere leaves a notice), and
   // drop a finished turn's error once the user moves on — it belongs to the thread it happened in.
@@ -474,9 +507,10 @@ export function CoachPage({
                 Ask me to pull your recent rides, plan your week around races, or build a workout. I can see your
                 profile, goals, memory, workout library and calendar.
               </p>
-              {!threadId && !isNew && wentQuiet && latest && (
-                <button type="button" className="min-h-9 text-left text-accent-ink underline" onClick={() => void navigate({ to: '/', search: { t: latest.id } })}>
-                  Continue: {latest.title} · {new Date(latest.lastMessageAt).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
+              {!threadId && !isNew && wentQuiet && resume && (
+                <button type="button" className="min-h-9 text-left text-accent-ink underline" onClick={() => void navigate({ to: '/', search: { t: resume.id } })}>
+                  Continue: {resume.title} · {new Date(resume.lastMessageAt).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
+                  {resume.openCards ? ` · ${resume.openCards === 1 ? '1 card' : `${resume.openCards} cards`} waiting` : ''}
                 </button>
               )}
             </div>

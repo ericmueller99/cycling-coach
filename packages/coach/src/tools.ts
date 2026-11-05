@@ -125,7 +125,7 @@ export type NewProposal = {
   toolUseId: string;
   title: string;
   subtitle?: string;
-  /** Id of an earlier card in this thread that this one revises; its pending items get dismissed. */
+  /** Id of an earlier card, in this chat or the one before it, that this one revises; its pending items get dismissed. */
   replaces?: string;
 } & (
   | { kind: 'plan'; items: PlanItem[] }

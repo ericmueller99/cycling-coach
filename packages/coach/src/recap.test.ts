@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderCarryRecap, renderRecapSource, renderRestartRecap, renderTail, type OpenCards } from './recap';
+import { recapBackground, renderCarryRecap, renderRecapSource, renderRestartRecap, renderTail, type OpenCards } from './recap';
 import { TOOL_DEFINITIONS, TOOLS_HASH } from './tools';
 import { hasOpenToolUse, type StoredMessage } from './transcript';
 
@@ -112,8 +112,11 @@ describe('the recap blocks', () => {
     expect(without).toContain('Athlete: a');
   });
 
+  const carry = (over: Partial<Parameters<typeof renderCarryRecap>[0]> = {}) =>
+    renderCarryRecap({ summary: '- Busy week', messages, cards: NONE, withTail: false, lastDate: '2026-11-03', today, ...over });
+
   it('tells a new chat to leave the old one alone unless it matters', () => {
-    const block = renderCarryRecap({ summary: '- Busy week', messages, lastDate: '2026-11-03', today });
+    const block = carry();
     expect(block).toContain('previous chat, from Tue Nov 3');
     expect(block).toContain("don't bring it up otherwise");
     expect(block).toContain('- Busy week');
@@ -121,7 +124,52 @@ describe('the recap blocks', () => {
   });
 
   it('falls back to the last exchanges for a new chat too', () => {
-    expect(renderCarryRecap({ summary: null, messages, lastDate: '2026-11-03', today })).toContain('Athlete: Should I do the VO2 session?');
+    expect(carry({ summary: null })).toContain('Athlete: Should I do the VO2 session?');
+  });
+
+  it('adds the end of a recent chat, so a new one can pick up a reply', () => {
+    const block = carry({ withTail: true });
+    expect(block).toContain('- Busy week');
+    expect(block).toContain('# The end of that chat, word for word');
+    expect(block).toContain('only makes sense as a reply');
+    expect(block).toContain("don't pick it back up");
+    expect(block).toContain('Coach: Yes, do it Thursday. Want me to add it?');
+  });
+
+  it("doesn't repeat the tail when it's standing in for a summary", () => {
+    const block = carry({ summary: null, withTail: true });
+    expect(block.match(/Athlete: Should I do the VO2 session\?/g)).toHaveLength(1);
+    expect(block).not.toContain('# The end of that chat');
+  });
+
+  it('brings open cards across, as belonging to that chat', () => {
+    const block = carry({ cards: { proposals: [{ id: 'p1', kind: 'plan', title: 'Build week' }], mealIdeas: [] } });
+    expect(block).toContain('# Cards still open in that chat');
+    expect(block).toContain('Proposal p1 (plan): "Build week"');
+    expect(block).toContain('`replaces`');
+  });
+
+  it('passes on the recap but not what was open back then, which may be settled now', () => {
+    const block = carry({ withTail: true, cards: { proposals: [{ id: 'p1', kind: 'plan', title: 'Build week' }], mealIdeas: [] } });
+    const background = recapBackground(block)!;
+    expect(background).toContain('- Busy week');
+    expect(background).not.toContain('The end of that chat');
+    expect(background).not.toContain('Cards still open');
+    expect(background).not.toContain('p1');
+  });
+
+  it('has nothing to pass on from a chat with no recap', () => {
+    expect(recapBackground(undefined)).toBeUndefined();
+  });
+
+  it('passes on what was said, not the heading, or a run of short chats would stack them up', () => {
+    const background = recapBackground(carry())!;
+    expect(background).toBe('- Busy week');
+  });
+
+  it('does the same for a chat that restarted', () => {
+    const block = renderRestartRecap({ summary: '- Knee was sore', messages, cards: { proposals: [{ id: 'p1', kind: 'plan', title: 'Build week' }], mealIdeas: [] }, today });
+    expect(recapBackground(block)).toBe('- Knee was sore');
   });
 });
 

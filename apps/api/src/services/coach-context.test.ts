@@ -1,11 +1,12 @@
 import { HARD_TOKENS, NUDGE_TOKENS, RESTART_TOKENS } from '@cycling-coach/core';
 import { TOOLS_HASH } from '@cycling-coach/coach';
-import { collections, createProposal, ensureIndexes, listMessages, recordAiCall, restartContext, saveProfile, type Collections } from '@cycling-coach/db';
+import { collections, createProposal, ensureIndexes, listMessages, listThreads, recordAiCall, restartContext, saveProfile, type Collections } from '@cycling-coach/db';
 import { MongoClient, ObjectId } from 'mongodb';
 import { MongoMemoryServer } from 'mongodb-memory-server-core';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SpendGuard } from '../lib/spend';
-import { getThreadView, sendMessage, startThread, type CoachDeps } from './coach';
+import { getThreadView, listThreadSummaries, sendMessage, startThread, type CoachDeps } from './coach';
+import { createCoachProposal } from './proposals';
 
 let server: MongoMemoryServer;
 let client: MongoClient;
@@ -43,14 +44,16 @@ interface Sent {
 function deps(clock: { now: Date }, recap: (transcript: string, signal?: AbortSignal) => Promise<unknown> = async () => summary()) {
   const sent: Sent[] = [];
   const recaps: string[] = [];
+  const timeouts: (number | undefined)[] = [];
   const engine = {
     async *runTurn(args: Sent & { persist: (m: object) => Promise<void> }) {
       sent.push({ system: args.system, messages: args.messages });
       await args.persist({ role: 'assistant', kind: 'assistant', content: [{ type: 'thinking', thinking: 'secret reasoning' }, { type: 'text', text: 'ok' }] });
       yield { type: 'text_delta', text: 'ok' };
     },
-    recap: async (transcript: string, signal?: AbortSignal) => {
+    recap: async (transcript: string, signal?: AbortSignal, timeoutMs?: number) => {
       recaps.push(transcript);
+      timeouts.push(timeoutMs);
       return recap(transcript, signal);
     },
     generateTitle: async () => null,
@@ -64,8 +67,11 @@ function deps(clock: { now: Date }, recap: (transcript: string, signal?: AbortSi
     food: {},
     now: () => clock.now,
   } as unknown as CoachDeps;
-  return { d, sent, recaps };
+  return { d, sent, recaps, timeouts };
 }
+
+/** Long enough to get a real summary: anything shorter goes across as it is. */
+const longMessage = (text: string) => `${text} ${'and more '.repeat(400)}`;
 
 const summary = (text = '- Agreed to rest on Friday') => ({
   text,
@@ -456,7 +462,7 @@ describe('a new chat', () => {
     const clock = { now: START };
     const { d, sent, recaps } = deps(clock);
     const first = (await startThread(d, U))!;
-    await say(d, first.id, 'Work is crazy this week');
+    await say(d, first.id, longMessage('Work is crazy this week'));
 
     clock.now = after(13 * 60);
     const second = (await startThread(d, U))!;
@@ -475,7 +481,7 @@ describe('a new chat', () => {
     const clock = { now: START };
     const { d, recaps } = deps(clock);
     const first = (await startThread(d, U))!;
-    await say(d, first.id, 'hello');
+    await say(d, first.id, longMessage('hello'));
     const second = (await startThread(d, U))!;
     await say(d, second.id, 'one');
     await say(d, second.id, 'two');
@@ -508,7 +514,7 @@ describe('a new chat', () => {
     const clock = { now: START };
     const { d, recaps } = deps(clock);
     const answered = (await startThread(d, U))!;
-    await say(d, answered.id, 'the real one');
+    await say(d, answered.id, longMessage('the real one'));
     clock.now = after(1);
     await startThread(d, U);
     clock.now = after(2);
@@ -522,10 +528,191 @@ describe('a new chat', () => {
     const clock = { now: START };
     const { d, sent } = deps(clock, async () => null);
     const first = (await startThread(d, U))!;
-    await say(d, first.id, 'Knee is sore');
+    await say(d, first.id, longMessage('Knee is sore'));
     const second = (await startThread(d, U))!;
     const events = await say(d, second.id, 'hello');
     expect(events.some((e) => e.type === 'error')).toBe(false);
     expect(sent.at(-1)!.system[2]).toContain('Athlete: Knee is sore');
+  });
+
+  it('sends a short chat as it is, with no model call to wait for or pay for', async () => {
+    const clock = { now: START };
+    const { d, sent, recaps } = deps(clock);
+    const first = (await startThread(d, U))!;
+    await say(d, first.id, 'Work is crazy this week');
+    const second = (await startThread(d, U))!;
+    await say(d, second.id, 'What should I ride today?');
+    expect(recaps).toEqual([]);
+    expect(sent.at(-1)!.system[2]).toContain('Athlete: Work is crazy this week');
+    expect(sent.at(-1)!.system[2]).toContain('Coach: ok');
+    expect(await c.aiCalls.countDocuments({ purpose: 'recap' })).toBe(0);
+  });
+
+  it('keeps what an earlier chat said through a short one', async () => {
+    const clock = { now: START };
+    const { d, sent } = deps(clock);
+    const first = (await startThread(d, U))!;
+    await say(d, first.id, longMessage('Knee is sore'));
+    clock.now = after(40);
+    const second = (await startThread(d, U))!;
+    await say(d, second.id, 'Short one');
+    clock.now = after(80);
+    const third = (await startThread(d, U))!;
+    await say(d, third.id, 'hello');
+    expect(sent.at(-1)!.system[2]).toContain('Agreed to rest on Friday');
+    expect(sent.at(-1)!.system[2]).toContain('Athlete: Short one');
+  });
+
+  it('never stacks up headings through a run of short chats', async () => {
+    const clock = { now: START };
+    const { d, sent } = deps(clock);
+    for (let i = 0; i < 5; i++) {
+      clock.now = after(i * 40);
+      const thread = (await startThread(d, U))!;
+      await say(d, thread.id, `Short chat ${i}`);
+    }
+    const recap = sent.at(-1)!.system[2]!;
+    expect(recap.match(/# Recap of the athlete's previous chat/g)).toHaveLength(1);
+    expect(recap.match(/Background, in case/g)).toHaveLength(1);
+    expect(recap).toContain('Athlete: Short chat 0');
+    expect(recap).toContain('Athlete: Short chat 3');
+  });
+
+  it('gives the recap less time than a restart, because the first reply is waiting on it', async () => {
+    const clock = { now: START };
+    const { d, timeouts } = deps(clock);
+    const first = (await startThread(d, U))!;
+    await say(d, first.id, longMessage('hello'));
+    const second = (await startThread(d, U))!;
+    await say(d, second.id, 'one');
+    expect(timeouts).toEqual([6000]);
+  });
+
+  it('adds the last words of a chat from the last 12 hours, so "yes, do that" still works', async () => {
+    const clock = { now: START };
+    const { d, sent } = deps(clock);
+    const first = (await startThread(d, U))!;
+    await say(d, first.id, longMessage('Should I move the VO2 session?'));
+    clock.now = after(31);
+    const second = (await startThread(d, U))!;
+    await say(d, second.id, 'yes, do that');
+    const recap = sent.at(-1)!.system[2]!;
+    expect(recap).toContain('Agreed to rest on Friday');
+    expect(recap).toContain('# The end of that chat, word for word');
+    expect(recap).toContain('Coach: ok');
+  });
+
+  it('leaves them out from an older chat, where a reply is no longer likely', async () => {
+    const clock = { now: START };
+    const { d, sent } = deps(clock);
+    const first = (await startThread(d, U))!;
+    await say(d, first.id, longMessage('Should I move the VO2 session?'));
+    clock.now = after(13 * 60);
+    const second = (await startThread(d, U))!;
+    await say(d, second.id, 'hello');
+    expect(sent.at(-1)!.system[2]).not.toContain('The end of that chat');
+  });
+
+  describe('with a card still open in the last chat', () => {
+    const plan = (threadId: string) =>
+      createProposal(c, { userId: U, threadId: new ObjectId(threadId), kind: 'plan', toolUseId: 't', title: 'Build week', items: [{}], itemStatus: ['pending'], createdAt: START } as never);
+
+    it('brings the card across, so changing it revises it', async () => {
+      const clock = { now: START };
+      const { d, sent } = deps(clock);
+      const first = (await startThread(d, U))!;
+      await say(d, first.id, 'Plan my week');
+      const open = await plan(first.id);
+      clock.now = after(40);
+      const second = (await startThread(d, U))!;
+      await say(d, second.id, 'Swap Tuesday');
+      const recap = sent.at(-1)!.system[2]!;
+      expect(recap).toContain('# Cards still open in that chat');
+      expect(recap).toContain(open.id);
+    });
+
+    it('closes the old card when a new chat replaces it, so both can never be added', async () => {
+      const clock = { now: START };
+      const { d } = deps(clock);
+      const first = (await startThread(d, U))!;
+      await say(d, first.id, 'Plan my week');
+      const open = await plan(first.id);
+      const second = (await startThread(d, U))!;
+      await createCoachProposal(c, U, new ObjectId(second.id), { toolUseId: 't2', title: 'Build week v2', kind: 'plan', items: [], replaces: open.id }, after(40));
+      expect((await c.proposals.findOne({ _id: new ObjectId(open.id) }))!.itemStatus).toEqual(['dismissed']);
+    });
+
+    it("can't touch another athlete's card", async () => {
+      const clock = { now: START };
+      const { d } = deps(clock);
+      const first = (await startThread(d, U))!;
+      const open = await plan(first.id);
+      await createCoachProposal(c, 'bbbbbbbbbbbbbbbbbbbbbbbb', new ObjectId(first.id), { toolUseId: 't2', title: 'x', kind: 'plan', items: [], replaces: open.id }, after(1));
+      expect((await c.proposals.findOne({ _id: new ObjectId(open.id) }))!.itemStatus).toEqual(['pending']);
+    });
+
+    it("doesn't pass it on again from a later chat, when it may be settled", async () => {
+      const clock = { now: START };
+      const { d, sent } = deps(clock);
+      const first = (await startThread(d, U))!;
+      await say(d, first.id, 'Plan my week');
+      const open = await plan(first.id);
+      clock.now = after(40);
+      const second = (await startThread(d, U))!;
+      await say(d, second.id, 'Something else');
+      clock.now = after(80);
+      const third = (await startThread(d, U))!;
+      await say(d, third.id, 'hello');
+      expect(sent.at(-1)!.system[2]).not.toContain(open.id);
+    });
+
+    it('says so on the latest chat in the list, for the link back to it', async () => {
+      const clock = { now: START };
+      const { d } = deps(clock);
+      const older = (await startThread(d, U))!;
+      clock.now = after(1);
+      const latest = (await startThread(d, U))!;
+      await plan(older.id);
+      await plan(latest.id);
+      await plan(latest.id);
+      const [first, second] = await listThreadSummaries(c, U);
+      expect(first).toMatchObject({ id: latest.id, openCards: 2 });
+      expect(second!.openCards).toBeUndefined();
+    });
+  });
+});
+
+describe('the list of chats', () => {
+  it('leaves the count off when nothing is waiting', async () => {
+    const clock = { now: START };
+    const { d } = deps(clock);
+    const thread = (await startThread(d, U))!;
+    expect(await listThreadSummaries(c, U)).toEqual([expect.not.objectContaining({ openCards: expect.anything() })]);
+    expect((await listThreadSummaries(c, U))[0]!.id).toBe(thread.id);
+  });
+
+  it('goes back as far as it is asked, newest first', async () => {
+    const clock = { now: START };
+    const { d } = deps(clock);
+    for (let i = 0; i < 3; i++) {
+      clock.now = after(i);
+      await startThread(d, U);
+    }
+    expect(await listThreadSummaries(c, U, 2)).toHaveLength(2);
+    expect(await listThreadSummaries(c, U)).toHaveLength(3);
+  });
+
+  it('copes with an athlete who has no chats yet', async () => {
+    expect(await listThreadSummaries(c, 'bbbbbbbbbbbbbbbbbbbbbbbb')).toEqual([]);
+  });
+
+  it("doesn't read a chat's prompt, which is most of the document", async () => {
+    const clock = { now: START };
+    const { d } = deps(clock);
+    await startThread(d, U);
+    const find = vi.spyOn(c.threads, 'find');
+    await listThreads(c, U);
+    expect(find.mock.calls[0]![1]).toMatchObject({ projection: { title: 1, createdAt: 1, lastMessageAt: 1, tags: 1 } });
+    find.mockRestore();
   });
 });
