@@ -4,9 +4,13 @@ import {
   ONBOARDING_DONE_STEP,
   ONBOARDING_GOAL_LABEL,
   onboardingGoalChips,
+  TRAINING_PREFERENCE_BLURB,
+  TRAINING_PREFERENCE_LABEL,
+  trainingPreferences,
   type FtpSource,
   type OnboardingGoalChip,
   type OnboardingState,
+  type TrainingPreference,
 } from '@cycling-coach/shared';
 import { Navigate, useNavigate, useRouterState } from '@tanstack/react-router';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -62,7 +66,7 @@ interface Draft {
   weight: string;
   chips: OnboardingGoalChip[];
   mainTitle: string;
-  mainDate: string;
+  preference: TrainingPreference;
   eventName: string;
   eventDate: string;
   note: string;
@@ -80,7 +84,7 @@ function draftFrom(s: OnboardingState): Draft {
     weight: kg === undefined ? '' : String(unit === 'lb' ? Math.round((kg / KG_PER_LB) * 10) / 10 : kg),
     chips: s.goals?.chips ?? [],
     mainTitle: s.goals?.main?.title ?? '',
-    mainDate: s.goals?.main?.date ?? '',
+    preference: s.goals?.preference ?? 'committed',
     eventName: s.goals?.event?.name ?? '',
     eventDate: s.goals?.event?.date ?? '',
     note: '',
@@ -130,8 +134,9 @@ function Wizard({ initial }: { initial: OnboardingState }) {
         if (event && (!d.eventName.trim() || !d.eventDate)) return fail('Add the event’s name and date.');
         await m.goals.mutateAsync({
           chips: d.chips,
-          ...(d.mainTitle.trim() ? { main: { title: d.mainTitle.trim(), ...(d.mainDate ? { date: d.mainDate } : {}) } } : {}),
+          ...(d.mainTitle.trim() ? { main: { title: d.mainTitle.trim() } } : {}),
           ...(event ? { event: { name: d.eventName.trim(), date: d.eventDate } } : {}),
+          preference: d.preference,
         });
       } else {
         await m.step.mutateAsync(step + 1);
@@ -193,7 +198,7 @@ function Wizard({ initial }: { initial: OnboardingState }) {
   const tip = {
     0: d.known ? 'A rough number is fine. If your rides show it is off, I will suggest an update.' : "No problem. Until the ramp test, I'll keep your rides by feel and heart rate.",
     1: 'If you weigh in regularly and connect intervals.icu, I can keep this up to date for you.',
-    2: "I'll plan backwards from your main goal and check in on progress every week.",
+    2: "I'll tell you what's realistic for your goal, and build toward it at the pace you pick. Events set the dates.",
     3: "For short-term things, like 'I'm away next week', just tell me in chat. I'll remember them for as long as they matter.",
     4: 'You can skip this and connect later from the Athlete page.',
     5: d.known ? 'Tell me which days you can ride this week and I will fill in your calendar.' : "Your ramp test goes on tomorrow's calendar; move it if another day suits you. Then tell me when you can ride and I'll plan around it.",
@@ -304,7 +309,7 @@ function Label({ text, children }: { text: string; children: ReactNode }) {
 
 type StepProps = { d: Draft; set: (p: Partial<Draft>) => void };
 
-function Choice({ on, onClick, icon, title, sub }: { on: boolean; onClick: () => void; icon: ReactNode; title: string; sub: string }) {
+function Choice({ on, onClick, icon, title, sub }: { on: boolean; onClick: () => void; icon?: ReactNode; title: string; sub: string }) {
   return (
     <button
       type="button"
@@ -312,7 +317,7 @@ function Choice({ on, onClick, icon, title, sub }: { on: boolean; onClick: () =>
       onClick={onClick}
       className={`flex min-h-11 items-start gap-3 rounded-xl border-2 px-4 py-3.5 text-left text-ink ${on ? 'border-accent-ring bg-[#F9FCEF]' : 'border-line bg-surface'}`}
     >
-      <span className="flex h-8 w-8 flex-none items-center justify-center rounded-[9px] bg-hover text-accent-ink">{icon}</span>
+      {icon && <span className="flex h-8 w-8 flex-none items-center justify-center rounded-[9px] bg-hover text-accent-ink">{icon}</span>}
       <span className="flex flex-col">
         <span className="font-semibold">{title}</span>
         <span className="text-[13px] text-muted">{sub}</span>
@@ -458,14 +463,9 @@ function GoalsStep({ d, set }: StepProps) {
       </div>
       <div className="flex flex-col gap-3.5 rounded-[14px] border border-line p-4">
         <span className="font-semibold">Main goal</span>
-        <div className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3">
-          <Label text="What does success look like?">
-            <input type="text" maxLength={120} placeholder="e.g. Raise my FTP to 300 W" value={d.mainTitle} onChange={(e) => set({ mainTitle: e.target.value })} className={inputCls} />
-          </Label>
-          <Label text="By when?">
-            <input type="date" value={d.mainDate} onChange={(e) => set({ mainDate: e.target.value })} className={inputCls} />
-          </Label>
-        </div>
+        <Label text="What does success look like?">
+          <input type="text" maxLength={120} placeholder="e.g. Raise my FTP to 300 W" value={d.mainTitle} onChange={(e) => set({ mainTitle: e.target.value })} className={inputCls} />
+        </Label>
         {d.chips.includes('event') && (
           <div className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3">
             <Label text="Event name">
@@ -476,6 +476,17 @@ function GoalsStep({ d, set }: StepProps) {
             </Label>
           </div>
         )}
+      </div>
+      <div className="flex flex-col gap-2.5">
+        <div className="flex flex-col gap-0.5">
+          <span className="font-semibold">How hard do you want to go?</span>
+          <span className="text-[13px] text-muted">Your coach keeps your training within this. You can change it anytime.</span>
+        </div>
+        <div role="group" aria-label="How hard do you want to go?" className="grid grid-cols-3 gap-2.5 max-[640px]:grid-cols-1">
+          {trainingPreferences.map((p) => (
+            <Choice key={p} on={d.preference === p} onClick={() => set({ preference: p })} title={TRAINING_PREFERENCE_LABEL[p]} sub={TRAINING_PREFERENCE_BLURB[p]} />
+          ))}
+        </div>
       </div>
     </>
   );
@@ -604,6 +615,7 @@ function DoneStep({ d, kg, state, connected, edit }: { d: Draft; kg: number; sta
     { label: 'FTP', value: ftp ? `${ftp} W${kg >= 30 ? ` · ${wattsPerKg(ftp, kg).toFixed(2)} W/kg` : ''}` : 'Ramp test first', step: 0 },
     { label: 'Weight', value: d.weight ? `${d.weight} ${d.unit}` : '—', step: 1 },
     { label: 'Goals', value: goals.length ? goals.join(' · ') : 'None yet', step: 2 },
+    { label: 'Training', value: TRAINING_PREFERENCE_LABEL[d.preference], step: 2 },
     { label: 'Memory', value: state.memories.length === 1 ? '1 note' : `${state.memories.length} notes`, step: 3 },
     { label: 'intervals.icu', value: connected ? 'Connected' : 'Not connected', step: 4 },
   ];

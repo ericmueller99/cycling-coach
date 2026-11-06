@@ -1889,3 +1889,47 @@ health tiles wants it beside them, but one with no health data, or a self-hosted
 - *Keeping a reserved row for the status:* an empty band above the composer for most of its life, to hold something shown during turns.
 - *A second copy of the note rows for the panel:* two editors would drift, and both write the same notes.
 
+## 86. Goals are open-ended unless they're an event or a weight goal, and the athlete sets how hard to go (Nov 5)
+
+**Context.** "By when?" let anyone ask for a big number by a date with no pushback. The date did little anyway:
+`targetDate` never reached the coach, so even a real event's date from onboarding was invisible when it planned the
+first week. Only the calorie budget used a date.
+
+**Decision.**
+- **Only events and weight goals have a date.** `goal.event` is new, and `core.goalTakesDate` decides. A weight goal's
+  date stays optional and still sets the calorie pace (#36). Every other goal is open-ended: the wizard and the editor
+  don't ask, and the coach is told not to set one.
+- **The coach now sees those dates** in the Goals block, as `event date …` or `reach by …`.
+- **Nothing is deleted.** `targetLabel` is retired: nothing writes, shows or sends it. Old dates and labels on
+  open-ended goals stay stored and ignored. Ticking "This is an event" on a hand-made race goal brings its date back. A
+  boot migration flags the wizard's `Get ready for …` goals as events.
+- **Training preference:** `profile.trainingPreference`, Steady, Committed or All in. Per athlete, not per goal: there's
+  one body and one training load, and a main and secondary goal shouldn't pull against each other. Asked on the wizard's
+  Goals step (Committed preselected) and on Athlete › Goals & coach. The coach can propose a change through
+  `propose_profile_update`, and the athlete confirms it. Unset, the coach behaves as it did.
+- **It's a ceiling, not a target.** Fatigue, ratings, illness and how they feel always win.
+
+  | | Steady | Committed | All in |
+  |---|---|---|---|
+  | CTL gain per week, at most | about 2–4 | about 3–5 | about 5–8 |
+  | Hard days per week | up to 2 | 2–3 | up to 3 |
+
+  All in is for a block: after about 6–8 weeks the coach suggests stepping down. The athlete sees words, not numbers.
+- **The coach is honest about big goals,** once, in chat: what's realistic from their numbers and preference, called an
+  estimate, with a first milestone if it's a long way off. It never refuses a goal or repeats the doubt. Nothing is stored
+  on the goal.
+- **Availability is optional.** Most people's weeks change, so the default is "Tell my coach when I chat": the coach asks
+  one short question when it needs to and saves the answer as a short-term note. `profile.usualWeek` (days, optional hours)
+  is for those who want it, on the Athlete page only, and what they say in chat beats it.
+
+**The numbers are starting guesses.** Friel puts 5–8 CTL a week as right for most; other coaches say 3–5. The FTP bands in
+the persona (15–30% over 6–12 months for a beginner, 5–15% a year for an intermediate, 2–8% near their ceiling) come from
+coaching articles, not research. The ceilings live only in the prompt, so nothing enforces them yet: if plans drift past
+them, add a check on `propose_plan`.
+
+**Rejected.**
+- *A warning on the date*: it keeps the deadline, the thing that sets people up to fail, and needs a model of every measure.
+- *Blocking an unachievable goal, as Xert can*: a coach says what's realistic, and the athlete decides.
+- *Required weekly hours*: real weeks change, which is what chatting with a coach is for.
+- *A preference per goal*: see above. A block of All in for one event is covered by changing it, and the step-down prompt.
+- *Storing the coach's estimate on the goal*: it would turn back into a deadline.

@@ -13,6 +13,7 @@ import { EnergySection } from './EnergySection';
 import { FtpCard } from './ftp';
 import { GoalsSection } from './goals';
 import { MemorySection } from './memory';
+import { TrainingCard } from './training';
 import { PowerCurveCard } from './powerCurve';
 import { Snapshot } from './Snapshot';
 import { WeightSection } from './weight';
@@ -89,12 +90,15 @@ export function AthletePage({ tab, addWeightGoal }: { tab: AthleteTab; addWeight
     body = (
       <Columns
         left={
-          <GoalsSection
-            goals={data.goals}
-            mainId={mainGoal?.id}
-            addWeightGoal={addWeightGoal}
-            onAddedWeightGoal={() => addWeightGoal && void navigate({ to: '/athlete/$tab', params: { tab: 'goals' }, search: {}, replace: true })}
-          />
+          <>
+            <GoalsSection
+              goals={data.goals}
+              mainId={mainGoal?.id}
+              addWeightGoal={addWeightGoal}
+              onAddedWeightGoal={() => addWeightGoal && void navigate({ to: '/athlete/$tab', params: { tab: 'goals' }, search: {}, replace: true })}
+            />
+            <TrainingCard profile={data.profile} />
+          </>
         }
         right={
           <>

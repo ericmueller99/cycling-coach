@@ -1,6 +1,14 @@
-import type { GoalMeasure } from '@cycling-coach/shared';
+import { formatShortDate, goalTakesDate } from '@cycling-coach/core';
+import type { Goal, GoalMeasure } from '@cycling-coach/shared';
 
 const PERIOD: Record<'90d' | 'season' | 'allTime', string> = { '90d': '90 days', season: 'season', allTime: 'all-time' };
+
+/** "Jun 12, 2027" for an event, "by Mar 1, 2027" for a weight goal; open-ended goals show no date. */
+export function goalDateLabel(goal: Pick<Goal, 'event' | 'measure' | 'targetDate'>): string | undefined {
+  if (!goal.targetDate || !goalTakesDate(goal)) return undefined;
+  const date = `${formatShortDate(goal.targetDate)}, ${goal.targetDate.slice(0, 4)}`;
+  return goal.event ? date : `by ${date}`;
+}
 
 /** "W/kg on Zwift weight", "5 min best (90 days)" — what a goal is measured by, in words. */
 export function describeMeasure(m: GoalMeasure): string {

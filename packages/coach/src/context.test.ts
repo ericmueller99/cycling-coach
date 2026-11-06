@@ -13,6 +13,42 @@ const ctx = (zwift?: object) =>
     workouts: [],
   }) as unknown as Parameters<typeof renderAthleteBlock>[0];
 
+describe('renderAthleteBlock — dates, preference and availability (DECISIONS #86)', () => {
+  const withGoals = (goals: object[], profile: object = {}) => {
+    const base = ctx();
+    return renderAthleteBlock({ ...base, profile: { ...base.profile, ...profile }, goals } as unknown as Parameters<typeof renderAthleteBlock>[0]);
+  };
+  const long = { horizon: 'long', done: false, primary: false };
+
+  it('gives an event its date and a weight goal its deadline', () => {
+    const block = withGoals([
+      { ...long, title: 'Get ready for Gran Fondo', event: true, targetDate: '2027-06-12' },
+      { ...long, title: 'Race weight', measure: { kind: 'weight' }, target: 72, targetDate: '2027-03-01' },
+    ]);
+    expect(block).toContain('Get ready for Gran Fondo — event date 2027-06-12');
+    expect(block).toContain('reach by 2027-03-01');
+  });
+
+  it('leaves out the date and label an older open-ended goal still has', () => {
+    const block = withGoals([{ ...long, title: 'Raise my FTP', targetDate: '2027-03-01', targetLabel: 'Sept 2027' }]);
+    expect(block).toContain('Raise my FTP');
+    expect(block).not.toContain('2027');
+  });
+
+  it('shows the preference only once there is one', () => {
+    expect(withGoals([], { trainingPreference: 'all_in' })).toContain('Training preference: All in');
+    expect(withGoals([])).not.toContain('Training preference');
+  });
+
+  it('says how the coach learns availability', () => {
+    expect(withGoals([])).toContain('Availability: they tell you as they chat');
+    const block = withGoals([], { usualWeek: { days: ['tue', 'thu', 'sat'], hoursPerWeek: 8 } });
+    expect(block).toContain('Usual week: Tue, Thu, Sat · about 8 h');
+    expect(block).not.toContain('Availability:');
+    expect(withGoals([], { usualWeek: { days: [], hoursPerWeek: 8 } })).toContain('Usual week: about 8 h');
+  });
+});
+
 describe('renderAthleteBlock — Zwift race metrics', () => {
   it('gives zFTP/zMAP W/kg, the category and what A takes, with Racing Score as context only', () => {
     const block = renderAthleteBlock(ctx({ zftp: 330, zmap: 420, category: 'B', racingScore: 512, asOf: '2026-10-28', source: 'zwift' }));

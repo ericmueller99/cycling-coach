@@ -80,14 +80,13 @@ if (args.includes('--sample') && (await c.goals.countDocuments({ userId })) === 
       horizon: 'long',
       title: 'Reach 4 W/kg',
       detail: 'FTP over trend weight',
-      targetLabel: 'This season',
       // Measured live from the profile (DECISIONS #19). No current value is stored.
       measure: { kind: 'wkg', weight: 'trend' },
       target: 4,
       done: false,
       primary: true,
     },
-    { horizon: 'long', title: 'Stronger 3–5 min climbs', detail: 'Sample goal — edit or delete it', targetLabel: 'Ongoing', done: false, primary: false },
+    { horizon: 'long', title: 'Stronger 3–5 min climbs', detail: 'Sample goal — edit or delete it', done: false, primary: false },
     { horizon: 'short', title: 'One long Z2 ride every week', done: false, primary: false },
   ];
   for (const g of goals) await createGoal(c, userId, g, now);

@@ -37,6 +37,10 @@ export async function migrate(db: Db): Promise<void> {
     await c.goals.updateOne({ _id: g._id }, { $set: { measure, target: metric.target }, $unset: { metric: '' } } as never);
   }
 
+  // Only events and weight goals keep a date (DECISIONS #86). The wizard's event goals need saying
+  // so; nothing else changes, and dates on open-ended goals stay stored, ignored.
+  await c.goals.updateMany({ title: /^Get ready for /, targetDate: { $exists: true }, event: { $exists: false } }, { $set: { event: true } });
+
   // "Ride fuel" became "Workout fuel": any exercise, not only rides.
   await c.foodLog.updateMany({ slot: 'Ride fuel' }, { $set: { slot: 'Workout fuel' } });
   await c.meals.updateMany({ slot: 'Ride fuel' }, { $set: { slot: 'Workout fuel' } });

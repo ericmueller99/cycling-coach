@@ -1,7 +1,7 @@
 import { RAMP_TEST, STARTER_WORKOUTS } from '@cycling-coach/core';
-import { collections, ensureIndexes, getProfile, isOnboarded, listGoals, listWorkouts, saveProfile, type Collections } from '@cycling-coach/db';
+import { applyProfileUpdate, collections, ensureIndexes, getProfile, isOnboarded, listGoals, listWorkouts, migrate, saveProfile, type Collections } from '@cycling-coach/db';
 import type { CalendarEvent, CalendarEventInput } from '@cycling-coach/shared';
-import { MongoClient } from 'mongodb';
+import { MongoClient, type Db } from 'mongodb';
 import { MongoMemoryServer } from 'mongodb-memory-server-core';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { onboardingGoalInputs, OnboardingService, usableTimezone } from './onboarding';
@@ -9,12 +9,13 @@ import { onboardingGoalInputs, OnboardingService, usableTimezone } from './onboa
 let server: MongoMemoryServer;
 let client: MongoClient;
 let c: Collections;
+let db: Db;
 
 beforeAll(async () => {
   server = await MongoMemoryServer.create();
   client = new MongoClient(server.getUri());
   await client.connect();
-  const db = client.db('onboarding_test');
+  db = client.db('onboarding_test');
   await ensureIndexes(db);
   c = collections(db);
 }, 120_000);
@@ -76,7 +77,7 @@ describe('OnboardingService (DECISIONS #62)', () => {
 
   it('replaces its own goals when the Goals step is saved again', async () => {
     const s = new OnboardingService(c, fakeCalendar(), () => NOW);
-    await s.saveGoals(U, { chips: ['ftp', 'consistent'], main: { title: 'Raise my FTP to 300 W', date: '2027-03-01' } });
+    await s.saveGoals(U, { chips: ['ftp', 'consistent'], main: { title: 'Raise my FTP to 300 W' } });
     let state = await s.saveGoals(U, { chips: ['event'], event: { name: 'Gran Fondo', date: '2027-06-12' } });
     expect(state.step).toBe(3);
     const goals = await listGoals(c, U);
@@ -86,6 +87,23 @@ describe('OnboardingService (DECISIONS #62)', () => {
     await c.goals.insertOne({ userId: U, horizon: 'short', title: 'Mine', done: false, primary: false, createdAt: NOW });
     state = await s.saveGoals(U, { chips: ['fitter'] });
     expect((await listGoals(c, U)).map((g) => g.title).sort()).toEqual(['Just get fitter', 'Mine']);
+  });
+
+  it('saves the training preference on the profile, and going back to Body keeps it', async () => {
+    const s = new OnboardingService(c, fakeCalendar(), () => NOW);
+    await s.saveBody(U, { weightKg: 70, unit: 'kg', timezone: 'UTC' });
+    const state = await s.saveGoals(U, { chips: ['ftp'], preference: 'all_in' });
+    expect(state.goals?.preference).toBe('all_in');
+    await s.saveBody(U, { weightKg: 71, unit: 'kg', timezone: 'UTC' });
+    expect(await getProfile(c, U)).toMatchObject({ weightKg: 71, trainingPreference: 'all_in' });
+  });
+
+  it('marks an event goal as an event and keeps its date', async () => {
+    const s = new OnboardingService(c, fakeCalendar(), () => NOW);
+    await s.saveGoals(U, { chips: ['event'], main: { title: 'Raise my FTP' }, event: { name: 'Gran Fondo', date: '2027-06-12' } });
+    const [main, event] = await listGoals(c, U);
+    expect(main).not.toHaveProperty('targetDate');
+    expect(event).toMatchObject({ event: true, targetDate: '2027-06-12' });
   });
 
   it('books one ramp test for tomorrow in the athlete’s timezone when FTP is unknown', async () => {
@@ -121,8 +139,8 @@ describe('OnboardingService (DECISIONS #62)', () => {
 
 describe('onboardingGoalInputs', () => {
   it('makes one main goal and folds the other chips into it', () => {
-    expect(onboardingGoalInputs({ chips: ['ftp', 'consistent'], main: { title: 'Raise my FTP to 300 W', date: '2027-03-01' } })).toEqual([
-      { horizon: 'long', title: 'Raise my FTP to 300 W', targetDate: '2027-03-01', detail: 'Focus: Raise my FTP · Ride more consistently', done: false, primary: true },
+    expect(onboardingGoalInputs({ chips: ['ftp', 'consistent'], main: { title: 'Raise my FTP to 300 W' } })).toEqual([
+      { horizon: 'long', title: 'Raise my FTP to 300 W', detail: 'Focus: Raise my FTP · Ride more consistently', done: false, primary: true },
     ]);
     expect(onboardingGoalInputs({ chips: ['power5', 'fitter'] })).toEqual([
       { horizon: 'long', title: 'Improve my 5-minute power', detail: 'Also: Just get fitter', done: false, primary: true },
@@ -131,7 +149,7 @@ describe('onboardingGoalInputs', () => {
 
   it('adds the event as its own goal, main unless the athlete wrote one', () => {
     const goals = onboardingGoalInputs({ chips: ['event', 'ftp'], event: { name: 'Gran Fondo', date: '2027-06-12' } });
-    expect(goals).toEqual([{ horizon: 'long', title: 'Get ready for Gran Fondo', targetDate: '2027-06-12', detail: 'Focus: Raise my FTP', done: false, primary: true }]);
+    expect(goals).toEqual([{ horizon: 'long', title: 'Get ready for Gran Fondo', targetDate: '2027-06-12', event: true, detail: 'Focus: Raise my FTP', done: false, primary: true }]);
     const withMain = onboardingGoalInputs({ chips: ['event'], main: { title: 'Podium' }, event: { name: 'Gran Fondo', date: '2027-06-12' } });
     expect(withMain.map((g) => [g.title, g.primary])).toEqual([
       ['Podium', true],
@@ -148,5 +166,39 @@ describe('usableTimezone', () => {
   it('keeps a real zone and falls back to UTC', () => {
     expect(usableTimezone('America/Toronto')).toBe('America/Toronto');
     expect(usableTimezone('nope')).toBe('UTC');
+  });
+});
+
+describe('open-ended goals (DECISIONS #86)', () => {
+  const goal = { userId: U, horizon: 'long' as const, done: false, primary: false, createdAt: NOW };
+
+  it('flags the wizard’s event goals at boot, once, and leaves every other goal alone', async () => {
+    await c.goals.insertMany([
+      { ...goal, title: 'Get ready for Gran Fondo', targetDate: '2027-06-12' },
+      { ...goal, title: 'Raise my FTP', targetDate: '2027-03-01' },
+      { ...goal, title: 'Get ready for summer' },
+    ]);
+    await migrate(db);
+    await migrate(db);
+    const goals = await listGoals(c, U);
+    expect(goals.map((g) => [g.title, g.event, g.targetDate])).toEqual([
+      ['Get ready for Gran Fondo', true, '2027-06-12'],
+      ['Raise my FTP', undefined, '2027-03-01'],
+      ['Get ready for summer', undefined, undefined],
+    ]);
+  });
+
+  it('applies a training preference from a coach card without touching the rest', async () => {
+    await saveProfile(c, U, { ftpZwift: 250, weightKg: 70, weightSource: 'manual', timezone: 'UTC' }, NOW);
+    await applyProfileUpdate(c, U, { trainingPreference: 'steady' }, NOW);
+    expect(await getProfile(c, U)).toMatchObject({ ftpZwift: 250, trainingPreference: 'steady' });
+  });
+
+  it('clears a usual week the athlete turned off', async () => {
+    const base = { ftpZwift: 250, weightKg: 70, weightSource: 'manual' as const, timezone: 'UTC' };
+    await saveProfile(c, U, { ...base, usualWeek: { days: ['tue', 'sat'], hoursPerWeek: 8 } }, NOW);
+    expect((await getProfile(c, U))?.usualWeek).toEqual({ days: ['tue', 'sat'], hoursPerWeek: 8 });
+    await saveProfile(c, U, base, NOW);
+    expect(await getProfile(c, U)).not.toHaveProperty('usualWeek');
   });
 });

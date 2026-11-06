@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { calendarEventInputSchema, calendarEventPatchSchema, calendarEventSchema } from './calendar';
 import { isoDateSchema, type IsoDate } from './common';
-import { goalMeasureSchema } from './profile';
+import { goalMeasureSchema, trainingPreferenceSchema } from './profile';
 
 /**
  * Coach output the UI renders as cards. The API stores the verbatim Anthropic transcript and derives
@@ -32,6 +32,7 @@ export const profileUpdateSchema = z.object({
   ftpZwift: z.number().int().min(50).max(700).optional(),
   /** The monthly Zwift baseline. The real weight syncs from intervals.icu and isn't proposed. */
   zwiftWeightKg: z.number().min(30).max(200).optional(),
+  trainingPreference: trainingPreferenceSchema.optional(),
   powerBests: z
     .array(
       z.object({
@@ -53,8 +54,9 @@ export const goalProposalSchema = z.object({
   horizon: z.enum(['long', 'short']),
   title: z.string().min(1).max(120),
   detail: z.string().max(500).optional(),
-  targetLabel: z.string().max(40).optional(),
+  /** Only for an event or a weight goal; every other goal is open-ended. */
   targetDate: isoDateSchema.optional(),
+  event: z.boolean().optional(),
   measure: goalMeasureSchema.optional(),
   target: z.number().optional(),
   primary: z.boolean().optional(),

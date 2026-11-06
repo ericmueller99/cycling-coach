@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { isoDateSchema } from './common';
-import { ftpSourceSchema, type Goal, type Memory } from './profile';
+import { ftpSourceSchema, trainingPreferenceSchema, type Goal, type Memory } from './profile';
 
 /**
  * First-run onboarding (DECISIONS #62): Fitness · Body · Goals · Memory · Sync, then a summary.
@@ -41,9 +41,10 @@ export const ONBOARDING_GOAL_LABEL: Record<OnboardingGoalChip, string> = {
 export const onboardingGoalsSchema = z
   .object({
     chips: z.array(z.enum(onboardingGoalChips)).max(onboardingGoalChips.length),
-    main: z.object({ title: z.string().trim().min(1).max(120), date: isoDateSchema.optional() }).optional(),
+    main: z.object({ title: z.string().trim().min(1).max(120) }).optional(),
     /** Only with the `event` chip. */
     event: z.object({ name: z.string().trim().min(1).max(100), date: isoDateSchema }).optional(),
+    preference: trainingPreferenceSchema.optional(),
   })
   .refine((g) => g.chips.length > 0 || g.main !== undefined, { message: 'Pick at least one goal' });
 export type OnboardingGoals = z.infer<typeof onboardingGoalsSchema>;

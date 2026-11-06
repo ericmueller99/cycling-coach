@@ -2,7 +2,7 @@ import { powerBestDurations, type Goal, type GoalMeasure, type PowerBest } from 
 import { useEffect, useState } from 'react';
 import { PencilIcon, TrashIcon } from '../../components/icons';
 import { Button, Card, ErrorNote, ProgressBar, SectionLabel } from '../../components/ui';
-import { describeMeasure, measureUnit } from '../../lib/goals';
+import { describeMeasure, goalDateLabel, measureUnit } from '../../lib/goals';
 import { errorMessage, useProfileMutations } from '../../lib/queries';
 import { durLabel, PERIODS } from './shared';
 
@@ -36,14 +36,17 @@ function choiceFromMeasure(m: GoalMeasure | undefined): MeasureChoice {
   return m.kind;
 }
 
-/** Add or edit a goal: what it's measured by and a target — never a current value. */
+/**
+ * Add or edit a goal: what it's measured by and a target — never a current value. Only an event or
+ * a weight goal has a date; the rest are open-ended, and a date an older one has is left alone.
+ */
 function GoalEditor({ goal, preset, onDone }: { goal?: Goal; preset?: MeasureChoice | undefined; onDone: () => void }) {
   const { createGoal, updateGoal } = useProfileMutations();
   const [horizon, setHorizon] = useState<Goal['horizon']>(goal?.horizon ?? 'long');
   const [title, setTitle] = useState(goal?.title ?? (preset === 'weight' ? 'Race weight' : ''));
   const [targetDate, setTargetDate] = useState(goal?.targetDate ?? '');
   const [detail, setDetail] = useState(goal?.detail ?? '');
-  const [targetLabel, setTargetLabel] = useState(goal?.targetLabel ?? '');
+  const [isEvent, setIsEvent] = useState(goal?.event ?? false);
   const [choice, setChoice] = useState<MeasureChoice>(goal ? choiceFromMeasure(goal.measure) : (preset ?? 'none'));
   const [target, setTarget] = useState(goal?.target?.toString() ?? '');
   const [durationSec, setDurationSec] = useState(goal?.measure?.kind === 'power_best' ? goal.measure.durationSec : 300);
@@ -52,21 +55,25 @@ function GoalEditor({ goal, preset, onDone }: { goal?: Goal; preset?: MeasureCho
   const [manualUnit, setManualUnit] = useState(goal?.measure?.kind === 'manual' ? goal.measure.unit : '');
   const field = 'min-h-10 rounded-lg border border-line-strong px-2';
 
+  const weight = choice === 'weight';
+  const event = isEvent && !weight;
+  const dated = event || weight;
+
   const save = () => {
     const measure = measureFromChoice(choice, { durationSec, period, current: Number(manualCurrent) || 0, unit: manualUnit });
     const fields = {
       horizon,
       title,
       ...(detail ? { detail } : {}),
-      ...(targetLabel ? { targetLabel } : {}),
-      ...(targetDate ? { targetDate } : {}),
+      ...(dated && targetDate ? { targetDate } : {}),
+      ...(event ? { event: true } : {}),
       ...(measure && target !== '' ? { measure, target: Number(target) } : {}),
     };
     if (goal) {
       const unset = [
         ...(!detail ? (['detail'] as const) : []),
-        ...(!targetLabel ? (['targetLabel'] as const) : []),
-        ...(!targetDate ? (['targetDate'] as const) : []),
+        ...(dated && !targetDate ? (['targetDate'] as const) : []),
+        ...(goal.event && !event ? (['event'] as const) : []),
         ...(!fields.measure ? (['measure', 'target'] as const) : []),
       ];
       updateGoal.mutate({ id: goal.id, patch: { ...fields, ...(unset.length ? { unset } : {}) } }, { onSuccess: onDone });
@@ -84,19 +91,7 @@ function GoalEditor({ goal, preset, onDone }: { goal?: Goal; preset?: MeasureCho
         </select>
         <input placeholder="Goal" value={title} onChange={(e) => setTitle(e.target.value)} className={`${field} flex-1`} />
       </div>
-      <div className="flex flex-wrap gap-2">
-        <input placeholder="Detail (optional)" value={detail} onChange={(e) => setDetail(e.target.value)} className={`${field} flex-1`} />
-        <input placeholder="When, e.g. Sept 2027" value={targetLabel} onChange={(e) => setTargetLabel(e.target.value)} className={`${field} w-40`} />
-        <label className="flex items-center gap-1.5 text-[13px] text-muted">
-          By
-          <input type="date" aria-label="Target date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} className={field} />
-        </label>
-      </div>
-      {choice === 'weight' && (
-        <div className="text-xs text-muted">
-          A weight goal sets your calorie budget: the deficit (or surplus) to reach it by the date, or your default pace without one.
-        </div>
-      )}
+      <input placeholder="Detail (optional)" value={detail} onChange={(e) => setDetail(e.target.value)} className={field} />
       <div className="flex flex-wrap items-center gap-2 text-[13px]">
         <span className="text-muted">Measured by</span>
         <select value={choice} onChange={(e) => setChoice(e.target.value as MeasureChoice)} className={field}>
@@ -142,8 +137,27 @@ function GoalEditor({ goal, preset, onDone }: { goal?: Goal; preset?: MeasureCho
           </>
         )}
       </div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-[13px]">
+        {!weight && (
+          <label className="flex min-h-10 items-center gap-2">
+            <input type="checkbox" checked={isEvent} onChange={(e) => setIsEvent(e.target.checked)} className="h-[18px] w-[18px] accent-accent-ink" />
+            This is an event
+          </label>
+        )}
+        {dated && (
+          <label className="flex items-center gap-1.5 text-muted">
+            {weight ? 'Reach it by (optional)' : 'Event date'}
+            <input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} className={field} />
+          </label>
+        )}
+      </div>
+      {weight && (
+        <div className="text-xs text-muted">
+          A weight goal sets your calorie budget: the deficit (or surplus) to reach it by the date, or your default pace without one.
+        </div>
+      )}
       <div className="flex gap-2">
-        <Button variant="primary" size="sm" disabled={!title || createGoal.isPending || updateGoal.isPending} onClick={save}>
+        <Button variant="primary" size="sm" disabled={!title || (event && !targetDate) || (weight && target === '') || createGoal.isPending || updateGoal.isPending} onClick={save}>
           {goal ? 'Save goal' : 'Add goal'}
         </Button>
         <Button size="sm" variant="ghost" onClick={onDone}>
@@ -192,7 +206,7 @@ function GoalRow({ goal, main }: { goal: Goal; main: boolean }) {
           {main && <span className="rounded-md bg-accent px-1.5 py-0.5 text-[11px] font-semibold text-on-accent">Main goal</span>}
         </span>
         <span className="flex flex-none items-center gap-2 text-xs text-muted">
-          {goal.targetLabel}
+          {goalDateLabel(goal)}
           {!main && goal.horizon === 'long' && (
             <Button size="sm" variant="ghost" className="min-h-7! px-2! text-xs" onClick={() => updateGoal.mutate({ id: goal.id, patch: { primary: true } })}>
               Make main

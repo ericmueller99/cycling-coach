@@ -13,6 +13,14 @@ export interface GoalSnapshot {
   ctl?: number | undefined;
 }
 
+/**
+ * Whether a goal's date means anything: an event, or a weight goal (it sets the calorie pace). Every
+ * other goal is open-ended, and any date an older one still has is ignored (DECISIONS #86).
+ */
+export function goalTakesDate(goal: Pick<Goal, 'event' | 'measure'>): boolean {
+  return goal.event === true || goal.measure?.kind === 'weight';
+}
+
 const PERIOD: Record<PowerBest['period'], string> = { '90d': '90 days', season: 'season', allTime: 'all-time' };
 const round = (n: number, dp: number) => Math.round(n * 10 ** dp) / 10 ** dp;
 const durationLabel = (sec: number) => (sec < 60 ? `${sec} s` : `${sec / 60} min`);

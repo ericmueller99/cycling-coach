@@ -5,23 +5,26 @@ import {
   formatLongDay,
   formatShortDate,
   formatWorkoutDuration,
+  goalTakesDate,
   wattsPerKg,
   workoutMetrics,
   zoneWatts,
   ZONES,
   zwiftCategory,
 } from '@cycling-coach/core';
-import type {
-  CalendarEvent,
-  FitnessDay,
-  Goal,
-  IntegrationStatus,
-  IsoDate,
-  Memory,
-  PowerBest,
-  Profile,
-  SessionFeedback,
-  Workout,
+import {
+  TRAINING_PREFERENCE_LABEL,
+  WEEKDAY_LABEL,
+  type CalendarEvent,
+  type FitnessDay,
+  type Goal,
+  type IntegrationStatus,
+  type IsoDate,
+  type Memory,
+  type PowerBest,
+  type Profile,
+  type SessionFeedback,
+  type Workout,
 } from '@cycling-coach/shared';
 import { COACH_PERSONA } from './prompt';
 
@@ -46,6 +49,12 @@ const PERIOD_LABEL: Record<PowerBest['period'], string> = {
 
 function durationLabel(sec: number): string {
   return sec < 60 ? `${sec} s` : sec < 3600 ? `${sec / 60} min` : `${sec / 3600} h`;
+}
+
+function renderAvailability({ usualWeek: w }: Profile): string {
+  if (!w) return 'Availability: they tell you as they chat';
+  const hours = w.hoursPerWeek ? `about ${w.hoursPerWeek} h` : '';
+  return `Usual week: ${[w.days.map((d) => WEEKDAY_LABEL[d]).join(', '), hours].filter(Boolean).join(' · ')}`;
 }
 
 /**
@@ -82,6 +91,8 @@ export function renderAthleteBlock(ctx: AthleteContext): string {
     );
   }
   lines.push(`Timezone: ${p.timezone}`);
+  if (p.trainingPreference) lines.push(`Training preference: ${TRAINING_PREFERENCE_LABEL[p.trainingPreference]}`);
+  lines.push(renderAvailability(p));
 
   lines.push('', '# Power bests');
   const entered = ctx.powerBests.filter((b) => b.watts);
@@ -105,7 +116,8 @@ export function renderAthleteBlock(ctx: AthleteContext): string {
   for (const g of ctx.goals) {
     const parts = [`[${g.horizon === 'long' ? 'long term' : 'short term'}${g.primary ? ', main goal' : ''}${g.done ? ', done' : ''}] ${g.title}`];
     if (g.detail) parts.push(g.detail);
-    if (g.targetLabel) parts.push(`horizon: ${g.targetLabel}`);
+    // Open-ended goals have no date (DECISIONS #86), even if an older one still stores one.
+    if (g.targetDate && goalTakesDate(g)) parts.push(`${g.event ? 'event date' : 'reach by'} ${g.targetDate}`);
     // A value on the trend weight would resend this block every time the trend moves.
     if (g.progress?.onTrendWeight) parts.push(`${g.progress.label} target ${g.progress.target} ${g.progress.unit}, current value from the weight in the context message`);
     else if (g.progress) parts.push(`${g.progress.label} now ${g.progress.current} ${g.progress.unit}, target ${g.progress.target}`);

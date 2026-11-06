@@ -27,7 +27,7 @@ export async function getProfile(c: Collections, userId: string): Promise<Profil
   return compact(profile);
 }
 
-const OPTIONAL_PROFILE_FIELDS = ['ftpZwift', 'ftpSource', 'weightLatest', 'zwiftWeightKg', 'heightCm', 'zwiftId', 'zwift'] as const;
+const OPTIONAL_PROFILE_FIELDS = ['ftpZwift', 'ftpSource', 'weightLatest', 'zwiftWeightKg', 'heightCm', 'zwiftId', 'zwift', 'trainingPreference', 'usualWeek'] as const;
 
 /** Replaces the profile: an optional field left out (e.g. a cleared Zwift weight) is removed. */
 export async function saveProfile(c: Collections, userId: string, profile: Profile, now: Date) {
@@ -89,6 +89,7 @@ export async function applyProfileUpdate(
   const fields = compact({
     ftpZwift: update.ftpZwift,
     zwiftWeightKg: update.zwiftWeightKg,
+    trainingPreference: update.trainingPreference,
   });
   if (Object.keys(fields).length) {
     await c.profiles.updateOne({ userId }, { $set: { ...fields, updatedAt: now } });

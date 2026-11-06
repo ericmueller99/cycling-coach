@@ -10,7 +10,7 @@ import {
   type PreviewField,
   type SessionPreview,
 } from '@cycling-coach/core';
-import type { CalendarChange, Proposal, ProposalItemStatus, ToolChipBlock, UiBlock, Workout } from '@cycling-coach/shared';
+import { TRAINING_PREFERENCE_LABEL, type CalendarChange, type Proposal, type ProposalItemStatus, type ToolChipBlock, type UiBlock, type Workout } from '@cycling-coach/shared';
 import { createContext, memo, useContext, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { CalendarAddIcon, CheckIcon, ChevronDown, MemoryIcon, PlusIcon, PulseIcon, XIcon } from '../../components/icons';
@@ -18,7 +18,7 @@ import { Button, Card, ErrorNote, SessionTag } from '../../components/ui';
 import { ScheduleControl } from '../../components/ScheduleControl';
 import { ZoneChart } from '../../components/ZoneChart';
 import { downloadZwo } from '../../lib/api';
-import { describeMeasure, measureUnit } from '../../lib/goals';
+import { describeMeasure, goalDateLabel, measureUnit } from '../../lib/goals';
 import { durationText, kindLabel, SESSION_STYLE } from '../../lib/session';
 import {
   errorMessage,
@@ -399,11 +399,12 @@ function ProfileUpdateCard({ proposal, threadId }: { proposal: Extract<Proposal,
   const lines = [
     u.ftpZwift && `FTP → ${u.ftpZwift} W`,
     u.zwiftWeightKg && `Zwift weight → ${u.zwiftWeightKg} kg`,
+    u.trainingPreference && `Training preference → ${TRAINING_PREFERENCE_LABEL[u.trainingPreference]}`,
     ...(u.powerBests ?? []).map((b) => `${b.durationSec < 60 ? `${b.durationSec} s` : `${b.durationSec / 60} min`} best → ${b.watts} W`),
   ].filter(Boolean);
   return (
     <Card className="flex flex-col gap-2 p-4">
-      <div className="font-semibold">Update your numbers?</div>
+      <div className="font-semibold">{u.trainingPreference && lines.length === 1 ? 'Change your training preference?' : 'Update your numbers?'}</div>
       <ul className="m-0 pl-5 text-[13px]">
         {lines.map((l) => (
           <li key={l as string}>{l}</li>
@@ -436,7 +437,7 @@ function GoalCard({ proposal, threadId }: { proposal: Extract<Proposal, { kind: 
     <Card className="flex flex-col gap-2 p-4">
       <div className="text-xs font-semibold tracking-[0.06em] text-muted uppercase">
         {g.goalId ? 'Update goal' : 'New goal'} · {g.horizon === 'long' ? 'long term' : 'short term'}
-        {g.targetLabel ? ` · ${g.targetLabel}` : ''}
+        {goalDateLabel(g) ? ` · ${goalDateLabel(g)}` : ''}
       </div>
       <div className="font-semibold">{g.title}</div>
       {g.detail && <div className="text-[13px] text-muted">{g.detail}</div>}

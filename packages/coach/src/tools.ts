@@ -552,7 +552,7 @@ export const COACH_TOOLS = [
   defineTool({
     name: 'propose_profile_update',
     description:
-      'Propose updating the athlete’s FTP, their monthly Zwift weight, or a power best they report (e.g. an outdoor effort intervals.icu doesn’t have). Body weight is synced from intervals.icu and is not proposed. Shown as a confirm card; nothing changes until they accept.',
+      'Propose updating the athlete’s FTP, their monthly Zwift weight, their training preference (steady, committed or all_in), or a power best they report (e.g. an outdoor effort intervals.icu doesn’t have). Body weight is synced from intervals.icu and is not proposed. Shown as a confirm card; nothing changes until they accept.',
     schema: profileUpdateSchema,
     source: 'app',
     strict: false,
@@ -573,7 +573,7 @@ export const COACH_TOOLS = [
   defineTool({
     name: 'propose_goal',
     description:
-      "Propose a new goal, or changes to an existing one (pass goalId from the Goals section). Make goals measurable when it fits, by naming a measure and a target — never a current value; the app computes progress live. Measures: {kind:'wkg', weight:'zwift'|'trend'} (FTP ÷ Zwift baseline or trend weight — Zwift categories use 'zwift'), {kind:'ftp'}, {kind:'zwift_wkg', metric:'zftp'|'zmap'} (Zwift's zFTP or zMAP ÷ Zwift weight — what Zwift Racing League categories use; prefer zftp for category goals), {kind:'power_best', durationSec, period:'90d'|'season'|'allTime'}, {kind:'weight'} (trend weight, lower is better), {kind:'fitness'} (CTL), {kind:'manual', current, unit} for anything the app can't see. Goals like an event to finish can have no measure. Shown as a card; nothing changes until the athlete confirms.",
+      "Propose a new goal, or changes to an existing one (pass goalId from the Goals section). Make goals measurable when it fits, by naming a measure and a target — never a current value; the app computes progress live. Measures: {kind:'wkg', weight:'zwift'|'trend'} (FTP ÷ Zwift baseline or trend weight — Zwift categories use 'zwift'), {kind:'ftp'}, {kind:'zwift_wkg', metric:'zftp'|'zmap'} (Zwift's zFTP or zMAP ÷ Zwift weight — what Zwift Racing League categories use; prefer zftp for category goals), {kind:'power_best', durationSec, period:'90d'|'season'|'allTime'}, {kind:'weight'} (trend weight, lower is better), {kind:'fitness'} (CTL), {kind:'manual', current, unit} for anything the app can't see. Goals like an event to finish can have no measure. Only two kinds of goal have a date: an event (event: true, targetDate is the event's date) and a weight goal (targetDate is optional and sets the calorie pace). Every other goal is open-ended, so leave targetDate out. Shown as a card; nothing changes until the athlete confirms.",
     schema: goalProposalSchema,
     source: 'app',
     strict: false,

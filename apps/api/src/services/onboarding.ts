@@ -1,5 +1,6 @@
 import { addDays, inferSessionType, isShortTerm, RAMP_TEST, STARTER_WORKOUTS, todayIn, workoutMetrics } from '@cycling-coach/core';
 import {
+  applyProfileUpdate,
   createGoal,
   createWorkout,
   deleteGoal,
@@ -48,8 +49,8 @@ export function onboardingGoalInputs(g: OnboardingGoals): GoalInput[] {
   const focus = g.chips.filter((c) => c !== 'event').map((c) => ONBOARDING_GOAL_LABEL[c]);
   const event = g.chips.includes('event') ? g.event : undefined;
   const goals: GoalInput[] = [];
-  if (g.main) goals.push({ horizon: 'long', title: g.main.title, ...(g.main.date ? { targetDate: g.main.date } : {}), done: false, primary: true });
-  if (event) goals.push({ horizon: 'long', title: `Get ready for ${event.name}`.slice(0, 120), targetDate: event.date, done: false, primary: !g.main });
+  if (g.main) goals.push({ horizon: 'long', title: g.main.title, done: false, primary: true });
+  if (event) goals.push({ horizon: 'long', title: `Get ready for ${event.name}`.slice(0, 120), targetDate: event.date, event: true, done: false, primary: !g.main });
   const rest = g.main || event ? focus : focus.slice(1);
   if (!g.main && !event && focus[0]) goals.push({ horizon: 'long', title: focus[0], done: false, primary: true });
   const main = goals.find((x) => x.primary);
@@ -132,6 +133,7 @@ export class OnboardingService {
     for (const id of doc?.goalIds ?? []) await deleteGoal(this.c, userId, id);
     const goalIds: string[] = [];
     for (const g of onboardingGoalInputs(goals)) goalIds.push((await createGoal(this.c, userId, g, this.now())).id);
+    if (goals.preference) await applyProfileUpdate(this.c, userId, { trainingPreference: goals.preference }, this.now());
     await saveOnboarding(this.c, userId, { goals, goalIds, step: 3 }, this.now());
     return this.state(userId);
   }

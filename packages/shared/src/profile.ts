@@ -25,6 +25,27 @@ export const ftpSources = ['zwift', 'ramp', '20min', 'app', 'guess'] as const;
 export const ftpSourceSchema = z.enum(ftpSources);
 export type FtpSource = z.infer<typeof ftpSourceSchema>;
 
+/** How hard the athlete wants to go: a ceiling for the coach, never a target (DECISIONS #86). */
+export const trainingPreferences = ['steady', 'committed', 'all_in'] as const;
+export const trainingPreferenceSchema = z.enum(trainingPreferences);
+export type TrainingPreference = z.infer<typeof trainingPreferenceSchema>;
+export const TRAINING_PREFERENCE_LABEL: Record<TrainingPreference, string> = { steady: 'Steady', committed: 'Committed', all_in: 'All in' };
+/** What each one promises, in the wizard and on the Athlete page. */
+export const TRAINING_PREFERENCE_BLURB: Record<TrainingPreference, string> = {
+  steady: "Training fits around life. Consistency first, with easy weeks when it's busy.",
+  committed: 'Training is a priority. Steady progress, and the hard days that takes.',
+  all_in: 'A hard push for a block. More load and more fatigue, and your coach says when to back off.',
+};
+
+export const weekdays = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
+export const WEEKDAY_LABEL: Record<(typeof weekdays)[number], string> = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun' };
+/** A week most weeks look like. Optional: without one, the athlete tells the coach as they chat. */
+export const usualWeekSchema = z.object({
+  days: z.array(z.enum(weekdays)).max(7),
+  hoursPerWeek: z.number().min(1).max(40).optional(),
+});
+export type UsualWeek = z.infer<typeof usualWeekSchema>;
+
 export const profileSchema = z.object({
   /**
    * Unset until it's known (DECISIONS #62): a new athlete who doesn't know theirs gets a ramp test
@@ -47,6 +68,10 @@ export const profileSchema = z.object({
   zwift: zwiftMetricsSchema.optional(),
   /** IANA zone. "Today" for the coach and the calendar is the athlete's local day. */
   timezone: z.string().min(1).default('UTC'),
+  /** Unset until they pick one, and the coach coaches as it always has (DECISIONS #86). */
+  trainingPreference: trainingPreferenceSchema.optional(),
+  /** Unset means they tell the coach when they can ride as they chat. */
+  usualWeek: usualWeekSchema.optional(),
 });
 export type Profile = z.infer<typeof profileSchema>;
 
@@ -91,9 +116,12 @@ const goalFields = z.object({
   horizon: z.enum(['long', 'short']),
   title: z.string().min(1).max(120),
   detail: z.string().max(500).optional(),
-  /** Free-text horizon label as shown on the card, e.g. "This winter", "Sept 2027". */
+  /** Retired (DECISIONS #86): older goals may still have one, but nothing writes, shows or sends it. */
   targetLabel: z.string().max(40).optional(),
+  /** Only an event's or a weight goal's date counts (core.goalTakesDate); other goals are open-ended. */
   targetDate: isoDateSchema.optional(),
+  /** A dated event to get ready for, rather than something to keep improving. */
+  event: z.boolean().optional(),
   /** What the goal is measured by; the current value is always computed live (core.goalProgress). */
   measure: goalMeasureSchema.optional(),
   target: z.number().optional(),
@@ -105,7 +133,7 @@ export const goalInputSchema = goalFields.extend({ done: z.boolean().default(fal
 export type GoalInput = z.infer<typeof goalInputSchema>;
 /** A partial update; `unset` clears optional fields (JSON has no way to send `undefined`). */
 export const goalPatchSchema = goalFields.partial().extend({
-  unset: z.array(z.enum(['detail', 'targetLabel', 'targetDate', 'measure', 'target'])).optional(),
+  unset: z.array(z.enum(['detail', 'targetLabel', 'targetDate', 'event', 'measure', 'target'])).optional(),
 });
 export type GoalPatch = z.infer<typeof goalPatchSchema>;
 export interface GoalProgress {

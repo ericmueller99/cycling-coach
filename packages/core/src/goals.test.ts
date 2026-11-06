@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { goalProgress, type GoalSnapshot } from './goals';
+import { goalProgress, goalTakesDate, type GoalSnapshot } from './goals';
 import { inferSessionType } from './sessions';
 import { STARTER_WORKOUTS, STANDARD_COOLDOWN, STANDARD_WARMUP } from './starter-library';
 
@@ -10,6 +10,15 @@ const snap: GoalSnapshot = {
   powerBests: [{ period: '90d', durationSec: 300, watts: 422 }],
   ctl: 64.5,
 };
+
+describe('goalTakesDate', () => {
+  it('is true for events and weight goals only', () => {
+    expect(goalTakesDate({ event: true })).toBe(true);
+    expect(goalTakesDate({ measure: { kind: 'weight' } })).toBe(true);
+    expect(goalTakesDate({ measure: { kind: 'ftp' } })).toBe(false);
+    expect(goalTakesDate({})).toBe(false);
+  });
+});
 
 describe('goalProgress', () => {
   it('computes W/kg live on the Zwift weight', () => {
