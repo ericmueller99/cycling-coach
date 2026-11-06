@@ -18,6 +18,7 @@ const TOOL_LABELS: Record<string, string> = {
   create_workout: 'Building the workout',
   propose_plan: 'Drafting the plan',
   propose_calendar_changes: 'Drafting calendar changes',
+  propose_time_off: 'Updating your time off',
 };
 
 /** Blocks the athlete reads and acts on. After one, the coach is only adding its closing words. */

@@ -8,12 +8,13 @@ import {
   groupByDay,
   monthOf,
   sessionState,
+  timeOffOn,
   weekStart,
   weekSummary,
   WEEKDAY_LABELS,
   type CalendarDay,
 } from '@cycling-coach/core';
-import type { CalendarActivity, CalendarEvent, DayFoodSummary, IsoDate, SessionFeedback } from '@cycling-coach/shared';
+import type { CalendarActivity, CalendarEvent, DayFoodSummary, IsoDate, SessionFeedback, TimeOff } from '@cycling-coach/shared';
 import { slotForTime } from '@cycling-coach/core';
 import { useNavigate } from '@tanstack/react-router';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -21,7 +22,7 @@ import { ChevronDown, DoneIcon, PlusIcon } from '../components/icons';
 import { KcalBar, OVER } from '../components/KcalBar';
 import { RpePill } from '../components/RpePill';
 import { Button, ErrorNote, PageHeader, Spinner } from '../components/ui';
-import { calendarChunkStart, errorMessage, useCalendarRange, useDashboard } from '../lib/queries';
+import { calendarChunkStart, errorMessage, useCalendarRange, useDashboard, useTimeOff } from '../lib/queries';
 import { COMPLETED, feedbackForEvent, indexFeedback, type FeedbackIndex } from '../lib/feedback';
 import { fmtKcal, nowTime } from '../lib/food';
 import { useDaysRange, useFoodLibrary } from '../lib/foodQueries';
@@ -32,6 +33,7 @@ import { DayPanel } from './calendar/DayPanel';
 import { MobileDay } from './calendar/MobileDay';
 import { ActivityPanel, AddPanel, DetailPanel, syncState, type Selection } from './calendar/panels';
 import { ridesMeta, sessionRides } from './calendar/shared';
+import { TimeOffChip, TimeOffPanel } from './calendar/time-off';
 import { WeekAgenda } from './calendar/WeekAgenda';
 import { dayLabel } from './food/dayLabel';
 import { useFoodFlows } from './food/flows';
@@ -206,8 +208,8 @@ function LayerToggles({ layers, set }: { layers: Layers; set: (l: Layers) => voi
   );
 }
 
-/** "+ Add ▾": a session or food, for the selected day (else today). */
-function AddMenu({ onSession, onFood }: { onSession: () => void; onFood: () => void }) {
+/** "+ Add ▾": a session, food or time off, for the selected day (else today). */
+function AddMenu({ onSession, onFood, onTimeOff }: { onSession: () => void; onFood: () => void; onTimeOff: () => void }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -229,6 +231,9 @@ function AddMenu({ onSession, onFood }: { onSession: () => void; onFood: () => v
           </button>
           <button type="button" role="menuitem" className={item} onClick={() => (setOpen(false), onFood())}>
             Food
+          </button>
+          <button type="button" role="menuitem" className={item} onClick={() => (setOpen(false), onTimeOff())}>
+            Time off
           </button>
         </div>
       )}
@@ -272,6 +277,7 @@ function ScrollingCalendar({ today, initialWeek }: { today: string; initialWeek:
 
   const calendar = useCalendarRange(range.start, range.weeks);
   const food = useDaysRange(range.start, range.weeks, layers.food);
+  const timeOff = useTimeOff(range.start, addDays(range.start, range.weeks * 7 - 1));
   const { events, activities } = calendar;
   const byDate = useMemo(() => groupByDay(events, activities), [events, activities]);
   const ratings = useMemo(() => indexFeedback(calendar.feedback), [calendar.feedback]);
@@ -415,7 +421,7 @@ function ScrollingCalendar({ today, initialWeek }: { today: string; initialWeek:
 
   const selectedEvent = selected?.type === 'event' ? events.find((e) => e.id === selected.id) : undefined;
   const selectedActivity = selected?.type === 'activity' ? activities.find((a) => a.id === selected.id) : undefined;
-  const focusDate = selected?.type === 'day' || selected?.type === 'add' ? selected.date : today;
+  const focusDate = selected?.type === 'day' || selected?.type === 'add' || selected?.type === 'time-off-add' ? selected.date : today;
 
   return (
     <div className="flex h-dvh min-h-0 flex-col">
@@ -432,7 +438,7 @@ function ScrollingCalendar({ today, initialWeek }: { today: string; initialWeek:
         <Button variant="ghost" onClick={() => jumpTo(weekStart(today), 'center')}>
           Today
         </Button>
-        <AddMenu onSession={() => setSelected({ type: 'add', date: focusDate })} onFood={() => addFood(focusDate)} />
+        <AddMenu onSession={() => setSelected({ type: 'add', date: focusDate })} onFood={() => addFood(focusDate)} onTimeOff={() => setSelected({ type: 'time-off-add', date: focusDate })} />
         <Button variant="primary" onClick={() => void navigate({ to: '/', search: { new: true, prompt: 'Plan next week' } })}>
           Ask coach to plan
         </Button>
@@ -466,6 +472,7 @@ function ScrollingCalendar({ today, initialWeek }: { today: string; initialWeek:
                     week={week}
                     today={today}
                     byDate={byDate}
+                    timeOff={timeOff}
                     food={layers.food ? food.days : undefined}
                     trendKg={food.weeks.get(week[0]!)}
                     layers={layers}
@@ -488,6 +495,7 @@ function ScrollingCalendar({ today, initialWeek }: { today: string; initialWeek:
             today={today}
             trendKg={food.weeks.get(weekStart(selected.date))}
             day={byDate.get(selected.date)}
+            timeOff={timeOffOn(timeOff, selected.date)}
             ridesById={ridesById}
             ratings={ratings}
             onClose={() => setSelected(null)}
@@ -516,6 +524,8 @@ function ScrollingCalendar({ today, initialWeek }: { today: string; initialWeek:
           />
         )}
         {selected?.type === 'add' && <AddPanel date={selected.date} onClose={() => setSelected(null)} onAdded={(id) => setSelected({ type: 'event', id })} />}
+        {selected?.type === 'time-off-add' && <TimeOffPanel key={selected.date} date={selected.date} today={today} onClose={() => setSelected(null)} />}
+        {selected?.type === 'time-off' && <TimeOffPanel key={selected.entry.id} entry={selected.entry} today={today} onClose={() => setSelected(null)} />}
       </div>
       {flows.element}
     </div>
@@ -562,6 +572,7 @@ function WeekRow({
   week,
   today,
   byDate,
+  timeOff,
   food,
   trendKg,
   layers,
@@ -573,6 +584,7 @@ function WeekRow({
   week: string[];
   today: string;
   byDate: Map<string, CalendarDay>;
+  timeOff: readonly TimeOff[];
   /** The food layer, when it's on. */
   food: Map<string, DayFoodSummary> | undefined;
   trendKg: number | null | undefined;
@@ -632,6 +644,10 @@ function WeekRow({
                 </button>
               </span>
             </div>
+            {layers.training &&
+              timeOffOn(timeOff, date).map((t) => (
+                <TimeOffChip key={t.id} entry={t} date={date} firstInWeek={i === 0} lastInWeek={i === week.length - 1} onOpen={() => onSelect({ type: 'time-off', entry: t })} />
+              ))}
             {layers.training &&
               day?.events.map((e) => (
                 <EventChip

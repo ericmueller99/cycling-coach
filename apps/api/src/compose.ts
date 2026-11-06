@@ -14,6 +14,7 @@ import {
   getProposalDoc,
   getWorkout,
   listEvents,
+  listTimeOff,
   listFeedback,
   listGoals,
   listMemories,
@@ -407,6 +408,13 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
       result: (userId, id) => feedback.result(userId, id),
     },
 
+    timeOff: {
+      list: (userId, from, to) => listTimeOff(c, userId, from, to),
+      create: (userId, input) => calendar.addTimeOff(userId, input, { source: 'manual' }),
+      patch: (userId, id, patch) => calendar.patchTimeOff(userId, id, patch),
+      remove: (userId, id) => calendar.removeTimeOff(userId, id),
+    },
+
     feedback: {
       save: (userId, input) => feedback.save(userId, input),
     },
@@ -487,6 +495,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
       deleteEntry: (userId, id) => food.deleteEntry(userId, id),
       copyEntry: (userId, id, to) => food.copyEntry(userId, id, to),
       saveSettings: (userId, settings) => food.saveSettings(userId, settings),
+      markIntroSeen: (userId) => food.markIntroSeen(userId),
       searchStaples: (q, source) => staples.search(q, source),
       stapleDetail: (source, ref) => staples.detail(source, ref),
       readPhoto: (userId, input) => foodAi.readPhoto(userId, input),

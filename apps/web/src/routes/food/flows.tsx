@@ -1,7 +1,10 @@
 import type { Food, FoodLibrary, FoodLogEntry, IsoDate } from '@cycling-coach/shared';
 import { useState, type ReactNode } from 'react';
+import { shouldShowFoodIntro } from '../../lib/foodIntro';
+import { useMarkFoodIntroSeen } from '../../lib/foodQueries';
 import { BarcodeDialog } from './BarcodeDialog';
 import { EntryDialog } from './EntryDialog';
+import { FoodIntro } from './FoodIntro';
 import { draftFromFood, draftFromReading, emptyDraft, FoodFormDialog, type FoodDraft } from './FoodForm';
 import { LogFoodDialog } from './LogFoodDialog';
 import { PhotoDialog } from './PhotoDialog';
@@ -14,6 +17,9 @@ import { WordsDialog } from './WordsDialog';
  * food form; "Save & log" goes straight back to Log food with the new food picked; a scanned
  * barcode that's already one of the user's foods opens it for logging. One flow at a time, so Esc and
  * the backdrop only ever close the top one.
+ *
+ * The first attempt to log shows the food intro in that flow's place, and the flow carries on when
+ * the intro ends (DECISIONS #88). Every way to log comes through here.
  */
 export type Flow =
   | {
@@ -44,11 +50,26 @@ const offBanner = (
 export function useFoodFlows({ lib, date, dateLabel, defaultSlot }: { lib: FoodLibrary | undefined; date: IsoDate; dateLabel: string; defaultSlot: string }) {
   const [flow, setFlow] = useState<Flow | null>(null);
   const close = () => setFlow(null);
+  const markIntroSeen = useMarkFoodIntroSeen();
+  const [replaying, setReplaying] = useState(false);
+  /** Over for this page: a library refetch already on its way could still say it's unseen. */
+  const [introDone, setIntroDone] = useState(false);
 
   const afterSave = (slot: string) => (food: Food, log: boolean) => setFlow(log ? { kind: 'log', slot, preselect: { kind: 'food', id: food.id } } : null);
 
+  const logging = flow?.kind === 'log' || flow?.kind === 'words';
+  const showIntro = !!lib && (replaying || (logging && !introDone && shouldShowFoodIntro(lib)));
+  const endIntro = (startLogging: boolean) => {
+    setReplaying(false);
+    setIntroDone(true);
+    markIntroSeen.mutate();
+    if (startLogging && !logging) setFlow({ kind: 'log', slot: defaultSlot });
+  };
+
   let element: ReactNode = null;
-  if (lib && flow) {
+  if (lib && showIntro) {
+    element = <FoodIntro lib={lib} onEnd={endIntro} />;
+  } else if (lib && flow) {
     switch (flow.kind) {
       case 'log':
         element = (
@@ -144,5 +165,6 @@ export function useFoodFlows({ lib, date, dateLabel, defaultSlot }: { lib: FoodL
     photo: (slot = defaultSlot) => setFlow({ kind: 'photo', slot }),
     barcode: (then: 'log' | 'edit', slot = defaultSlot) => setFlow({ kind: 'barcode', slot, then }),
     words: (phrase: string, slot = defaultSlot) => setFlow({ kind: 'words', phrase, slot }),
+    replayIntro: () => setReplaying(true),
   };
 }

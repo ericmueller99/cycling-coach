@@ -23,6 +23,7 @@ import {
   createRecipe,
   deleteLogEntry,
   getFood,
+  foodIntroSeen,
   getFoodSettings,
   getFoodsByIds,
   getLogEntry,
@@ -35,6 +36,7 @@ import {
   listMeals,
   listRecipes,
   logUsageSince,
+  markFoodIntroSeen,
   saveFoodSettings,
   updateFood,
   updateLogEntry,
@@ -93,12 +95,13 @@ export class FoodService {
   /** Everything the client searches and logs from, in one payload. */
   async library(userId: string): Promise<FoodLibrary> {
     const today = await this.today(userId);
-    const [foods, stored, meals, usageRows, settings] = await Promise.all([
+    const [foods, stored, meals, usageRows, settings, introSeen] = await Promise.all([
       listFoods(this.c, userId),
       listRecipes(this.c, userId),
       listMeals(this.c, userId),
       logUsageSince(this.c, userId, addDays(today, -USAGE_DAYS)),
       getFoodSettings(this.c, userId),
+      foodIntroSeen(this.c, userId),
     ]);
     const foodsById = new Map(foods.map((f) => [f.id, f]));
     const recipes = stored.map((r) => withTotals(r, foodsById));
@@ -110,6 +113,7 @@ export class FoodService {
       meals: meals.map((m) => withMealTotal(m, lookup)),
       usage: foodUsage(usageRows),
       settings,
+      introSeen,
     };
   }
 
@@ -304,6 +308,10 @@ export class FoodService {
 
   saveSettings(userId: string, settings: FoodSettings) {
     return saveFoodSettings(this.c, userId, settings, this.now());
+  }
+
+  markIntroSeen(userId: string) {
+    return markFoodIntroSeen(this.c, userId, this.now());
   }
 }
 

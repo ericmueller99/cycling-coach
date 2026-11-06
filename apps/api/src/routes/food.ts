@@ -90,6 +90,7 @@ export interface FoodServices {
   deleteEntry(userId: string, id: string): Promise<boolean>;
   copyEntry(userId: string, id: string, to: { date: IsoDate; slot?: string | undefined }): Promise<FoodLogEntry | ServiceFailure>;
   saveSettings(userId: string, settings: FoodSettings): Promise<FoodSettings>;
+  markIntroSeen(userId: string): Promise<void>;
   /** Staples: Canadian Nutrient File, then USDA (reference data; saving makes it one of the user's foods). */
   searchStaples(q: string, source: StapleSource): Promise<StapleSearchPayload>;
   stapleDetail(source: StapleSource, ref: string): Promise<StapleDetail | ServiceFailure>;
@@ -236,6 +237,11 @@ export function foodRoutes(food: FoodServices) {
       })
 
       .put('/settings', json(foodSettingsSchema), async (c) => c.json(await food.saveSettings(c.get('user')!.id, c.req.valid('json'))))
+
+      .post('/intro-seen', async (c) => {
+        await food.markIntroSeen(c.get('user')!.id);
+        return c.json({ ok: true });
+      })
   );
 }
 

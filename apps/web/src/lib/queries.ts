@@ -16,6 +16,8 @@ import type {
   Profile,
   Proposal,
   SessionFeedbackInput,
+  TimeOffInput,
+  TimeOffPatch,
 } from '@cycling-coach/shared';
 import { addDays, daysBetween, weekStart } from '@cycling-coach/core';
 import { keepPreviousData, useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -35,6 +37,7 @@ export const keys = {
   threads: ['threads'] as const,
   thread: (id: string) => ['threads', id] as const,
   calendar: (from: string, to: string) => ['calendar', from, to] as const,
+  timeOff: ['timeOff'] as const,
   intervals: ['intervals'] as const,
   zwift: ['zwift'] as const,
   usage: ['usage'] as const,
@@ -209,6 +212,44 @@ export function useCalendarRange(start: string, weeks: number) {
   });
 }
 
+/** One range, not the calendar's chunks: an entry can run across them and would show up twice. */
+export function useTimeOff(from: string, to: string) {
+  const query = useQuery({
+    queryKey: [...keys.timeOff, from, to],
+    queryFn: async () => unwrap(await api.api['time-off'].$get({ query: { from, to } })),
+    placeholderData: keepPreviousData,
+  });
+  return query.data ?? [];
+}
+
+/** The calendar for any range, for checking what's on some days; shares the cache with the grid's chunks. */
+export function useSessionsBetween(from: string, to: string, enabled: boolean) {
+  return useQuery({
+    queryKey: keys.calendar(from, to),
+    queryFn: async () => unwrap(await api.api.calendar.$get({ query: { from, to } })),
+    enabled,
+  });
+}
+
+export function useTimeOffMutations() {
+  const qc = useQueryClient();
+  const invalidate = () => qc.invalidateQueries({ queryKey: keys.timeOff });
+  return {
+    create: useMutation({
+      mutationFn: async (input: TimeOffInput) => unwrap(await api.api['time-off'].$post({ json: input })),
+      onSuccess: invalidate,
+    }),
+    patch: useMutation({
+      mutationFn: async ({ id, patch }: { id: string; patch: TimeOffPatch }) => unwrap(await api.api['time-off'][':id'].$patch({ param: { id }, json: patch })),
+      onSuccess: invalidate,
+    }),
+    remove: useMutation({
+      mutationFn: async (id: string) => unwrap(await api.api['time-off'][':id'].$delete({ param: { id } })),
+      onSuccess: invalidate,
+    }),
+  };
+}
+
 /** intervals.icu status; polls every 3 s while a full import runs so its progress bar moves. */
 export function useIntervals() {
   return useQuery({
@@ -259,6 +300,7 @@ function useInvalidateTraining() {
   const qc = useQueryClient();
   return () => {
     void qc.invalidateQueries({ queryKey: ['calendar'] });
+    void qc.invalidateQueries({ queryKey: keys.timeOff });
     // Planned sessions feed the calorie budget (and the calendar's food layer).
     void qc.invalidateQueries({ queryKey: ['energy', 'budget'] });
     void qc.invalidateQueries({ queryKey: ['energy', 'days'] });

@@ -7,6 +7,7 @@ import {
   groupByDay,
   monthOf,
   sessionState,
+  timeOffOn,
   weekDates,
   weekStart,
   weekSummary,
@@ -22,11 +23,12 @@ import { RpePill } from '../../components/RpePill';
 import { Sheet } from '../../components/Sheet';
 import { ErrorNote, Spinner } from '../../components/ui';
 import { useDaysRange } from '../../lib/foodQueries';
-import { calendarChunkStart, errorMessage, useCalendarRange } from '../../lib/queries';
+import { calendarChunkStart, errorMessage, useCalendarRange, useTimeOff } from '../../lib/queries';
 import { COMPLETED, feedbackForEvent, indexFeedback } from '../../lib/feedback';
-import { SESSION_STYLE, TENTATIVE, durationText } from '../../lib/session';
+import { SESSION_STYLE, TENTATIVE, TIME_OFF_STYLE, durationText } from '../../lib/session';
 import { ActivityPanel, AddPanel, DetailPanel, type Selection } from './panels';
 import { ridesMeta, sessionRides } from './shared';
+import { TimeOffCard, TimeOffPanel } from './time-off';
 
 /** A day's eaten vs budget on the week strip; the overage in red. */
 function FoodBar({ eaten, budget }: { eaten: number | undefined; budget: number | null | undefined }) {
@@ -47,6 +49,7 @@ export function WeekAgenda({ today, week }: { today: string; week: string }) {
   const navigate = useNavigate();
   const [selected, setSelected] = useState<Selection>(null);
   const [picking, setPicking] = useState(false);
+  const [adding, setAdding] = useState(false);
   const headerRef = useRef<HTMLElement>(null);
   /** A day to scroll to once the week is on screen (Today). */
   const scrollTarget = useRef<string | null>(null);
@@ -55,6 +58,7 @@ export function WeekAgenda({ today, week }: { today: string; week: string }) {
   const dates = useMemo(() => weekDates(week), [week]);
   const calendar = useCalendarRange(calendarChunkStart(today, week), 4);
   const food = useDaysRange(calendarChunkStart(today, week), 4);
+  const timeOff = useTimeOff(week, addDays(week, 6));
   const { events, activities } = calendar;
   const byDay = useMemo(() => groupByDay(events, activities), [events, activities]);
   const ridesById = useMemo(() => new Map(activities.map((a) => [a.id, a])), [activities]);
@@ -118,7 +122,7 @@ export function WeekAgenda({ today, week }: { today: string; week: string }) {
             <button type="button" onClick={goToday} className="min-h-[36px] rounded-full border border-line-strong bg-surface px-3 text-[13px] font-medium text-ink">
               Today
             </button>
-            <IconButton aria-label="Add session" onClick={() => setSelected({ type: 'add', date: holdsToday ? today : week })}>
+            <IconButton aria-label="Add" onClick={() => setAdding(true)}>
               <PlusIcon size={20} />
             </IconButton>
             <Link
@@ -155,13 +159,14 @@ export function WeekAgenda({ today, week }: { today: string; week: string }) {
           <div className="grid grid-cols-7 gap-1">
             {dates.map((date, i) => {
               const day = byDay.get(date);
-              const dots = [...(day?.events.map((e) => SESSION_STYLE[e.type].dot) ?? []), ...(day?.rides.map(() => RIDE_COLOR) ?? [])].slice(0, 3);
+              const sessionDots = [...(day?.events.map((e) => SESSION_STYLE[e.type].dot) ?? []), ...(day?.rides.map(() => RIDE_COLOR) ?? [])];
+              const dots = [...timeOffOn(timeOff, date).map((t) => TIME_OFF_STYLE[t.kind].dot), ...sessionDots].slice(0, 3);
               const isToday = date === today;
               return (
                 <button
                   key={date}
                   type="button"
-                  aria-label={`${formatLongDay(date)}${dots.length ? `, ${dots.length} session${dots.length > 1 ? 's' : ''}` : ''}`}
+                  aria-label={`${formatLongDay(date)}${sessionDots.length ? `, ${sessionDots.length} session${sessionDots.length > 1 ? 's' : ''}` : ''}`}
                   onClick={() => scrollToDay(date)}
                   className="flex min-h-[64px] flex-col items-center gap-0.5 rounded-xl py-1.5 text-ink"
                   style={{ background: isToday ? '#F4FADF' : '#FFFFFF', border: `1.5px solid ${isToday ? '#7DA30A' : '#EDEFF2'}` }}
@@ -188,13 +193,17 @@ export function WeekAgenda({ today, week }: { today: string; week: string }) {
         ) : (
           dates.map((date) => {
             const day = byDay.get(date);
-            const empty = !day?.events.length && !day?.rides.length;
+            const off = timeOffOn(timeOff, date);
+            const empty = !day?.events.length && !day?.rides.length && !off.length;
             return (
               <div key={date} id={dayId(date)} className="flex flex-col gap-2 pt-2.5 pb-1.5">
                 <div className="flex items-baseline gap-2">
                   <span className="font-semibold">{formatLongDay(date)}</span>
                   {date === today && <span className="text-xs font-semibold text-accent-ink">Today</span>}
                 </div>
+                {off.map((t) => (
+                  <TimeOffCard key={t.id} entry={t} onOpen={() => setSelected({ type: 'time-off', entry: t })} />
+                ))}
                 {day?.events.map((e) => (
                   <SessionCard
                     key={e.id}
@@ -258,6 +267,27 @@ export function WeekAgenda({ today, week }: { today: string; week: string }) {
       )}
       {selected?.type === 'add' && (
         <AddPanel sheet date={selected.date} onClose={() => setSelected(null)} onAdded={(id) => setSelected({ type: 'event', id })} />
+      )}
+      {selected?.type === 'time-off-add' && <TimeOffPanel sheet date={selected.date} today={today} onClose={() => setSelected(null)} />}
+      {selected?.type === 'time-off' && <TimeOffPanel sheet key={selected.entry.id} entry={selected.entry} today={today} onClose={() => setSelected(null)} />}
+      {adding && (
+        <Sheet title="Add" onClose={() => setAdding(false)}>
+          <div className="flex flex-col gap-2">
+            {(['add', 'time-off-add'] as const).map((type) => (
+              <button
+                key={type}
+                type="button"
+                onClick={() => {
+                  setAdding(false);
+                  setSelected({ type, date: holdsToday ? today : week });
+                }}
+                className="min-h-[48px] rounded-xl border border-line-strong bg-surface font-medium text-ink"
+              >
+                {type === 'add' ? 'Session' : 'Time off'}
+              </button>
+            ))}
+          </div>
+        </Sheet>
       )}
       {picking && (
         <MonthPicker

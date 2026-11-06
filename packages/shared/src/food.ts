@@ -353,6 +353,8 @@ export interface FoodLibrary {
   /** Keyed `food:<id>` / `recipe:<id>` / `meal:<id>`, over the last 180 days. */
   usage: Record<string, FoodUsage>;
   settings: FoodSettings;
+  /** They've been through the food intro, on any device (DECISIONS #88). Not a setting: nothing edits it. */
+  introSeen: boolean;
 }
 
 // ── BMR & body composition (Athlete page) ─────────────────────────────────

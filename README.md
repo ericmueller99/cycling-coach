@@ -11,10 +11,10 @@ A personal cycling coach powered by Claude. You chat with it, and it:
 It's a single-user app. You run your own copy, with your own API keys, and your data stays in
 your own database.
 
-## Hosted version: coming soon
+## Hosted version
 
-If you'd rather not run it yourself, a paid hosted version is planned at
-[bikecoach.ai](https://bikecoach.ai). There's no price or launch date yet.
+If you'd rather not run it yourself, a paid hosted version is available at
+[bikecoach.ai](https://bikecoach.ai), with a 14-day free trial.
 
 ## Run it with Docker
 

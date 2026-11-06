@@ -1,4 +1,4 @@
-import type { CalendarChange, CalendarEvent, CalendarEventInput, SessionType, WorkoutSegment } from '@cycling-coach/shared';
+import type { CalendarEvent, CalendarEventInput, ProposalChange, SessionType, TimeOffChange, WorkoutSegment } from '@cycling-coach/shared';
 import { flatten, workoutMetrics } from './workout';
 
 /**
@@ -50,12 +50,16 @@ export interface ChangePreview {
 const previewValue = (e: SessionPreview, f: PreviewField) =>
   f === 'duration' ? `${e.durationMin ?? ''}|${e.durationLabel ?? ''}` : e[f];
 
+export const isTimeOffChange = (change: ProposalChange): change is TimeOffChange => change.op.startsWith('time_off_');
+
 /**
  * Before and after for one proposed calendar change, from the snapshot taken when it was proposed.
  * Proposals from before snapshots existed have no `before` (undefined): adds still preview, the rest
  * fall back to what the change itself says.
  */
-export function previewCalendarChange(change: CalendarChange, before: CalendarEvent | null | undefined): ChangePreview {
+export function previewCalendarChange(change: ProposalChange, before: CalendarEvent | null | undefined): ChangePreview {
+  // Time off isn't a session: its row carries its own "was", and the `before` slot is always null.
+  if (isTimeOffChange(change)) return { before: null, after: null, changed: [], missing: false };
   if (change.op === 'add') return { before: null, after: change.event, changed: [], missing: false };
   const missing = before === null;
   if (!before) return { before: null, after: null, changed: [], missing };

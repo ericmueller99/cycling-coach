@@ -4,13 +4,14 @@ import {
   formatDayLabel,
   formatLongDay,
   formatWorkoutDuration,
+  isTimeOffChange,
   previewCalendarChange,
   workoutMetrics,
   type ChangePreview,
   type PreviewField,
   type SessionPreview,
 } from '@cycling-coach/core';
-import { TRAINING_PREFERENCE_LABEL, type CalendarChange, type Proposal, type ProposalItemStatus, type ToolChipBlock, type UiBlock, type Workout } from '@cycling-coach/shared';
+import { TIME_OFF_LABEL, TRAINING_PREFERENCE_LABEL, type CalendarChange, type Proposal, type ProposalItemStatus, type TimeOffChange, type ToolChipBlock, type UiBlock, type Workout } from '@cycling-coach/shared';
 import { createContext, memo, useContext, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { CalendarAddIcon, CheckIcon, ChevronDown, MemoryIcon, PlusIcon, PulseIcon, XIcon } from '../../components/icons';
@@ -19,7 +20,7 @@ import { ScheduleControl } from '../../components/ScheduleControl';
 import { ZoneChart } from '../../components/ZoneChart';
 import { downloadZwo } from '../../lib/api';
 import { describeMeasure, goalDateLabel, measureUnit } from '../../lib/goals';
-import { durationText, kindLabel, SESSION_STYLE } from '../../lib/session';
+import { durationText, kindLabel, SESSION_STYLE, TIME_OFF_STYLE, timeOffDates } from '../../lib/session';
 import {
   errorMessage,
   useDashboard,
@@ -302,20 +303,67 @@ function ChangeRow({
           <span className="w-[54px] flex-none text-right font-mono text-xs text-muted">{session ? durationText(session) : ''}</span>
           {expandable && <ChevronDown className={`shrink-0 text-muted transition-transform ${open ? 'rotate-180' : ''}`} />}
         </button>
-        {status === 'pending' && (
-          <button
-            type="button"
-            aria-label="Skip this change"
-            onClick={onSkip}
-            disabled={busy}
-            className="flex h-9 w-9 flex-none items-center justify-center rounded-lg border-0 bg-transparent text-muted"
-          >
-            <XIcon />
-          </button>
-        )}
-        <StatusButton status={status} label="Apply this change" busy={busy} onAdd={onApply} />
+        <RowControls status={status} busy={busy} onApply={onApply} onSkip={onSkip} />
       </div>
       {open && <ChangeDetail preview={preview} />}
+    </div>
+  );
+}
+
+function RowControls({ status, busy, onApply, onSkip }: { status: ProposalItemStatus; busy: boolean; onApply: () => void; onSkip: () => void }) {
+  return (
+    <>
+      {status === 'pending' && (
+        <button
+          type="button"
+          aria-label="Skip this change"
+          onClick={onSkip}
+          disabled={busy}
+          className="flex h-9 w-9 flex-none items-center justify-center rounded-lg border-0 bg-transparent text-muted"
+        >
+          <XIcon />
+        </button>
+      )}
+      <StatusButton status={status} label="Apply this change" busy={busy} onAdd={onApply} />
+    </>
+  );
+}
+
+const TIME_OFF_MARK: Record<TimeOffChange['op'], string> = { time_off_add: '+', time_off_update: '~', time_off_remove: '−' };
+
+/** Vacation or sick days on a change card: the kind, the dates, and what they were if they're changing. */
+function TimeOffChangeRow({
+  change,
+  status,
+  busy,
+  onApply,
+  onSkip,
+}: {
+  change: TimeOffChange;
+  status: ProposalItemStatus;
+  busy: boolean;
+  onApply: () => void;
+  onSkip: () => void;
+}) {
+  const entry = change.op === 'time_off_remove' ? change.was : change.entry;
+  const removed = change.op === 'time_off_remove';
+  const s = TIME_OFF_STYLE[entry.kind];
+  const sub = removed ? 'Removed from your calendar' : change.op === 'time_off_update' ? `Was ${timeOffDates(change.was)}` : entry.note;
+  return (
+    <div className={`border-b border-divider last:border-0 ${status === 'dismissed' ? 'opacity-50' : ''}`}>
+      <div className="flex items-center gap-3 px-4 py-2.5">
+        <span className="w-3 flex-none text-center font-mono text-muted" aria-label={change.op}>
+          {TIME_OFF_MARK[change.op]}
+        </span>
+        <span className="flex-none rounded-md px-2 py-0.5 text-xs font-semibold" style={{ color: s.fg, background: s.bg }}>
+          {TIME_OFF_LABEL[entry.kind]}
+        </span>
+        <span className="min-w-0 flex-auto">
+          <span className={removed ? 'line-through' : ''}>{timeOffDates(entry)}</span>
+          {sub && <span className="block text-xs text-muted">{sub}</span>}
+        </span>
+        <RowControls status={status} busy={busy} onApply={onApply} onSkip={onSkip} />
+      </div>
     </div>
   );
 }
@@ -367,20 +415,18 @@ function ChangesCard({ proposal, threadId }: { proposal: Extract<Proposal, { kin
           </span>
         )}
       </div>
-      {proposal.items.map((change, i) => (
-        <ChangeRow
-          key={i}
-          change={change}
-          preview={previews[i]!}
-          status={proposal.itemStatus[i] ?? 'pending'}
-          busy={busy}
-          onApply={() => apply.mutate({ id: proposal.id, indexes: [i] })}
-          onSkip={() => dismiss.mutate({ id: proposal.id, indexes: [i] })}
-        />
-      ))}
+      {proposal.items.map((change, i) => {
+        const row = {
+          status: proposal.itemStatus[i] ?? ('pending' as const),
+          busy,
+          onApply: () => apply.mutate({ id: proposal.id, indexes: [i] }),
+          onSkip: () => dismiss.mutate({ id: proposal.id, indexes: [i] }),
+        };
+        return isTimeOffChange(change) ? <TimeOffChangeRow key={i} change={change} {...row} /> : <ChangeRow key={i} change={change} preview={previews[i]!} {...row} />;
+      })}
       {apply.data?.failed.length ? (
         <div className="px-4 pb-3">
-          <ErrorNote>{apply.data.failed.length} change(s) referred to sessions that no longer exist.</ErrorNote>
+          <ErrorNote>{apply.data.failed.length} change(s) referred to something that no longer exists.</ErrorNote>
         </div>
       ) : null}
       {(apply.error || dismiss.error) && (

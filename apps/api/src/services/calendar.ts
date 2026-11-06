@@ -2,20 +2,35 @@ import { buildZwo, canAddRide, canDeleteSession, todayIn } from '@cycling-coach/
 import {
   addRideToEvent,
   createEvent,
+  createTimeOff,
   deleteEvent,
+  deleteTimeOff,
   detachFeedbackFromEvent,
   findEventByActivity,
   getEvent,
   getProfile,
   getStoredActivity,
+  getTimeOff,
   getWorkout,
   patchEvent,
+  patchTimeOff,
   removeRideFromEvent,
   setEventSync,
   unlinkActivity,
   type Collections,
 } from '@cycling-coach/db';
-import type { CalendarEvent, CalendarEventInput, CalendarEventPatch, Platform, SessionKind, SessionType } from '@cycling-coach/shared';
+import {
+  timeOffRangeError,
+  type CalendarEvent,
+  type CalendarEventInput,
+  type CalendarEventPatch,
+  type Platform,
+  type SessionKind,
+  type SessionType,
+  type TimeOff,
+  type TimeOffInput,
+  type TimeOffPatch,
+} from '@cycling-coach/shared';
 import type { ServiceFailure } from '../app';
 import type { IntegrationResolver } from '../integrations';
 import { IntervalsError } from '../providers/intervals-icu';
@@ -175,6 +190,24 @@ export class CalendarService {
     const updated = await removeRideFromEvent(this.c, userId, id, activityId, status, now);
     if (updated && !updated.activityId) await detachFeedbackFromEvent(this.c, userId, id, now);
     return updated;
+  }
+
+  /** Vacation or sick days. They stay in this app, so nothing here pushes (DECISIONS #87). */
+  addTimeOff(userId: string, input: TimeOffInput, meta: { source: 'coach' | 'manual'; proposalId?: string | undefined }): Promise<TimeOff> {
+    return createTimeOff(this.c, userId, input, meta, this.now());
+  }
+
+  /** The dates are checked as they'll end up: a patch can carry just one of them. */
+  async patchTimeOff(userId: string, id: string, patch: TimeOffPatch): Promise<TimeOff | ServiceFailure | null> {
+    const before = await getTimeOff(this.c, userId, id);
+    if (!before) return null;
+    const error = timeOffRangeError(patch.startDate ?? before.startDate, patch.endDate ?? before.endDate);
+    if (error) return { error, status: 400 };
+    return patchTimeOff(this.c, userId, id, patch, this.now());
+  }
+
+  removeTimeOff(userId: string, id: string): Promise<boolean> {
+    return deleteTimeOff(this.c, userId, id);
   }
 
   /** Create or update the session's intervals.icu event. Records the link, or the error. */

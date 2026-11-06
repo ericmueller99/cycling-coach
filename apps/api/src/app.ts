@@ -4,6 +4,8 @@ import {
   calendarEventPatchSchema,
   sessionRideInputSchema,
   calendarRangeQuerySchema,
+  timeOffInputSchema,
+  timeOffPatchSchema,
   eventQuerySchema,
   goalInputSchema,
   goalPatchSchema,
@@ -71,6 +73,9 @@ import {
   type OnboardingFitness,
   type OnboardingGoals,
   type OnboardingState,
+  type TimeOff,
+  type TimeOffInput,
+  type TimeOffPatch,
   type TurnStop,
   THREAD_LIST_MAX,
   threadListQuerySchema,
@@ -152,6 +157,12 @@ export interface AppServices {
     result(userId: string, id: string): Promise<SessionResult | ServiceFailure>;
   };
   /** Ride ratings (RPE + note). Stored only; the coach reads them in chat. */
+  timeOff: {
+    list(userId: string, from: IsoDate, to: IsoDate): Promise<TimeOff[]>;
+    create(userId: string, input: TimeOffInput): Promise<TimeOff>;
+    patch(userId: string, id: string, patch: TimeOffPatch): Promise<TimeOff | ServiceFailure | null>;
+    remove(userId: string, id: string): Promise<boolean>;
+  };
   feedback: {
     save(userId: string, input: SessionFeedbackInput): Promise<SessionFeedback | ServiceFailure>;
   };
@@ -431,6 +442,21 @@ export function createApp(deps: AppDeps) {
       const r = await services.calendar.result(c.get('user')!.id, c.req.param('id'));
       return isFailure(r) ? c.json({ error: r.error }, r.status) : c.json(r);
     })
+
+    // ── Time off ────────────────────────────────────────────────────────────
+    .get('/time-off', query(calendarRangeQuerySchema), async (c) => {
+      const { from, to } = c.req.valid('query');
+      return c.json(await services.timeOff.list(c.get('user')!.id, from, to));
+    })
+    .post('/time-off', json(timeOffInputSchema), async (c) => c.json(await services.timeOff.create(c.get('user')!.id, c.req.valid('json')), 201))
+    .patch('/time-off/:id', json(timeOffPatchSchema), async (c) => {
+      const entry = await services.timeOff.patch(c.get('user')!.id, c.req.param('id'), c.req.valid('json'));
+      if (!entry) return c.json({ error: 'Not found' }, 404);
+      return isFailure(entry) ? c.json({ error: entry.error }, entry.status) : c.json(entry);
+    })
+    .delete('/time-off/:id', async (c) =>
+      (await services.timeOff.remove(c.get('user')!.id, c.req.param('id'))) ? c.json({ ok: true }) : c.json({ error: 'Not found' }, 404),
+    )
 
     // ── Ride feedback ───────────────────────────────────────────────────────
     .put('/feedback', json(sessionFeedbackInputSchema), async (c) => {

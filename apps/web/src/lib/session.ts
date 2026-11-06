@@ -1,4 +1,5 @@
-import type { SessionType, Workout } from '@cycling-coach/shared';
+import { formatRange, formatShortDate } from '@cycling-coach/core';
+import type { SessionType, TimeOff, TimeOffKind, Workout } from '@cycling-coach/shared';
 
 /** Session-type colours. */
 export const SESSION_STYLE: Record<SessionType, { label: string; fg: string; bg: string; dot: string }> = {
@@ -8,6 +9,15 @@ export const SESSION_STYLE: Record<SessionType, { label: string; fg: string; bg:
   endurance: { label: 'Endurance', fg: '#1D5BBF', bg: 'rgba(59,139,246,.12)', dot: '#3B8BF6' },
   recovery: { label: 'Recovery', fg: '#4B5563', bg: 'rgba(122,132,148,.14)', dot: '#7A8494' },
 };
+
+/** Time off colours. Apart from `SESSION_STYLE`, which feeds the intensity picker and the legend. */
+export const TIME_OFF_STYLE: Record<TimeOffKind, { fg: string; bg: string; dot: string }> = {
+  vacation: { fg: '#0E7468', bg: '#E6F6F4', dot: '#14A394' },
+  sick: { fg: '#5925DC', bg: '#F4F3FF', dot: '#7A5AF8' },
+};
+
+/** "Nov 9", or "Nov 9 – Nov 15". */
+export const timeOffDates = (t: Pick<TimeOff, 'startDate' | 'endDate'>) => (t.startDate === t.endDate ? formatShortDate(t.startDate) : formatRange(t.startDate, t.endDate));
 
 /** Tentative events: race colours, dashed border, transparent background. */
 export const TENTATIVE = { fg: '#B42318', bg: 'transparent', border: '#E2A3A3' };

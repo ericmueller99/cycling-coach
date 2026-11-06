@@ -1933,3 +1933,82 @@ them, add a check on `propose_plan`.
 - *Required weekly hours*: real weeks change, which is what chatting with a coach is for.
 - *A preference per goal*: see above. A block of All in for one event is covered by changing it, and the step-down prompt.
 - *Storing the coach's estimate on the goal*: it would turn back into a deadline.
+
+## 87. Vacation and sick days are time off, not sessions (Nov 6)
+
+**Context.** The athlete had no way to mark days they won't train. The coach only knew about a trip or an illness from a
+short-term note, which the athlete never confirmed and which isn't on the calendar. A note also stops at the calendar
+block's 14 days: a vacation next month was invisible to a four-week plan unless a note happened to exist.
+
+**Decision.**
+- **A separate `time_off` collection:** `kind` (`vacation`, `sick`), `startDate`, `endDate` (the last day, included,
+  required, at most 366 days), `note`. Entries can overlap, because getting sick on vacation is real.
+- **Writes go through `CalendarService`,** like every calendar write (`addTimeOff`, `patchTimeOff`, `removeTimeOff`).
+  `patchTimeOff` checks the dates as they'll end up, because a refined schema can't be `.partial()`-ed.
+- **They stay in this app.** Nothing is pushed to intervals.icu, and its own events of these kinds aren't imported.
+- **The coach proposes, the athlete confirms** (rule 5). `propose_time_off` adds, changes or removes an entry on the
+  existing change card, with new `time_off_*` rows beside the session rows. `propose_calendar_changes` keeps its narrower
+  schema, so only this tool writes those rows. It isn't `tier: 'build'`: "I've got a cold" stays on the chat model.
+- **Sessions on those days:**
+  - *From the coach:* the tool adds a `remove` row for each one, so the offer doesn't depend on the model remembering.
+    Each row can be skipped.
+  - *By hand:* the panel lists them and asks before saving. They stay until the athlete moves or deletes them.
+  - Both use `core.sessionsInSpan`: still planned, and on a day that hasn't passed.
+- **Past sessions keep their status.** One that goes `missed` during time off stays `missed`, and the persona tells the
+  coach to read it as excused. `settleRides` doesn't know about time off.
+- **The coach sees it further ahead than sessions:** a block sent when it changes, from 14 days back to 180 ahead, with
+  ids and absolute dates so the text only changes when the entries do, plus one line on each turn that today is inside an
+  entry. `get_calendar` includes it too. It stays out of the athlete block, as short-term notes do (#79).
+- **The boundary with memory:** days they won't train, because they're away or sick, go to `propose_time_off`. Niggles,
+  busy weeks and feeling run down stay short-term notes. A trip and an illness are gone from the persona's and `remember`'s
+  examples, so the coach doesn't record one absence twice.
+- **On the calendar:** one chip per day, not a band across the grid. A chip that carries on squares its edge and reaches
+  the side of its cell, so a run of days reads as one bar, named where it starts and at the start of each week.
+
+**The first deploy costs a little.** A new tool changes `TOOLS_HASH`, so every open chat restarts once, with a recap call.
+That restart is also what brings the persona edit to chats already open.
+
+**Rejected.**
+- *New kinds in `calendar_events`*: every reader assumes a ride. They'd be matched to rides, marked missed, counted in the
+  week's hours, given 60 minutes of phantom exercise in the calorie budget and offered Mark done, and `type` would have to
+  become optional. `listEvents` would also need an overlap query for every caller.
+- *Syncing to intervals.icu*: it has `HOLIDAY` and `SICK` categories and an `end_date_local`, but we haven't tested
+  whether that date is inclusive or what they do to its fitness chart. The model allows adding this later.
+- *A new proposal kind and card*: the change card already has per-row Apply and Skip, which is what "add this, and offer
+  to remove those" needs.
+- *Removing sessions automatically*: wrong dates would delete workouts from intervals.icu.
+- *A band spanning the week grid*: the grid is flat siblings in one CSS grid, and `scrollToWeek` depends on that.
+
+## 88. The food intro shows once, on the first attempt to log (Nov 6)
+
+**Context.** The user's foods start empty on purpose (rule 1a, #33), and nothing said so. A new user opened Log food to an
+empty list and had to guess why. DESIGN.md section 16 had a three-step intro that was never built.
+
+**Decision.**
+- **It shows the first time they try to log,** and only then. `useFoodFlows` draws the intro in place of a `log` or `words`
+  flow, and every way to log goes through there, so one check covers the Log food buttons, the log bar and the coach's
+  hand-off. The flow stays set underneath, so when the intro ends it just appears, with the coach's phrase intact. Section 16
+  also fired on opening the food side of the Calendar or Library › Foods; looking around shouldn't interrupt anyone.
+- **Any way out counts as seen, and carries on to what they asked for:** ×, Skip intro, Esc or finishing. Clicking the scrim
+  does nothing, because a stray click shouldn't use up something that shows once.
+- **The flag is on the server,** `introSeenAt` on the food settings document, so it holds across devices. The library sends
+  it as `introSeen`. It has its own route, `POST /api/food/intro-seen`, and isn't in `foodSettingsSchema`, because
+  `PUT /settings` is the slots editor's and nothing should edit this.
+- **It doesn't show for anyone who already logs:** `shouldShowFoodIntro` wants `!introSeen` and empty `usage`, the last 180
+  days of logging. "Your foods start empty" would be wrong for them. Working from what they've logged needs no migration.
+- **Step 2 is canned:** no model call, nothing logged. **Step 3 is real:** what's added there is saved, always from an
+  explicit tap, so rule 1a holds.
+- **It's its own modal, not `Dialog`,** because section 16 wants it full screen on phones, where `Dialog` is a bottom sheet.
+  They share `useModal` for focus, Esc and the scroll lock.
+
+**Differences from the prototype.**
+- **The label step is `LabelAddPanel`, the real form,** not four value tiles. The form is what flags values to check. It's
+  longer, and the dialog body scrolls.
+- **No barcode scan in the intro.** `BarcodeDialog` is a flow of its own, and a known barcode can't come up on an empty list.
+  The step says barcodes work from Log food.
+- **"Popular staples" are search chips.** There's no such list to read, and a list in the code would show numbers that
+  aren't the real ones. Rows show kcal per 100 g, because a row's serving is only known once its detail is fetched.
+
+**Known gap.** The log bar's one-tap add from My foods logs straight away, without a flow. Someone who built their list in
+the Library first and logs that way won't see the intro. They've already found their way around, so it's left alone.
+

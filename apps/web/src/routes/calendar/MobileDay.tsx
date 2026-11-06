@@ -1,4 +1,4 @@
-import { addDays, dayOfMonth, formatLongDay, formatRange, sessionState, sumNutrients, weekDates, weekStart, WEEKDAY_LABELS } from '@cycling-coach/core';
+import { addDays, dayOfMonth, formatLongDay, formatRange, sessionState, sumNutrients, timeOffOn, weekDates, weekStart, WEEKDAY_LABELS } from '@cycling-coach/core';
 import type { IsoDate } from '@cycling-coach/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { useRef, type TouchEvent } from 'react';
@@ -9,12 +9,13 @@ import { ErrorNote, Spinner } from '../../components/ui';
 import { fmtTime } from '../../lib/food';
 import { useDaysRange } from '../../lib/foodQueries';
 import { calendarChunkStart, errorMessage } from '../../lib/queries';
-import { SESSION_STYLE } from '../../lib/session';
+import { SESSION_STYLE, TIME_OFF_STYLE } from '../../lib/session';
 import { MobileEnergy } from '../food/EnergyCard';
 import { LogBar } from '../food/LogBar';
 import { MealSection } from '../food/MealSection';
 import { dayTitle, SessionCard, sessionSelection, useDay } from './day';
 import { fuelLine, useDayActions } from './DayView';
+import { TimeOffCard } from './time-off';
 
 /** Training dot on the strip: done green, planned in its type colour, nothing grey. */
 function trainingDot(events: { status: string; type: keyof typeof SESSION_STYLE }[] | undefined, rides: number): string | null {
@@ -39,6 +40,7 @@ export function MobileDay({ today, date }: { today: IsoDate; date: IsoDate }) {
   const lib = d.lib.data;
   const error = d.lib.error ?? d.log.error;
   const fuelSub = fuelLine(d.budget?.exercise);
+  const off = timeOffOn(d.timeOff, date);
 
   const go = (to: IsoDate) => void navigate({ to: '/calendar/$date', params: { date: to }, replace: true });
   const onTouchStart = (e: TouchEvent) => {
@@ -86,7 +88,8 @@ export function MobileDay({ today, date }: { today: IsoDate; date: IsoDate }) {
           <div className="grid grid-cols-7 gap-1">
             {dates.map((day, i) => {
               const cal = d.byDate.get(day);
-              const dot = trainingDot(cal?.events, cal?.rides.length ?? 0);
+              const off = timeOffOn(d.timeOff, day)[0];
+              const dot = trainingDot(cal?.events, cal?.rides.length ?? 0) ?? (off ? TIME_OFF_STYLE[off.kind].dot : null);
               const f = food.days.get(day);
               const pct = f?.eaten && f.budget ? f.eaten.kcal / f.budget : 0;
               const isToday = day === today;
@@ -124,6 +127,9 @@ export function MobileDay({ today, date }: { today: IsoDate; date: IsoDate }) {
       <MobileEnergy total={d.total} budget={d.budget} isToday={date === today} />
 
       <div className="flex flex-col gap-3 px-4 pt-3 pb-28">
+        {off.map((t) => (
+          <TimeOffCard key={t.id} entry={t} onOpen={() => a.setPanel({ type: 'time-off', entry: t })} />
+        ))}
         {lib && (
           <LogBar
             lib={lib}
@@ -178,7 +184,7 @@ export function MobileDay({ today, date }: { today: IsoDate; date: IsoDate }) {
             );
           })
         )}
-        {!d.sessions.length && !d.calendar.pending && (
+        {!d.sessions.length && !off.length && !d.calendar.pending && (
           <button type="button" onClick={() => a.setPanel({ type: 'add', date })} className="min-h-[48px] rounded-xl border border-dashed border-[#C5CBD4] bg-transparent text-[13px] text-muted">
             {date < today ? 'Rest day' : 'No training'} · + Add session
           </button>
@@ -192,6 +198,13 @@ export function MobileDay({ today, date }: { today: IsoDate; date: IsoDate }) {
           className="flex h-[52px] flex-1 items-center justify-center gap-2 rounded-[26px] border border-line-strong bg-surface font-semibold text-ink shadow-[0_4px_12px_rgba(0,0,0,.08)]"
         >
           <PlusIcon size={18} /> Session
+        </button>
+        <button
+          type="button"
+          onClick={() => a.setPanel({ type: 'time-off-add', date })}
+          className="flex h-[52px] flex-1 items-center justify-center gap-2 rounded-[26px] border border-line-strong bg-surface font-semibold whitespace-nowrap text-ink shadow-[0_4px_12px_rgba(0,0,0,.08)]"
+        >
+          <PlusIcon size={18} /> Time off
         </button>
         <button
           type="button"

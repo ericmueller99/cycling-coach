@@ -9,10 +9,11 @@ import { nowTime } from '../../lib/food';
 import type { useDay } from './day';
 import { ActivityPanel, AddPanel, DetailPanel, type Selection } from './panels';
 import { sessionRides } from './shared';
+import { TimeOffPanel } from './time-off';
 
 /**
  * What the day view and the phone day share: the food dialogs for the day, "Save as meal", and the
- * session / ride / add panels as sheets (a drawer on desktop).
+ * session / ride / add / time off panels as sheets (a drawer on desktop).
  */
 export function useDayActions(date: IsoDate, today: IsoDate, d: ReturnType<typeof useDay>) {
   const lib = d.lib.data;
@@ -53,6 +54,8 @@ export function useDayActions(date: IsoDate, today: IsoDate, d: ReturnType<typeo
         />
       )}
       {panel?.type === 'add' && <AddPanel sheet date={panel.date} onClose={close} onAdded={(id) => setPanel({ type: 'event', id })} />}
+      {panel?.type === 'time-off-add' && <TimeOffPanel sheet date={panel.date} today={today} onClose={close} />}
+      {panel?.type === 'time-off' && <TimeOffPanel sheet key={panel.entry.id} entry={panel.entry} today={today} onClose={close} />}
     </>
   );
   return { flows, slot, setPanel, saveAsMeal, elements, tomorrow: addDays(date, 1) };

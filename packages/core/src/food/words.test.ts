@@ -39,6 +39,7 @@ const lib: FoodLibrary = {
     'food:butter': { count: 9, lastDate: '2026-10-31', usual: { quantity: 1, unit: 'tbsp', times: 7, of: 9 }, bySlot: {} },
   },
   settings: { slots: [{ name: 'Breakfast' }, { name: 'Lunch' }, { name: 'Snacks' }] },
+  introSeen: true,
 };
 
 const parse = (over: Partial<PhraseParse>): PhraseParse => ({ dayOffset: 0, slot: null, time: null, items: [], ...over });

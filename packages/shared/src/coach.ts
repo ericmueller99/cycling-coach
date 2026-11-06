@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { calendarEventInputSchema, calendarEventPatchSchema, calendarEventSchema } from './calendar';
 import { isoDateSchema, type IsoDate } from './common';
 import { goalMeasureSchema, trainingPreferenceSchema } from './profile';
+import { timeOffChangeSchema } from './time-off';
 
 /**
  * Coach output the UI renders as cards. The API stores the verbatim Anthropic transcript and derives
@@ -27,6 +28,13 @@ export const calendarChangeSchema = z.discriminatedUnion('op', [
   z.object({ op: z.literal('remove'), eventId: z.string() }),
 ]);
 export type CalendarChange = z.infer<typeof calendarChangeSchema>;
+
+/**
+ * A row on a change card: a change to a session, or to time off. Wider than `calendarChangeSchema`,
+ * which is what `propose_calendar_changes` takes; only `propose_time_off` writes the time off rows.
+ */
+export const proposalChangeSchema = z.union([calendarChangeSchema, timeOffChangeSchema]);
+export type ProposalChange = z.infer<typeof proposalChangeSchema>;
 
 export const profileUpdateSchema = z.object({
   ftpZwift: z.number().int().min(50).max(700).optional(),
@@ -78,10 +86,10 @@ export const proposalSchema = z.discriminatedUnion('kind', [
     threadId: z.string(),
     kind: z.literal('calendar_changes'),
     title: z.string(),
-    items: z.array(calendarChangeSchema),
+    items: z.array(proposalChangeSchema),
     /**
      * The events as they were when the coach proposed the changes, parallel to `items` — null for
-     * an add, or an id that didn't resolve. A snapshot, so an applied change still shows its "before".
+     * an add, a time off row, or an id that didn't resolve. A snapshot, so an applied change still shows its "before".
      * Absent on proposals made before it existed.
      */
     before: z.array(calendarEventSchema.nullable()).optional(),

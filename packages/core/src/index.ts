@@ -7,6 +7,7 @@ export * from './match';
 export * from './goals';
 export * from './memory';
 export * from './sessions';
+export * from './time-off';
 export * from './weight';
 export * from './zwift';
 export * from './agenda';

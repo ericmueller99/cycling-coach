@@ -6,6 +6,7 @@ import {
   formatShortDate,
   formatWorkoutDuration,
   goalTakesDate,
+  timeOffOn,
   wattsPerKg,
   workoutMetrics,
   zoneWatts,
@@ -13,6 +14,7 @@ import {
   zwiftCategory,
 } from '@cycling-coach/core';
 import {
+  TIME_OFF_LABEL,
   TRAINING_PREFERENCE_LABEL,
   WEEKDAY_LABEL,
   type CalendarEvent,
@@ -24,6 +26,7 @@ import {
   type PowerBest,
   type Profile,
   type SessionFeedback,
+  type TimeOff,
   type Workout,
 } from '@cycling-coach/shared';
 import { COACH_PERSONA } from './prompt';
@@ -174,6 +177,30 @@ export function renderShortTermBlock(notes: Memory[]): string {
   ].join('\n');
 }
 
+/** "t1 · Sick · Mon Nov 9 → Sun Nov 15 · Head cold" — what the context and `get_calendar` show. */
+export function describeTimeOff(t: TimeOff): string {
+  return [t.id, TIME_OFF_LABEL[t.kind], `${formatLongDay(t.startDate)} → ${formatLongDay(t.endDate)}`, ...(t.note ? [t.note] : [])].join(' · ');
+}
+
+/**
+ * Time off for the per-turn context, sent when it changes. Like short-term notes it stays out of the
+ * athlete block, and it reaches much further ahead than the calendar block, so a plan four weeks out
+ * knows about a vacation. No relative dates, so the text only changes when the entries do.
+ */
+export function renderTimeOffBlock(entries: TimeOff[]): string {
+  if (entries.length === 0) return '';
+  return [
+    "# Time off (id · kind · first day → last day · note). The athlete won't train on these days. This is the full current list.",
+    ...entries.map((t) => `- ${describeTimeOff(t)}`),
+  ].join('\n');
+}
+
+/** "Today is sick time off, through Sun Nov 15." Empty on a normal day. Sent every turn it's true. */
+export function renderTimeOffToday(entries: TimeOff[], today: IsoDate): string {
+  const lines = timeOffOn(entries, today).map((t) => `Today is ${TIME_OFF_LABEL[t.kind].toLowerCase()} time off, through ${formatLongDay(t.endDate)}.`);
+  return lines.join(' ');
+}
+
 /**
  * The frozen system prompt for a new API context: [persona, athlete, recap?]. The recap is its own block
  * because `seen.athlete` is compared against the athlete block alone.
@@ -241,12 +268,16 @@ export interface TurnContextInput {
   athleteBlock: string;
   /** Today's short-term notes, from `renderShortTermBlock`. */
   shortTermBlock: string;
+  /** Time off near today, from `renderTimeOffBlock`. */
+  timeOffBlock: string;
+  /** From `renderTimeOffToday`. */
+  timeOffToday: string;
   /** Today's food against the budget, when the food module has data. */
   food?: FoodTurnContext | undefined;
   /** Anything else the deployment knows about the athlete today (DECISIONS #72). */
   extra?: string | undefined;
   /** What the coach has already been shown in this API context. */
-  seen: { calendar?: string | undefined; athlete: string; extra?: string | undefined; shortTerm?: string | undefined };
+  seen: { calendar?: string | undefined; athlete: string; extra?: string | undefined; shortTerm?: string | undefined; timeOff?: string | undefined };
 }
 
 export interface FoodTurnContext {
@@ -316,6 +347,7 @@ export function renderTurnContext(input: TurnContextInput): string {
         : `Weight: ${w.trendKg} kg (entered by the athlete)${wkg}.`,
     );
   }
+  if (input.timeOffToday) parts.push(input.timeOffToday);
   if (input.food) parts.push(renderFoodLine(input.food));
   // Only when it changed: the coach already has it, and each copy stays in the transcript.
   if (input.extra && input.extra !== input.seen.extra) parts.push(input.extra);
@@ -323,6 +355,7 @@ export function renderTurnContext(input: TurnContextInput): string {
   if (input.shortTermBlock !== (input.seen.shortTerm ?? '')) {
     parts.push(input.shortTermBlock || "Short-term notes: none current. Earlier ones have lapsed or been deleted, so don't save them again.");
   }
+  if (input.timeOffBlock !== (input.seen.timeOff ?? '')) parts.push(input.timeOffBlock || 'Time off: none now. Earlier entries have ended or been removed.');
   parts.push(
     sameCalendar(input.seen.calendar, input.calendarBlock)
       ? 'Calendar: unchanged since the previous context message.'

@@ -6,7 +6,7 @@ import { RpePill } from '../../components/RpePill';
 import { COMPLETED, feedbackForEvent, indexFeedback, type FeedbackIndex } from '../../lib/feedback';
 import { fmtKcal, nowTime } from '../../lib/food';
 import { useEnergyBudget, useFoodLibrary, useFoodLog } from '../../lib/foodQueries';
-import { calendarChunkStart, useCalendarRange } from '../../lib/queries';
+import { calendarChunkStart, useCalendarRange, useTimeOff } from '../../lib/queries';
 import { SESSION_STYLE, durationText, kindLabel } from '../../lib/session';
 import type { Selection } from './panels';
 import { rideName, ridesMeta, rideTime, sessionRides } from './shared';
@@ -69,7 +69,9 @@ export function useDay(date: IsoDate, today: IsoDate, includeEmpty: boolean) {
   const log = useFoodLog(date);
   const budget = useEnergyBudget(date);
   // Two chunks, so the next day (the tomorrow card) is there even at a chunk's end.
-  const calendar = useCalendarRange(calendarChunkStart(today, weekStart(date)), 8);
+  const start = calendarChunkStart(today, weekStart(date));
+  const calendar = useCalendarRange(start, 8);
+  const timeOff = useTimeOff(start, addDays(start, 8 * 7 - 1));
   const byDate = useMemo(() => groupByDay(calendar.events, calendar.activities), [calendar.events, calendar.activities]);
   const ratings = useMemo(() => indexFeedback(calendar.feedback), [calendar.feedback]);
   const ridesById = useMemo(() => new Map(calendar.activities.map((a) => [a.id, a])), [calendar.activities]);
@@ -83,7 +85,7 @@ export function useDay(date: IsoDate, today: IsoDate, includeEmpty: boolean) {
     [lib.data, entries, sessions, date, today, includeEmpty],
   );
   const total = useMemo(() => sumNutrients((entries ?? []).map((e) => e.nutrients)), [entries]);
-  return { lib, log, budget: budget.data, calendar, byDate, ratings, ridesById, sessions, timeline, total, entries: entries ?? [] };
+  return { lib, log, budget: budget.data, calendar, timeOff, byDate, ratings, ridesById, sessions, timeline, total, entries: entries ?? [] };
 }
 
 /** A session on a timeline: type colour bar, title, meta, done/RPE — opens the session panel. */

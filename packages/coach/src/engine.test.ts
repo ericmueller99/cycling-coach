@@ -60,6 +60,8 @@ function ports(overrides: Partial<CoachPorts> = {}): CoachPorts {
       getFitness: async () => [],
     },
     listCalendar: async () => [],
+    listTimeOff: async () => [],
+    getTimeOff: async () => null,
     createProposal: async (p) => ({ ...p, id: 'prop1', threadId: 't', itemStatus: p.items.map(() => 'pending' as const) }) as never,
     createWorkout: async () => {
       throw new Error('unused');

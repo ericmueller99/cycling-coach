@@ -1,8 +1,28 @@
-import { useEffect, useId, useRef, type ReactNode } from 'react';
+import { useEffect, useId, useRef, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { useIsMobile } from '../lib/useIsMobile';
 import { XIcon } from './icons';
 import { Sheet } from './Sheet';
+
+/** While mounted: takes focus and gives it back, closes on Esc, and stops the page behind scrolling. */
+export function useModal(ref: RefObject<HTMLElement | null>, onClose: () => void) {
+  const close = useRef(onClose);
+  close.current = onClose;
+
+  useEffect(() => {
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    ref.current?.focus();
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && close.current();
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = overflow;
+      previous?.focus();
+    };
+  }, [ref]);
+}
 
 /**
  * A modal that is a centred dialog on desktop and the bottom sheet on phones (the food
@@ -67,22 +87,7 @@ function DesktopDialog({
 }) {
   const titleId = useId();
   const ref = useRef<HTMLElement>(null);
-  const close = useRef(onClose);
-  close.current = onClose;
-
-  useEffect(() => {
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    ref.current?.focus();
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && close.current();
-    window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = overflow;
-      previous?.focus();
-    };
-  }, []);
+  useModal(ref, onClose);
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-6">

@@ -46,3 +46,19 @@ describe('a refused AI call (DECISIONS #76)', () => {
     expect(await res.json()).toEqual({ error: 'AI is off here.' });
   });
 });
+
+describe('POST /intro-seen', () => {
+  it('marks it for the signed-in user', async () => {
+    const seen: string[] = [];
+    const food = { markIntroSeen: async (userId: string) => void seen.push(userId) } as unknown as FoodServices;
+    const a = new Hono<{ Variables: { user: { id: string } } }>()
+      .use('*', async (c, next) => {
+        c.set('user', { id: 'user-1' });
+        await next();
+      })
+      .route('/', foodRoutes(food));
+    const res = await a.request('/intro-seen', { method: 'POST' });
+    expect(res.status).toBe(200);
+    expect(seen).toEqual(['user-1']);
+  });
+});

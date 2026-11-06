@@ -214,7 +214,10 @@ export function FoodsTab({ lib, flows, today, slot, mobile }: { lib: FoodLibrary
             </button>
           ))}
         </div>
-        <label className="ml-auto flex items-center gap-1.5 text-[13px] text-muted">
+        <button type="button" onClick={flows.replayIntro} className="ml-auto min-h-8 border-0 bg-transparent p-0 text-[13px] font-medium text-accent-ink mobile:min-h-[36px]">
+          How food logging works
+        </button>
+        <label className="flex items-center gap-1.5 text-[13px] text-muted">
           Sort
           <select value={sort} onChange={(e) => setSort(e.target.value as Sort)} disabled={!!q.trim()} className="min-h-8 rounded-lg border border-line-strong bg-surface px-2 text-ink mobile:min-h-[36px]">
             {SORTS.map((s) => (

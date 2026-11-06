@@ -1,4 +1,4 @@
-import { addDays, sessionState, sumNutrients, weekStart } from '@cycling-coach/core';
+import { addDays, sessionState, sumNutrients, timeOffOn, weekStart } from '@cycling-coach/core';
 import type { FoodLogEntry, IsoDate } from '@cycling-coach/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { ChevronLeft, ChevronRight } from '../../components/icons';
@@ -11,6 +11,7 @@ import { LogBar } from '../food/LogBar';
 import { MealSection } from '../food/MealSection';
 import { dayTitle, SessionCard, sessionSelection, sessionTitle, useDay } from './day';
 import { fuelLine, useDayActions } from './DayView';
+import { TimeOffCard } from './time-off';
 
 /** Day | Week — the day view and the scrolling week grid. */
 export function DayWeekSwitch({ date }: { date: IsoDate }) {
@@ -42,6 +43,7 @@ export function DayPage({ date, today }: { date: IsoDate; today: IsoDate }) {
   const lib = d.lib.data;
   const error = d.lib.error ?? d.log.error;
   const fuelSub = fuelLine(d.budget?.exercise);
+  const off = timeOffOn(d.timeOff, date);
 
   const meal = (m: { slot: string; time?: string | undefined; entries: FoodLogEntry[] }, subline?: string) => (
     <MealSection
@@ -75,6 +77,7 @@ export function DayPage({ date, today }: { date: IsoDate; today: IsoDate }) {
         )}
         <DayWeekSwitch date={date} />
         <Button onClick={() => a.setPanel({ type: 'add', date })}>+ Session</Button>
+        <Button onClick={() => a.setPanel({ type: 'time-off-add', date })}>+ Time off</Button>
         <Button variant="primary" onClick={() => a.flows.logFood()}>
           + Food
         </Button>
@@ -92,6 +95,9 @@ export function DayPage({ date, today }: { date: IsoDate; today: IsoDate }) {
               onStaples={(query, slot) => a.flows.setFlow({ kind: 'log', slot, query, staples: true })}
             />
           )}
+          {off.map((t) => (
+            <TimeOffCard key={t.id} entry={t} onOpen={() => a.setPanel({ type: 'time-off', entry: t })} />
+          ))}
           {error ? (
             <ErrorNote>{errorMessage(error)}</ErrorNote>
           ) : d.lib.isPending || d.log.isPending ? (
@@ -131,7 +137,7 @@ export function DayPage({ date, today }: { date: IsoDate; today: IsoDate }) {
                   </li>
                 );
               })}
-              {!d.sessions.length && (
+              {!d.sessions.length && !off.length && (
                 <li className="flex gap-3">
                   <span className="w-16 flex-none" />
                   <button

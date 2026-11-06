@@ -1,5 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk';
-import { daysBetween, describeFeedback, formatLongDay, formatRange, formatStepDuration } from '@cycling-coach/core';
+import { daysBetween, describeFeedback, formatLongDay, formatRange, formatStepDuration, sessionsInSpan } from '@cycling-coach/core';
 import {
   calendarChangeSchema,
   eventFiltersSchema,
@@ -10,10 +10,12 @@ import {
   mealDifficulties,
   planItemSchema,
   profileUpdateSchema,
+  TIME_OFF_LABEL,
+  timeOffInputSchema,
+  timeOffKindSchema,
   workoutInputSchema,
   type Activity,
   type ActivityDetail,
-  type CalendarChange,
   type CalendarEvent,
   type EventQuery,
   type EventQueryResult,
@@ -25,6 +27,7 @@ import {
   type MealIdeas,
   type Nutrients,
   type RecipeDraft,
+  type TimeOff,
   type Memory,
   type MemoryInput,
   type MemoryPatch,
@@ -33,6 +36,7 @@ import {
   type PowerCurve,
   type PowerCurvePeriod,
   type Proposal,
+  type ProposalChange,
   type ProfileUpdate,
   type SessionFeedback,
   type UiBlock,
@@ -42,7 +46,7 @@ import {
   zwiftEventTypeSchema,
 } from '@cycling-coach/shared';
 import { z } from 'zod';
-import { describeKind, describeStatus } from './context';
+import { describeKind, describeStatus, describeTimeOff } from './context';
 import { toStrictSchema } from './schema';
 
 /**
@@ -54,6 +58,8 @@ export interface CoachPorts {
   /** Null when intervals.icu isn't configured. */
   training: TrainingDataPort | null;
   listCalendar(from: IsoDate, to: IsoDate): Promise<CalendarEvent[]>;
+  listTimeOff(from: IsoDate, to: IsoDate): Promise<TimeOff[]>;
+  getTimeOff(id: string): Promise<TimeOff | null>;
   createProposal(p: NewProposal): Promise<Proposal>;
   createWorkout(input: WorkoutInput): Promise<Workout>;
   remember(input: MemoryInput): Promise<Memory | { error: string }>;
@@ -129,7 +135,7 @@ export type NewProposal = {
   replaces?: string;
 } & (
   | { kind: 'plan'; items: PlanItem[] }
-  | { kind: 'calendar_changes'; items: CalendarChange[] }
+  | { kind: 'calendar_changes'; items: ProposalChange[] }
   | { kind: 'profile_update'; items: [ProfileUpdate] }
   | { kind: 'goal'; items: [GoalProposal] }
 );
@@ -439,23 +445,21 @@ export const COACH_TOOLS = [
   defineTool({
     name: 'get_calendar',
     description:
-      "Read the athlete's training calendar for a date range outside what the per-turn context already shows (planned, done and skipped sessions, with ids, and their rating of a done one when they gave it).",
+      "Read the athlete's training calendar for a date range outside what the per-turn context already shows (planned, done and skipped sessions, with ids, their rating of a done one when they gave it, and any time off).",
     schema: rangeSchema,
     source: 'app',
     async run({ start, end }, { ports }) {
       if (daysBetween(start, end) > 120) return { content: 'Range too long; at most 120 days.', isError: true };
-      const [events, ratings] = await Promise.all([ports.listCalendar(start, end), ports.listFeedback({ start, end }).catch(() => [])]);
+      const [events, ratings, timeOff] = await Promise.all([ports.listCalendar(start, end), ports.listFeedback({ start, end }).catch(() => []), ports.listTimeOff(start, end)]);
       const felt = new Map(ratings.flatMap((f) => (f.eventId ? [[f.eventId, f] as const] : [])));
-      return {
-        content: events.length
-          ? events
-              .map((e) => {
-                const rating = felt.get(e.id);
-                return `${e.id} · ${e.date} · ${describeKind(e)} · ${e.type} · ${e.title}${e.durationMin ? ` · ${e.durationMin} min` : ''} · ${describeStatus(e)}${e.tentative ? ' (tentative)' : ''}${e.source === 'intervals' ? ' · added in intervals.icu' : ''}${rating ? ` · felt: ${describeFeedback(rating)}` : ''}`;
-              })
-              .join('\n')
-          : 'Nothing scheduled in that range.',
-      };
+      const lines = [
+        ...timeOff.map((t) => `Time off: ${describeTimeOff(t)}`),
+        ...events.map((e) => {
+          const rating = felt.get(e.id);
+          return `${e.id} · ${e.date} · ${describeKind(e)} · ${e.type} · ${e.title}${e.durationMin ? ` · ${e.durationMin} min` : ''} · ${describeStatus(e)}${e.tentative ? ' (tentative)' : ''}${e.source === 'intervals' ? ' · added in intervals.icu' : ''}${rating ? ` · felt: ${describeFeedback(rating)}` : ''}`;
+        }),
+      ];
+      return { content: lines.length ? lines.join('\n') : 'Nothing scheduled in that range.' };
     },
   }),
 
@@ -550,6 +554,57 @@ export const COACH_TOOLS = [
   }),
 
   defineTool({
+    name: 'propose_time_off',
+    description:
+      "Put days the athlete won't train on their calendar as vacation or sick, or change or remove such an entry, whenever they tell you about them. Give your best last day when they don't say; it can be changed later. Sessions still planned on those days are added to the card automatically as rows offering to remove them, so don't list or propose those removals yourself. To change an entry, pass its id and what's different. The athlete confirms before anything changes.",
+    schema: z.object({
+      title: z.string().describe('Short heading, e.g. "Sick until Sunday".'),
+      action: z.enum(['add', 'update', 'remove']),
+      time_off_id: z.string().optional().describe('For update and remove: the id from the time off context.'),
+      kind: timeOffKindSchema.optional().describe('Required for add.'),
+      start: isoDateSchema.optional().describe('First day, YYYY-MM-DD. Required for add.'),
+      end: isoDateSchema.optional().describe('Last day, included, YYYY-MM-DD. Required for add.'),
+      note: z.string().max(500).optional().describe('Only what they said worth keeping, e.g. "Head cold".'),
+      replaces: replacesSchema,
+    }),
+    source: 'app',
+    strict: false,
+    async run({ title, action, time_off_id, kind, start, end, note, replaces }, { ports, toolUseId, today }) {
+      const was = action === 'add' ? null : time_off_id ? await ports.getTimeOff(time_off_id) : null;
+      if (action !== 'add' && !was) return { content: `No time off with id ${time_off_id ?? '(none given)'}. Use an id from the time off context.`, isError: true };
+      const fields = was ? { kind: was.kind, startDate: was.startDate, endDate: was.endDate, ...(was.note ? { note: was.note } : {}) } : null;
+      let changes: ProposalChange[];
+      let summary: string;
+      if (action === 'remove') {
+        changes = [{ op: 'time_off_remove', timeOffId: was!.id, was: fields! }];
+        summary = `removing ${describeTimeOff(was!)}`;
+      } else {
+        const parsed = timeOffInputSchema.safeParse({
+          ...fields,
+          ...(kind ? { kind } : {}),
+          ...(start ? { startDate: start } : {}),
+          ...(end ? { endDate: end } : {}),
+          ...(note ? { note } : {}),
+        });
+        if (!parsed.success) return { content: `Invalid time off: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`, isError: true };
+        const entry = parsed.data;
+        const sessions = sessionsInSpan(await ports.listCalendar(entry.startDate, entry.endDate), entry.startDate, entry.endDate, today);
+        changes = [
+          was ? { op: 'time_off_update', timeOffId: was.id, entry, was: fields! } : { op: 'time_off_add', entry },
+          ...sessions.map((e) => ({ op: 'remove' as const, eventId: e.id })),
+        ];
+        const offer = sessions.length ? `, with rows offering to remove ${sessions.map((e) => `${e.title} (${e.date})`).join(', ')}` : '';
+        summary = `${TIME_OFF_LABEL[entry.kind]} ${entry.startDate} → ${entry.endDate}${offer}`;
+      }
+      const proposal = await ports.createProposal({ kind: 'calendar_changes', toolUseId, title, ...(replaces ? { replaces } : {}), items: changes });
+      return {
+        content: `Card shown to the athlete: ${summary} (proposal ${proposal.id}). Nothing has changed yet, and they can skip any row.`,
+        ui: { type: 'proposal', proposalId: proposal.id, kind: 'calendar_changes' },
+      };
+    },
+  }),
+
+  defineTool({
     name: 'propose_profile_update',
     description:
       'Propose updating the athlete’s FTP, their monthly Zwift weight, their training preference (steady, committed or all_in), or a power best they report (e.g. an outdoor effort intervals.icu doesn’t have). Body weight is synced from intervals.icu and is not proposed. Shown as a confirm card; nothing changes until they accept.',
@@ -611,7 +666,7 @@ export const COACH_TOOLS = [
   defineTool({
     name: 'remember',
     description:
-      "Save a note about the athlete, when they ask you to or when something they mention would change coaching in the days ahead, even if they play it down: a niggle, feeling ill, a trip, a busy spell. Not for small talk or ride-by-ride numbers, which are fetched fresh. Keep to what they said, without your own guesses, and write it as a plain note with no name or pronoun. Choose a list with until. Short-term, for anything with an end (a trip, illness, a busy week, a temporary niggle): until is the last day it matters, and the note is forgotten the day after. Give your best date when they don't say. Long-term, for durable facts (schedule patterns, preferences, equipment, lasting injuries, constraints): until is null. Write the note so it still reads right later, with absolute dates: \"Away for work Wed Nov 11, can't train\", never \"next Wednesday\". If a note already covers this, use update_memory instead. The athlete can see and undo it.",
+      "Save a note about the athlete, when they ask you to or when something they mention would change coaching in the days ahead, even if they play it down: a niggle, feeling run down, a busy spell. Days they won't train because they're away or sick go on the calendar with propose_time_off, not here. Not for small talk or ride-by-ride numbers, which are fetched fresh. Keep to what they said, without your own guesses, and write it as a plain note with no name or pronoun. Choose a list with until. Short-term, for anything with an end (a busy week, a temporary niggle): until is the last day it matters, and the note is forgotten the day after. Give your best date when they don't say. Long-term, for durable facts (schedule patterns, preferences, equipment, lasting injuries, constraints): until is null. Write the note so it still reads right later, with absolute dates: \"Big work deadline Wed Nov 11\", never \"next Wednesday\". If a note already covers this, use update_memory instead. The athlete can see and undo it.",
     schema: z.object({
       text: z.string().min(1).max(500),
       until: isoDateSchema.nullable().describe('Last local day it matters, YYYY-MM-DD, for a short-term note. null for a long-term note.'),

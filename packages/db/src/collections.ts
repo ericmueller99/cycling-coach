@@ -7,7 +7,6 @@ import type {
   PowerCurve,
   PowerPoint,
   WellnessDay,
-  CalendarChange,
   CalendarEvent,
   CalendarEventInput,
   GoalInput,
@@ -17,7 +16,9 @@ import type {
   PowerBest,
   Profile,
   ProfileUpdate,
+  ProposalChange,
   ProposalItemStatus,
+  TimeOffInput,
   EventFilters,
   BodyScanInput,
   BmrSource,
@@ -144,10 +145,10 @@ export interface ThreadDoc {
    */
   contexts?: ThreadContext[];
   /**
-   * The calendar, athlete and short-term note text the coach has already been shown in this context,
+   * The calendar, time off, athlete and short-term note text the coach has already been shown in this context,
    * so per-turn context messages only repeat what changed (packages/coach/src/context.ts).
    */
-  seen: { calendar?: string; athlete: string; extra?: string; shortTerm?: string };
+  seen: { calendar?: string; athlete: string; extra?: string; shortTerm?: string; timeOff?: string };
   /** When a call last started on the build model, for the one warm follow-up (`warmFollowUp`). */
   lastBuildStartedAt?: Date;
   /** That one follow-up has been used, so the next turn goes back to the chat model. */
@@ -190,6 +191,15 @@ export interface MessageDoc {
   model?: string;
 }
 
+export interface TimeOffDoc extends TimeOffInput {
+  _id?: ObjectId;
+  userId: string;
+  source: 'coach' | 'manual';
+  proposalId?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export type ProposalDoc = {
   _id?: ObjectId;
   userId: string;
@@ -201,7 +211,7 @@ export type ProposalDoc = {
   createdAt: Date;
 } & (
   | { kind: 'plan'; items: PlanItem[] }
-  | { kind: 'calendar_changes'; items: CalendarChange[]; before?: (CalendarEvent | null)[] }
+  | { kind: 'calendar_changes'; items: ProposalChange[]; before?: (CalendarEvent | null)[] }
   | { kind: 'profile_update'; items: [ProfileUpdate] }
   | { kind: 'goal'; items: [GoalProposal] }
 );
@@ -374,6 +384,8 @@ export interface FoodSettingsDoc extends FoodSettings {
   _id?: ObjectId;
   userId: string;
   updatedAt: Date;
+  /** When they finished or dismissed the food intro (DECISIONS #88). */
+  introSeenAt?: Date;
 }
 
 /** BMR now; Phase 2 adds activity factor, goal and macro targets. */
@@ -537,6 +549,7 @@ export function collections(db: Db) {
     memories: db.collection<MemoryDoc>('memories'),
     workouts: db.collection<WorkoutDoc>('workouts'),
     calendarEvents: db.collection<CalendarEventDoc>('calendar_events'),
+    timeOff: db.collection<TimeOffDoc>('time_off'),
     threads: db.collection<ThreadDoc>('threads'),
     messages: db.collection<MessageDoc>('messages'),
     proposals: db.collection<ProposalDoc>('proposals'),
@@ -578,6 +591,7 @@ export async function ensureIndexes(db: Db): Promise<void> {
     c.memories.createIndex({ userId: 1, createdAt: 1 }),
     c.workouts.createIndex({ userId: 1, createdAt: -1 }),
     c.calendarEvents.createIndex({ userId: 1, date: 1 }),
+    c.timeOff.createIndex({ userId: 1, startDate: 1 }),
     c.calendarEvents.createIndex({ userId: 1, 'intervals.eventId': 1 }, { sparse: true }),
     c.threads.createIndex({ userId: 1, lastMessageAt: -1 }),
     c.messages.createIndex({ threadId: 1, seq: 1 }, { unique: true }),

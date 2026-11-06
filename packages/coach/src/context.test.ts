@@ -1,6 +1,6 @@
-import type { CalendarEvent, SessionFeedback } from '@cycling-coach/shared';
+import type { CalendarEvent, SessionFeedback, TimeOff } from '@cycling-coach/shared';
 import { describe, expect, it } from 'vitest';
-import { buildSystemSnapshot, renderAthleteBlock, renderCalendarBlock, renderShortTermBlock, renderTurnContext } from './context';
+import { buildSystemSnapshot, renderAthleteBlock, renderCalendarBlock, renderShortTermBlock, renderTimeOffBlock, renderTimeOffToday, renderTurnContext } from './context';
 import { feedbackRollup, formatActivityForModel, formatFeedbackForModel } from './tools';
 
 const ctx = (zwift?: object) =>
@@ -134,7 +134,7 @@ describe('renderAthleteBlock — FTP not known yet (DECISIONS #62)', () => {
 });
 
 describe('renderTurnContext calendar', () => {
-  const base = { today: '2026-11-03', localTime: '9:14 PM', timezone: 'UTC', training: 'connected', athleteBlock: 'athlete', shortTermBlock: '' } as const;
+  const base = { today: '2026-11-03', localTime: '9:14 PM', timezone: 'UTC', training: 'connected', athleteBlock: 'athlete', shortTermBlock: '', timeOffBlock: '', timeOffToday: '' } as const;
   const calendar = (from: string, to: string, body: string) => `# Calendar ${from} → ${to} (id · date)\n${body}`;
 
   it('calls the calendar unchanged when only the window moved', () => {
@@ -171,7 +171,7 @@ describe('renderTurnContext calendar', () => {
 });
 
 describe('short-term notes (DECISIONS #79)', () => {
-  const base = { today: '2026-11-04', localTime: '9:14 PM', timezone: 'UTC', training: 'connected', athleteBlock: 'athlete', calendarBlock: '# Calendar\n- e1' } as const;
+  const base = { today: '2026-11-04', localTime: '9:14 PM', timezone: 'UTC', training: 'connected', athleteBlock: 'athlete', calendarBlock: '# Calendar\n- e1', timeOffBlock: '', timeOffToday: '' } as const;
   const note = { id: 'm1', text: "Away for work Wed Nov 11, can't train", until: '2026-11-11', source: 'coach', createdAt: '' } as const;
   const block = renderShortTermBlock([note]);
 
@@ -206,6 +206,36 @@ describe('short-term notes (DECISIONS #79)', () => {
   it('never reaches the block a thread freezes', () => {
     const athlete = { ...ctx(), shortTerm: [note] };
     expect(buildSystemSnapshot(athlete).join('\n')).not.toContain('Away for work');
+  });
+});
+
+describe('time off in the per-turn context (DECISIONS #87)', () => {
+  const base = { today: '2026-11-04', localTime: '9:14 PM', timezone: 'UTC', training: 'connected', athleteBlock: 'athlete', calendarBlock: '# Calendar\n- e1', shortTermBlock: '', timeOffToday: '' } as const;
+  const sick: TimeOff = { id: 't1', kind: 'sick', startDate: '2026-11-02', endDate: '2026-11-08', note: 'Head cold', source: 'coach' };
+  const vacation: TimeOff = { id: 't2', kind: 'vacation', startDate: '2026-12-20', endDate: '2027-01-02', source: 'manual' };
+  const block = renderTimeOffBlock([sick, vacation]);
+
+  it('gives ids and absolute dates, so the text only changes when the entries do', () => {
+    expect(block).toContain('- t1 · Sick · Mon Nov 2 → Sun Nov 8 · Head cold');
+    expect(block).toContain('- t2 · Vacation · Sun Dec 20 → Sat Jan 2');
+    expect(renderTimeOffBlock([])).toBe('');
+  });
+
+  it('is sent when it changes and not after', () => {
+    expect(renderTurnContext({ ...base, timeOffBlock: block, seen: { athlete: 'athlete' } })).toContain(block);
+    expect(renderTurnContext({ ...base, timeOffBlock: block, seen: { athlete: 'athlete', timeOff: block } })).not.toContain('Time off');
+  });
+
+  it('says so when the last entry goes, and nothing to a thread that never had any', () => {
+    expect(renderTurnContext({ ...base, timeOffBlock: '', seen: { athlete: 'athlete', timeOff: block } })).toContain('Time off: none now');
+    expect(renderTurnContext({ ...base, timeOffBlock: '', seen: { athlete: 'athlete' } })).not.toContain('Time off');
+  });
+
+  it('says every turn when today is inside an entry', () => {
+    expect(renderTimeOffToday([sick, vacation], '2026-11-04')).toBe('Today is sick time off, through Sun Nov 8.');
+    expect(renderTimeOffToday([sick, vacation], '2026-11-09')).toBe('');
+    const today = renderTimeOffToday([sick], '2026-11-04');
+    expect(renderTurnContext({ ...base, timeOffBlock: block, timeOffToday: today, seen: { athlete: 'athlete', timeOff: block } })).toContain(today);
   });
 });
 

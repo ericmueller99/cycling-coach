@@ -16,21 +16,22 @@ interface Review {
 }
 
 /**
- * A nutrition label read inside the recipe / meal builder: photos → one small-model
- * read → the usual food form to check → two explicit saves. Both create the food (an ingredient or
- * meal item always points at one of the user's foods); only one also adds it.
+ * A nutrition label read inside the recipe / meal builder or the food intro: photos → one
+ * small-model read → the usual food form to check → an explicit save. In a builder there are two
+ * saves: both create the food (an ingredient or meal item always points at one of the user's
+ * foods), and only one also adds it. With no `target` there's nothing to add it to.
  */
 export function LabelAddPanel({
   target,
-  nameHint,
+  nameHint = '',
   onSaved,
   onCancel,
 }: {
-  target: 'recipe' | 'meal';
+  target?: 'recipe' | 'meal';
   /** The search text — the name when the label doesn't show one. */
-  nameHint: string;
+  nameHint?: string;
   onSaved: (food: Food, portion: Portion, add: boolean) => void;
-  onCancel: () => void;
+  onCancel?: () => void;
 }) {
   const m = useFoodMutations();
   const [review, setReview] = useState<Review | null>(null);
@@ -55,7 +56,7 @@ export function LabelAddPanel({
     m.createFood.mutate(parsed.input, { onSuccess: (food) => onSaved(food, food.defaultPortion, add), onError: (e) => setError(errorMessage(e)) });
   };
 
-  const cancel = (
+  const cancel = onCancel && (
     <button type="button" onClick={onCancel} className="border-0 bg-transparent p-0 text-[13px] font-medium text-accent-ink">
       Cancel
     </button>
@@ -75,12 +76,14 @@ export function LabelAddPanel({
           <div className="flex flex-wrap items-center gap-2">
             <DraftPreview draft={review.draft} />
             <span className="grow" />
-            <Button disabled={m.createFood.isPending} onClick={() => save(false)}>
-              Save to my foods only
+            <Button variant={target ? 'secondary' : 'primary'} disabled={m.createFood.isPending} onClick={() => save(false)}>
+              {target ? 'Save to my foods only' : 'Save to my foods'}
             </Button>
-            <Button variant="primary" disabled={m.createFood.isPending} onClick={() => save(true)}>
-              Save to my foods &amp; add to {target}
-            </Button>
+            {target && (
+              <Button variant="primary" disabled={m.createFood.isPending} onClick={() => save(true)}>
+                Save to my foods &amp; add to {target}
+              </Button>
+            )}
           </div>
         </>
       ) : (

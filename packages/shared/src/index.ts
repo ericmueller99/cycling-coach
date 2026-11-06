@@ -7,6 +7,7 @@ export * from './events';
 export * from './feedback';
 export * from './food';
 export * from './profile';
+export * from './time-off';
 export * from './workout';
 export * from './training';
 export * from './api';

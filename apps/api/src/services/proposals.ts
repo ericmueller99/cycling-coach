@@ -11,7 +11,7 @@ import {
   type Collections,
   type ProposalDoc,
 } from '@cycling-coach/db';
-import type { CalendarChange, GoalProposal, Proposal } from '@cycling-coach/shared';
+import type { GoalProposal, Proposal, ProposalChange } from '@cycling-coach/shared';
 import type { ObjectId } from 'mongodb';
 import type { CalendarService } from './calendar';
 
@@ -36,7 +36,7 @@ export async function createCoachProposal(c: Collections, userId: string, thread
           ...base,
           kind: 'calendar_changes',
           items: p.items,
-          before: await Promise.all(p.items.map((ch) => (ch.op === 'add' ? null : getEvent(c, userId, ch.eventId)))),
+          before: await Promise.all(p.items.map((ch) => ('eventId' in ch ? getEvent(c, userId, ch.eventId) : null))),
         }
       : p.kind === 'plan'
         ? { ...base, kind: 'plan', items: p.items }
@@ -57,7 +57,7 @@ export async function createCoachProposal(c: Collections, userId: string, thread
  * these run when the user presses Add / Add all / Apply. Calendar items go through the calendar
  * service, so an accepted workout or race syncs to intervals.icu like one the user added themselves.
  */
-async function applyCalendarChange(cal: CalendarService, userId: string, change: CalendarChange, proposalId: string) {
+async function applyCalendarChange(cal: CalendarService, userId: string, change: ProposalChange, proposalId: string) {
   switch (change.op) {
     case 'add':
       await cal.create(userId, change.event, { source: 'coach', proposalId });
@@ -70,6 +70,16 @@ async function applyCalendarChange(cal: CalendarService, userId: string, change:
       const result = await cal.remove(userId, change.eventId);
       return result !== null && !('error' in result);
     }
+    case 'time_off_add':
+      await cal.addTimeOff(userId, change.entry, { source: 'coach', proposalId });
+      return true;
+    case 'time_off_update': {
+      // The row is the whole entry, so a note it no longer has is gone.
+      const result = await cal.patchTimeOff(userId, change.timeOffId, { ...change.entry, ...(change.entry.note ? {} : { unset: ['note'] as const }) });
+      return result !== null && !('error' in result);
+    }
+    case 'time_off_remove':
+      return cal.removeTimeOff(userId, change.timeOffId);
   }
 }
 

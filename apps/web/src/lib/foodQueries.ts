@@ -4,6 +4,7 @@ import type {
   EnergyPatch,
   FoodAdjustInput,
   FoodInput,
+  FoodLibrary,
   FoodLogInput,
   FoodLogPatch,
   FoodPatch,
@@ -142,6 +143,20 @@ export function useFoodMutations() {
       onSuccess: library,
     }),
   };
+}
+
+/** The staple opened up, for saving straight from a list (`useStapleDetail` is the same data for a page). */
+export async function fetchStapleDetail(source: StapleSource, ref: string) {
+  return unwrap(await api.api.food.staples[':source'][':ref'].$get({ param: { source, ref } }));
+}
+
+/** The food intro is done with. The library says so straight away, since the flows read it to decide what to draw. */
+export function useMarkFoodIntroSeen() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => unwrap(await api.api.food['intro-seen'].$post()),
+    onMutate: () => qc.setQueryData<FoodLibrary>(foodKeys.library, (lib) => lib && { ...lib, introSeen: true }),
+  });
 }
 
 /** Read a label / screenshot with the small model (nothing is saved — the result is reviewed). */

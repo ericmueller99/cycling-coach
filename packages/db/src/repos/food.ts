@@ -278,3 +278,12 @@ export async function saveFoodSettings(c: Collections, userId: string, settings:
   await c.foodSettings.updateOne({ userId }, { $set: { slots: settings.slots, updatedAt: now }, $setOnInsert: { userId } }, { upsert: true });
   return settings;
 }
+
+export async function foodIntroSeen(c: Collections, userId: string): Promise<boolean> {
+  return !!(await c.foodSettings.findOne({ userId }, { projection: { introSeenAt: 1 } }))?.introSeenAt;
+}
+
+/** Keeps the first time: a replay from the Library doesn't move it. */
+export async function markFoodIntroSeen(c: Collections, userId: string, now: Date): Promise<void> {
+  await c.foodSettings.updateOne({ userId }, [{ $set: { introSeenAt: { $ifNull: ['$introSeenAt', now] }, slots: { $ifNull: ['$slots', DEFAULT_FOOD_SLOTS] }, updatedAt: now } }], { upsert: true });
+}

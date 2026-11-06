@@ -9,6 +9,7 @@ import {
   type SessionFeedback,
   type SessionKind,
   type SessionType,
+  type TimeOff,
   type Workout,
 } from '@cycling-coach/shared';
 import { useNavigate } from '@tanstack/react-router';
@@ -29,7 +30,13 @@ import { askCoachPrompt, intervalsUrl, PANEL, rideName } from './shared';
  * The calendar's session, ride and add-session panels. Desktop shows them beside the grid; on
  * mobile (`sheet`) the same content sits in a bottom sheet.
  */
-export type Selection = { type: 'event'; id: string } | { type: 'activity'; id: string } | { type: 'add'; date: string } | null;
+export type Selection =
+  | { type: 'event'; id: string }
+  | { type: 'activity'; id: string }
+  | { type: 'add'; date: string }
+  | { type: 'time-off-add'; date: string }
+  | { type: 'time-off'; entry: TimeOff }
+  | null;
 
 
 export function syncState(e: CalendarEvent): 'synced' | 'failed' | 'pending' | null {
@@ -439,7 +446,7 @@ function editPatch(e: CalendarEvent, d: SessionDraft): CalendarEventPatch {
   return patch;
 }
 
-const FIELD = 'min-h-10 rounded-lg border border-line-strong bg-surface px-2';
+export const FIELD = 'min-h-10 rounded-lg border border-line-strong bg-surface px-2';
 
 /**
  * The fields of a session, shared by Add and Edit. Edit has no kind switch (changing what a session

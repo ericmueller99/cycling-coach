@@ -10,6 +10,8 @@ import {
   renderRestartRecap,
   renderShortTermBlock,
   renderCalendarBlock,
+  renderTimeOffBlock,
+  renderTimeOffToday,
   renderTurnContext,
   toUiMessages,
   TOOLS_HASH,
@@ -29,9 +31,11 @@ import {
   feedbackForActivities,
   getProfile,
   getThread,
+  getTimeOff,
   idOf,
   latestChat,
   listEvents,
+  listTimeOff,
   listLog,
   listThreadMealIdeas,
   listThreadRecipeDrafts,
@@ -56,7 +60,7 @@ import { activeShortTerm, CACHE_TTL_MS, carriesTail, carrySince, dayTotals, NUDG
 import type { CoachEvent, CoachTier, FitnessDay, IntegrationStatus, IsoDate, SendMessageInput, ThreadSummary, ThreadView, Workout } from '@cycling-coach/shared';
 import type { FoodTurnContext } from '@cycling-coach/coach';
 import type { ObjectId } from 'mongodb';
-import { coachCalendarWindow, loadAthleteContext, localNow } from './athlete';
+import { coachCalendarWindow, coachTimeOffWindow, loadAthleteContext, localNow } from './athlete';
 import type { CoachFoodService } from './coach-food';
 import type { EnergyService } from './energy';
 import type { FoodService } from './food';
@@ -415,13 +419,16 @@ export async function* sendMessage(
   yield { type: 'turn_start', messageId: idOf(userDoc) };
 
   const window = coachCalendarWindow(today);
-  const [windowEvents, windowFeedback] = await Promise.all([
+  const timeOffWindow = coachTimeOffWindow(today);
+  const [windowEvents, windowFeedback, timeOff] = await Promise.all([
     listEvents(c, userId, window.from, window.to),
     listFeedback(c, userId, window),
+    listTimeOff(c, userId, timeOffWindow.from, timeOffWindow.to),
   ]);
   const calendarBlock = renderCalendarBlock(windowEvents, window.from, window.to, windowFeedback);
   const athleteBlock = renderAthleteBlock(athlete);
   const shortTermBlock = renderShortTermBlock(activeShortTerm(athlete.shortTerm, today));
+  const timeOffBlock = renderTimeOffBlock(timeOff);
   const food = await foodContext(deps, userId, today, profile.timezone, input.food);
   // Nice to have: a failure costs the coach this line, never the turn.
   const extra = await deps.coachContext?.(userId, today).catch((err: Error) => {
@@ -451,6 +458,8 @@ export async function* sendMessage(
           calendarBlock,
           athleteBlock,
           shortTermBlock,
+          timeOffBlock,
+          timeOffToday: renderTimeOffToday(timeOff, today),
           food,
           extra: extra ?? undefined,
           seen: thread.seen,
@@ -466,6 +475,8 @@ export async function* sendMessage(
   const ports: CoachPorts = {
     training: training.status !== 'not_configured' ? deps.training.port(userId) : null,
     listCalendar: (from, to) => listEvents(c, userId, from, to),
+    listTimeOff: (from, to) => listTimeOff(c, userId, from, to),
+    getTimeOff: (id) => getTimeOff(c, userId, id),
     createProposal: (p) => createCoachProposal(c, userId, tid, p, deps.now()),
     createWorkout: (input) => createWorkout(c, userId, input, 'coach', deps.now()),
     remember: (input) => memories.create(userId, input, 'coach'),
@@ -513,7 +524,7 @@ export async function* sendMessage(
       // and "unchanged" on the retry would point at something it never received.
       if (m.kind === 'assistant' && !replied) {
         replied = true;
-        await updateThread(c, tid, { seen: { calendar: calendarBlock, athlete: athleteBlock, shortTerm: shortTermBlock, ...(extra ? { extra } : {}) } });
+        await updateThread(c, tid, { seen: { calendar: calendarBlock, athlete: athleteBlock, shortTerm: shortTermBlock, timeOff: timeOffBlock, ...(extra ? { extra } : {}) } });
       }
       if (m.kind === 'assistant') textBefore = assistantText.length;
     },

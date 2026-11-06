@@ -1,5 +1,5 @@
 import { dayTimeline, sumNutrients, type CalendarDay } from '@cycling-coach/core';
-import type { CalendarActivity, IsoDate } from '@cycling-coach/shared';
+import type { CalendarActivity, IsoDate, TimeOff } from '@cycling-coach/shared';
 import { Link } from '@tanstack/react-router';
 import { useMemo } from 'react';
 import { KcalBar } from '../../components/KcalBar';
@@ -10,6 +10,7 @@ import { useEnergyBudget, useFoodLibrary, useFoodLog } from '../../lib/foodQueri
 import { daySessions, dayTitle, sessionMeta, sessionSelection, sessionTitle } from './day';
 import type { Selection } from './panels';
 import { PANEL } from './shared';
+import { TimeOffCard } from './time-off';
 
 /** The time gutter: every row has one, so cards line up whether or not they have a time. */
 const GUTTER = 'w-[54px] flex-none pt-2 text-right font-mono text-[11px] leading-tight text-muted';
@@ -25,6 +26,7 @@ export function DayPanel({
   today,
   trendKg,
   day,
+  timeOff,
   ridesById,
   ratings,
   onClose,
@@ -35,6 +37,8 @@ export function DayPanel({
   today: IsoDate;
   trendKg: number | null | undefined;
   day: CalendarDay | undefined;
+  /** What covers this day. */
+  timeOff: readonly TimeOff[];
   ridesById: ReadonlyMap<string, CalendarActivity>;
   ratings: FeedbackIndex;
   onClose: () => void;
@@ -93,12 +97,19 @@ export function DayPanel({
         )}
       </div>
 
-      <div className="flex gap-2">
+      {timeOff.map((t) => (
+        <TimeOffCard key={t.id} entry={t} onOpen={() => onSelect({ type: 'time-off', entry: t })} />
+      ))}
+
+      <div className="flex flex-wrap gap-2">
         <Button variant="primary" className="flex-auto" onClick={() => onFood()}>
           + Food
         </Button>
         <Button className="flex-auto" onClick={() => onSelect({ type: 'add', date })}>
           + Session
+        </Button>
+        <Button className="flex-auto" onClick={() => onSelect({ type: 'time-off-add', date })}>
+          + Time off
         </Button>
         <Link to="/calendar/$date" params={{ date }} className="inline-flex min-h-10 items-center rounded-[10px] border border-line-strong bg-surface px-3.5 font-medium text-ink no-underline hover:text-ink">
           Open day

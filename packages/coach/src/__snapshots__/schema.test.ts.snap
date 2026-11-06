@@ -11,6 +11,7 @@ exports[`strict tool schemas > keeps the tool list in a fixed order (it is the c
   "get_ride_feedback",
   "propose_plan",
   "propose_calendar_changes",
+  "propose_time_off",
   "propose_profile_update",
   "propose_goal",
   "create_workout",

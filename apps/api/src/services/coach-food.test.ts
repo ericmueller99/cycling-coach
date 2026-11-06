@@ -25,6 +25,7 @@ const library: FoodLibrary = {
   meals: [],
   usage: {},
   settings: { slots: [{ name: 'Dinner', time: '18:30' }] },
+  introSeen: true,
 };
 const feta: StapleDetail = { source: 'cnf', ref: '33', name: 'Cheese, feta', kcalPer100g: 264, per100g: { kcal: 264, fat: 21, carbs: 4, protein: 14 }, portions: [] };
 

@@ -110,3 +110,8 @@ export async function buildDashboard(
 export function coachCalendarWindow(today: IsoDate): { from: IsoDate; to: IsoDate } {
   return { from: addDays(today, -7), to: addDays(today, 14) };
 }
+
+/** Time off reaches much further ahead than sessions: a plan weeks out has to know about a vacation. */
+export function coachTimeOffWindow(today: IsoDate): { from: IsoDate; to: IsoDate } {
+  return { from: addDays(today, -14), to: addDays(today, 180) };
+}

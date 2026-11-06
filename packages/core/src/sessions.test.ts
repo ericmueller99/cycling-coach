@@ -53,3 +53,11 @@ it('flags a change whose event did not exist when proposed', () => {
   // Proposals stored before snapshots existed: unknown, not missing.
   expect(previewCalendarChange({ op: 'remove', eventId: 'e1' }, undefined).missing).toBe(false);
 });
+
+it('leaves a time off row out of the session preview, and never calls it missing', () => {
+  const entry = { kind: 'sick', startDate: '2026-11-05', endDate: '2026-11-07' } as const;
+  const empty = { before: null, after: null, changed: [], missing: false };
+  expect(previewCalendarChange({ op: 'time_off_add', entry }, null)).toEqual(empty);
+  expect(previewCalendarChange({ op: 'time_off_update', timeOffId: 't1', entry, was: entry }, null)).toEqual(empty);
+  expect(previewCalendarChange({ op: 'time_off_remove', timeOffId: 't1', was: entry }, null)).toEqual(empty);
+});

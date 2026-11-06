@@ -13,6 +13,7 @@ export * from './repos/profile';
 export * from './repos/recipe-shares';
 export * from './repos/staples';
 export * from './repos/threads';
+export * from './repos/time-off';
 export * from './repos/util';
 export * from './repos/wellness';
 export * from './repos/workouts';
