@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { isoDateSchema, type IsoDate } from './common';
+import type { WeightPace } from './profile';
 
 /**
  * Food module (DECISIONS #33). The user's own foods database: it starts empty and only
@@ -444,14 +445,17 @@ export interface GoalPace {
   goalId?: string | undefined;
   title?: string | undefined;
   targetKg?: number | undefined;
-  targetDate?: IsoDate | undefined;
+  /** The pace as the athlete picked it; unset on an older goal, which uses the default (DECISIONS #96). */
+  pace?: WeightPace | undefined;
   trendKg?: number | undefined;
+  /** When the target is reached at this pace, from today's trend weight. */
+  etaDate?: IsoDate | undefined;
   /** Negative = losing. */
   kgPerWeek: number;
   /** Per day; negative = deficit. */
   kcalPerDay: number;
   mode: 'maintain' | 'lose' | 'gain' | 'reached';
-  /** "No target date — 0.5 kg/week default", "Clamped to 1.0 kg/week" … */
+  /** "No pace set — 0.5 kg/week", "Capped at 0.5 kg/week" … */
   note?: string | undefined;
 }
 

@@ -111,6 +111,21 @@ export const goalMeasureSchema = z.discriminatedUnion('kind', [
 ]);
 export type GoalMeasure = z.infer<typeof goalMeasureSchema>;
 
+/**
+ * The paces a weight goal can take (DECISIONS #96): what calorie-counting apps offer, kept as picked
+ * so "1 lb/week" never turns into "0.45 kg/week". A month is 52/12 weeks. Gaining offers the first two.
+ */
+export const WEIGHT_PACES = {
+  lb: { week: [0.5, 1, 1.5, 2], month: [2, 4, 6, 8] },
+  kg: { week: [0.25, 0.5, 0.75, 1], month: [1, 2, 3, 4] },
+} as const satisfies Record<'kg' | 'lb', Record<'week' | 'month', readonly number[]>>;
+export const weightPaceSchema = z
+  .object({ amount: z.number().positive(), unit: z.enum(['kg', 'lb']), per: z.enum(['week', 'month']) })
+  .refine((p) => (WEIGHT_PACES[p.unit][p.per] as readonly number[]).includes(p.amount), {
+    message: 'Pace must be one of: 0.5, 1, 1.5 or 2 lb a week; 2, 4, 6 or 8 lb a month; 0.25, 0.5, 0.75 or 1 kg a week; 1, 2, 3 or 4 kg a month',
+  });
+export type WeightPace = z.infer<typeof weightPaceSchema>;
+
 /** Goal fields without defaults — see calendar.ts: Zod applies defaults inside .partial(). */
 const goalFields = z.object({
   horizon: z.enum(['long', 'short']),
@@ -118,13 +133,15 @@ const goalFields = z.object({
   detail: z.string().max(500).optional(),
   /** Retired (DECISIONS #86): older goals may still have one, but nothing writes, shows or sends it. */
   targetLabel: z.string().max(40).optional(),
-  /** Only an event's or a weight goal's date counts (core.goalTakesDate); other goals are open-ended. */
+  /** Only an event's date counts (core.goalTakesDate); other goals are open-ended, and a weight goal has a pace (#96). */
   targetDate: isoDateSchema.optional(),
   /** A dated event to get ready for, rather than something to keep improving. */
   event: z.boolean().optional(),
   /** What the goal is measured by; the current value is always computed live (core.goalProgress). */
   measure: goalMeasureSchema.optional(),
   target: z.number().optional(),
+  /** A weight goal's pace, which sets the calorie budget (DECISIONS #96). */
+  pace: weightPaceSchema.optional(),
   done: z.boolean(),
   /** The one shown as "Main goal" in the coach's right rail. */
   primary: z.boolean(),
@@ -133,7 +150,7 @@ export const goalInputSchema = goalFields.extend({ done: z.boolean().default(fal
 export type GoalInput = z.infer<typeof goalInputSchema>;
 /** A partial update; `unset` clears optional fields (JSON has no way to send `undefined`). */
 export const goalPatchSchema = goalFields.partial().extend({
-  unset: z.array(z.enum(['detail', 'targetLabel', 'targetDate', 'event', 'measure', 'target'])).optional(),
+  unset: z.array(z.enum(['detail', 'targetLabel', 'targetDate', 'event', 'measure', 'target', 'pace'])).optional(),
 });
 export type GoalPatch = z.infer<typeof goalPatchSchema>;
 export interface GoalProgress {

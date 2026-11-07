@@ -618,6 +618,8 @@ trend-weight change)* — the right calibration later, but it needs weeks of log
 *Walk/run steps de-duplicated against activities* — the activities this targets are rides;
 revisit if that changes.
 
+*Superseded in part by #96:* a weight goal now has a pace picked from a list, not a date.
+
 ## 37. One calendar for training and food; Library and a 3-tab Athlete
 
 **2026-11-01** · The Food day log was a second calendar, so it's merged into Calendar: the week grid
@@ -2178,3 +2180,34 @@ theirs that isn't one. They're left out of recipe ingredients, where the tag wou
 - *A delete hook in `createCore` options:* nothing in the core needs to call out, so a method the deployment calls is simpler.
 - *Deleting through `threads`:* a turn still running can write to a thread that's gone.
 
+## 96. Weight goals set a pace, not a date (Nov 7)
+
+**Context.** A weight goal was a target and an optional "reach it by" date, and the budget spread what was left over the
+weeks left (#36). The deficit was capped at 1 kg a week, but the date was still stored, shown on the goal and sent to the
+coach as "reach by …". So "10 lb in 10 days" looked like a plan the app had accepted, and the cap was easy to miss.
+
+**Decision.** A weight goal is a target weight and a **pace from a fixed list**, as calorie-counting apps do it:
+
+| | per week | per month |
+|---|---|---|
+| lb | 0.5 · 1 · 1.5 · 2 | 2 · 4 · 6 · 8 |
+| kg | 0.25 · 0.5 · 0.75 · 1 | 1 · 2 · 3 · 4 |
+
+- **`goal.pace` is stored as picked** (`{ amount, unit, per }`), so 1 lb a week never shows as 0.45 kg. The target
+  weight stays in kg, as everywhere else. `weightPaceSchema` rejects anything off the list, from the editor and the coach.
+- **A month is 52/12 weeks.** The fastest options, 2 lb a week (0.91 kg) and 4 kg a month (0.92 kg), stay under the
+  1 kg a week cap, which remains as a backstop. **Gaining** offers only the first two in each row (at most 0.5 kg a
+  week), and the 0.5 kg cap still applies.
+- **No date.** `goalTakesDate` is now true for events only. In its place is an estimate from the live trend weight,
+  "at this pace, about Mar 14" (`core.weightEta`), on the goal and on the budget card. It moves with the trend, so it
+  stays out of the coach's cached Goals block, which gets `pace 1 lb/week` instead.
+- **The coach** offers a pace from the list in the athlete's units. When asked for something faster, it says once
+  that 0.5–1 lb a week is what most people keep up and 2 lb is the most, then proposes a pace.
+- **Older goals aren't migrated.** Their date stays stored and is ignored, as in #86. Until one is edited, it uses
+  `defaultKgPerWeek` (0.5 kg a week unless changed), and the budget card says to pick a pace. That setting is no longer
+  shown on the card. The primary weight goal drives the budget, else the first, since dates no longer sort them.
+
+**Rejected.**
+- *Keeping the date and warning on it:* the same reason as #86. It keeps the deadline that sets people up to fail.
+- *A free kg/week number:* the list is what makes the paces safe and easy to understand.
+- *An app-wide kg/lb setting:* the right thing eventually. For now the pace carries its own unit.

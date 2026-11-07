@@ -20,13 +20,16 @@ describe('renderAthleteBlock — dates, preference and availability (DECISIONS #
   };
   const long = { horizon: 'long', done: false, primary: false };
 
-  it('gives an event its date and a weight goal its deadline', () => {
+  it('gives an event its date and a weight goal its pace, never a deadline', () => {
     const block = withGoals([
       { ...long, title: 'Get ready for Gran Fondo', event: true, targetDate: '2027-06-12' },
-      { ...long, title: 'Race weight', measure: { kind: 'weight' }, target: 72, targetDate: '2027-03-01' },
+      { ...long, title: 'Race weight', measure: { kind: 'weight' }, target: 72, targetDate: '2027-03-01', pace: { amount: 1, unit: 'lb', per: 'week' } },
+      { ...long, title: 'Lighter', measure: { kind: 'weight' }, target: 75 },
     ]);
     expect(block).toContain('Get ready for Gran Fondo — event date 2027-06-12');
-    expect(block).toContain('reach by 2027-03-01');
+    expect(block).toContain('Race weight — pace 1 lb/week');
+    expect(block).toContain('Lighter — no pace picked yet');
+    expect(block).not.toContain('2027-03-01');
   });
 
   it('leaves out the date and label an older open-ended goal still has', () => {

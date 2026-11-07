@@ -6,6 +6,7 @@ import {
   formatShortDate,
   formatWorkoutDuration,
   goalTakesDate,
+  paceLabel,
   timeOffOn,
   wattsPerKg,
   workoutMetrics,
@@ -120,7 +121,9 @@ export function renderAthleteBlock(ctx: AthleteContext): string {
     const parts = [`[${g.horizon === 'long' ? 'long term' : 'short term'}${g.primary ? ', main goal' : ''}${g.done ? ', done' : ''}] ${g.title}`];
     if (g.detail) parts.push(g.detail);
     // Open-ended goals have no date (DECISIONS #86), even if an older one still stores one.
-    if (g.targetDate && goalTakesDate(g)) parts.push(`${g.event ? 'event date' : 'reach by'} ${g.targetDate}`);
+    if (g.targetDate && goalTakesDate(g)) parts.push(`event date ${g.targetDate}`);
+    // A weight goal has a pace, not a date (DECISIONS #96). Its estimated arrival moves with the trend weight, so it stays out.
+    if (g.measure?.kind === 'weight') parts.push(g.pace ? `pace ${paceLabel(g.pace)}` : 'no pace picked yet');
     // A value on the trend weight would resend this block every time the trend moves.
     if (g.progress?.onTrendWeight) parts.push(`${g.progress.label} target ${g.progress.target} ${g.progress.unit}, current value from the weight in the context message`);
     else if (g.progress) parts.push(`${g.progress.label} now ${g.progress.current} ${g.progress.unit}, target ${g.progress.target}`);

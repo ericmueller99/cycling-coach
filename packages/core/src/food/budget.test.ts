@@ -2,7 +2,7 @@ import type { Activity, StepDay } from '@cycling-coach/shared';
 import { describe, expect, it } from 'vitest';
 import { addDays } from '../dates';
 import { STARTER_WORKOUTS } from '../starter-library';
-import { dailyBudget, exerciseKcal, goalPace, macroTargets, plannedSessionKcal, stepsForDay, stepsKcal, type BudgetInputs } from './budget';
+import { dailyBudget, exerciseKcal, goalPace, macroTargets, paceNote, plannedSessionKcal, stepsForDay, stepsKcal, type BudgetInputs } from './budget';
 import { slotForTime } from './portions';
 
 const ride = (over: Partial<Activity>): Activity => ({
@@ -57,18 +57,42 @@ describe('goalPace', () => {
   it('no goal → maintain', () => {
     expect(goalPace(undefined, 85, '2026-11-01', 0.5)).toMatchObject({ mode: 'maintain', kcalPerDay: 0 });
   });
-  it('a dated goal spreads what is left over the weeks left', () => {
-    // 5 kg over 10 weeks = 0.5 kg/week ≈ −550 kcal/day
-    const p = goalPace({ ...goal, targetDate: '2027-01-10' }, 85, '2026-11-01', 0.5);
-    expect(p).toMatchObject({ mode: 'lose', kgPerWeek: -0.5, kcalPerDay: -550 });
+  it('uses the picked pace, in lb or kg, per week or per month', () => {
+    // 1 lb = 0.4536 kg/week ≈ −495 kcal/day; 5 kg at 0.45 kg/week is 78 days.
+    expect(goalPace({ ...goal, pace: { amount: 1, unit: 'lb', per: 'week' } }, 85, '2026-11-01', 0.5)).toEqual({
+      goalId: 'g',
+      title: 'Race weight',
+      targetKg: 80,
+      pace: { amount: 1, unit: 'lb', per: 'week' },
+      trendKg: 85,
+      kgPerWeek: -0.45,
+      kcalPerDay: -495,
+      mode: 'lose',
+      etaDate: '2027-01-18',
+    });
+    // 4 kg a month = 0.92 kg/week.
+    expect(goalPace({ ...goal, pace: { amount: 4, unit: 'kg', per: 'month' } }, 85, '2026-11-01', 0.5)).toMatchObject({ kgPerWeek: -0.92, kcalPerDay: -1010 });
+    expect(goalPace({ ...goal, pace: { amount: 0.5, unit: 'kg', per: 'week' } }, 85, '2026-11-01', 0.5)).toMatchObject({ kgPerWeek: -0.5, kcalPerDay: -550 });
   });
-  it('an undated goal uses the default pace', () => {
-    expect(goalPace(goal, 85, '2026-11-01', 0.5)).toMatchObject({ kgPerWeek: -0.5, kcalPerDay: -550, note: 'No target date — 0.5 kg/week' });
+  it('an older goal with no pace uses the default pace', () => {
+    expect(goalPace(goal, 85, '2026-11-01', 0.5)).toMatchObject({ kgPerWeek: -0.5, kcalPerDay: -550, note: 'No pace set — 0.5 kg/week' });
   });
-  it('clamps aggressive dates, handles gain and reached', () => {
-    expect(goalPace({ ...goal, targetDate: '2026-11-15' }, 85, '2026-11-01', 0.5)).toMatchObject({ kgPerWeek: -1, kcalPerDay: -1100 });
-    expect(goalPace({ ...goal, target: 88 }, 85, '2026-11-01', 0.5)).toMatchObject({ mode: 'gain', kgPerWeek: 0.5 });
+  it('ignores a date an older goal still has', () => {
+    const dated = { ...goal, targetDate: '2026-11-15' } as typeof goal;
+    expect(goalPace(dated, 85, '2026-11-01', 0.5)).toMatchObject({ kgPerWeek: -0.5 });
+  });
+  it('caps gaining at 0.5 kg/week, handles reached', () => {
+    expect(goalPace({ ...goal, target: 88, pace: { amount: 1, unit: 'lb', per: 'week' } }, 85, '2026-11-01', 0.5)).toMatchObject({ mode: 'gain', kgPerWeek: 0.45 });
+    expect(goalPace({ ...goal, target: 88, pace: { amount: 2, unit: 'lb', per: 'week' } }, 85, '2026-11-01', 0.5)).toMatchObject({ mode: 'gain', kgPerWeek: 0.5, note: 'Capped at 0.5 kg/week' });
     expect(goalPace({ ...goal, target: 85.2 }, 85, '2026-11-01', 0.5)).toMatchObject({ mode: 'reached', kcalPerDay: 0 });
+  });
+});
+
+describe('paceNote', () => {
+  it('shows the picked pace, or the kg/week in use when capped or unset', () => {
+    expect(paceNote({ pace: { amount: 1, unit: 'lb', per: 'week' }, kgPerWeek: -0.45 })).toBe('−1 lb/week');
+    expect(paceNote({ pace: { amount: 2, unit: 'lb', per: 'week' }, kgPerWeek: 0.5, note: 'Capped at 0.5 kg/week' })).toBe('+0.5 kg/week');
+    expect(paceNote({ kgPerWeek: -0.5, note: 'No pace set — 0.5 kg/week' })).toBe('−0.5 kg/week');
   });
 });
 

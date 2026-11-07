@@ -9,9 +9,11 @@ import type {
   MacroTargets,
   SessionType,
   StepDay,
+  WeightPace,
   WorkoutSegment,
 } from '@cycling-coach/shared';
-import { addDays, daysBetween } from '../dates';
+import { addDays } from '../dates';
+import { paceKgPerWeek, paceLabel, weightEta } from '../goals';
 import { flatten } from '../workout';
 
 /**
@@ -96,30 +98,34 @@ export interface WeightGoalInput {
   id: string;
   title: string;
   target: number;
-  targetDate?: IsoDate | undefined;
+  /** Unset on a goal from before paces (DECISIONS #96): the default pace applies. */
+  pace?: WeightPace | undefined;
 }
 
 /**
- * The pace a weight goal asks for. With a date: what's left over the weeks left. Without one (or a
- * date that's passed): the default pace. Clamped to 1.0 kg/week loss, 0.5 gain.
+ * The pace a weight goal asks for: the pace the athlete picked, toward the target. An older goal
+ * with no pace uses the default. Clamped to 1.0 kg/week loss, 0.5 gain, though every listed pace
+ * for the direction fits (DECISIONS #96).
  */
 export function goalPace(goal: WeightGoalInput | undefined, trendKg: number | undefined, today: IsoDate, defaultKgPerWeek: number): GoalPace {
   if (!goal || trendKg == null) return { kgPerWeek: 0, kcalPerDay: 0, mode: 'maintain', ...(goal ? { goalId: goal.id, title: goal.title, note: 'No trend weight yet' } : {}) };
-  const base = { goalId: goal.id, title: goal.title, targetKg: goal.target, targetDate: goal.targetDate, trendKg };
+  const base = { goalId: goal.id, title: goal.title, targetKg: goal.target, ...(goal.pace ? { pace: goal.pace } : {}), trendKg };
   const diff = goal.target - trendKg;
   if (Math.abs(diff) <= REACHED_KG) return { ...base, kgPerWeek: 0, kcalPerDay: 0, mode: 'reached', note: 'At target — maintaining' };
-  const weeks = goal.targetDate ? daysBetween(today, goal.targetDate) / 7 : 0;
-  let rate: number;
-  let note: string | undefined;
-  if (weeks > 0) rate = diff / weeks;
-  else {
-    rate = Math.sign(diff) * defaultKgPerWeek;
-    note = goal.targetDate ? `Target date passed — ${defaultKgPerWeek} kg/week` : `No target date — ${defaultKgPerWeek} kg/week`;
-  }
+  const rate = Math.sign(diff) * (goal.pace ? paceKgPerWeek(goal.pace) : defaultKgPerWeek);
+  let note = goal.pace ? undefined : `No pace set — ${defaultKgPerWeek} kg/week`;
   const clamped = Math.max(-MAX_LOSS_PER_WEEK, Math.min(MAX_GAIN_PER_WEEK, rate));
-  if (clamped !== rate) note = `Capped at ${Math.abs(clamped)} kg/week (the date asks for ${Math.abs(Math.round(rate * 100) / 100)})`;
+  if (clamped !== rate) note = `Capped at ${Math.abs(clamped)} kg/week`;
   const kgPerWeek = Math.round(clamped * 100) / 100;
-  return { ...base, kgPerWeek, kcalPerDay: round5((kgPerWeek * KCAL_PER_KG) / 7), mode: kgPerWeek < 0 ? 'lose' : 'gain', ...(note ? { note } : {}) };
+  const etaDate = weightEta(trendKg, goal.target, kgPerWeek, today);
+  return {
+    ...base,
+    kgPerWeek,
+    kcalPerDay: round5((kgPerWeek * KCAL_PER_KG) / 7),
+    mode: kgPerWeek < 0 ? 'lose' : 'gain',
+    ...(etaDate ? { etaDate } : {}),
+    ...(note ? { note } : {}),
+  };
 }
 
 export function macroTargets(totalKcal: number, weightKg: number, s: Pick<ResolvedEnergySettings, 'proteinGPerKg' | 'fatGPerKg'>): MacroTargets {
@@ -168,6 +174,13 @@ export function stepsForDay(steps: readonly StepDay[], date: IsoDate, today: Iso
 
 const fmt = (n: number) => Math.round(n).toLocaleString('en-US');
 
+/** "−1 lb/week", "+0.25 kg/week": the picked pace when it's what applies, else the kg/week in use. */
+export function paceNote(goal: Pick<GoalPace, 'pace' | 'kgPerWeek' | 'note'>): string {
+  const sign = goal.kgPerWeek > 0 ? '+' : '−';
+  if (goal.pace && !goal.note) return `${sign}${paceLabel(goal.pace)}`;
+  return `${sign}${Math.abs(goal.kgPerWeek)} kg/week`;
+}
+
 export function dailyBudget(i: BudgetInputs): EnergyBudget {
   const s = energyDefaults(i.settings);
   const exercise: BudgetExercise[] = [];
@@ -212,7 +225,7 @@ export function dailyBudget(i: BudgetInputs): EnergyBudget {
     key: 'goal',
     label: 'Goal',
     kcal: goalKcal,
-    note: protectedDay ? 'hard day — no deficit' : goal.mode === 'maintain' ? 'maintain' : goal.mode === 'reached' ? 'at target — maintain' : `${goal.kgPerWeek > 0 ? '+' : ''}${goal.kgPerWeek} kg/week`,
+    note: protectedDay ? 'hard day — no deficit' : goal.mode === 'maintain' ? 'maintain' : goal.mode === 'reached' ? 'at target — maintain' : paceNote(goal),
   });
   const total = lines.reduce((n, l) => n + l.kcal, 0);
   return {

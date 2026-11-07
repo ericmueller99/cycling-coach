@@ -1,8 +1,10 @@
-import { powerBestDurations, type Goal, type GoalMeasure, type PowerBest } from '@cycling-coach/shared';
+import { KCAL_PER_KG, paceKgPerWeek } from '@cycling-coach/core';
+import { powerBestDurations, WEIGHT_PACES, type Goal, type GoalMeasure, type IsoDate, type PowerBest, type WeightPace } from '@cycling-coach/shared';
 import { useEffect, useState } from 'react';
 import { PencilIcon, TrashIcon } from '../../components/icons';
-import { Button, Card, ErrorNote, ProgressBar, SectionLabel } from '../../components/ui';
-import { describeMeasure, goalDateLabel, measureUnit } from '../../lib/goals';
+import { Button, Card, ErrorNote, ProgressBar, SectionLabel, Segmented } from '../../components/ui';
+import { fmtKcal } from '../../lib/food';
+import { describeMeasure, goalDateLabel, measureUnit, paceSummary } from '../../lib/goals';
 import { errorMessage, useProfileMutations } from '../../lib/queries';
 import { durLabel, PERIODS } from './shared';
 
@@ -36,11 +38,21 @@ function choiceFromMeasure(m: GoalMeasure | undefined): MeasureChoice {
   return m.kind;
 }
 
+/** The paces on offer: the four for the unit and period, or the first two when gaining (DECISIONS #96). */
+function paceOptions(unit: WeightPace['unit'], per: WeightPace['per'], gaining: boolean): readonly number[] {
+  const all = WEIGHT_PACES[unit][per];
+  return gaining ? all.slice(0, 2) : all;
+}
+
+/** kcal a day for a pace, rounded as the budget rounds it (core.goalPace). */
+const paceKcal = (p: WeightPace) => Math.round(((Math.round(paceKgPerWeek(p) * 100) / 100) * KCAL_PER_KG) / 7 / 5) * 5;
+
 /**
- * Add or edit a goal: what it's measured by and a target — never a current value. Only an event or
- * a weight goal has a date; the rest are open-ended, and a date an older one has is left alone.
+ * Add or edit a goal: what it's measured by and a target — never a current value. Only an event has
+ * a date, and a weight goal has a pace from a safe list instead (DECISIONS #96); the rest are
+ * open-ended, and a date an older one has is left alone.
  */
-function GoalEditor({ goal, preset, onDone }: { goal?: Goal; preset?: MeasureChoice | undefined; onDone: () => void }) {
+function GoalEditor({ goal, preset, trendKg, onDone }: { goal?: Goal; preset?: MeasureChoice | undefined; trendKg?: number | undefined; onDone: () => void }) {
   const { createGoal, updateGoal } = useProfileMutations();
   const [horizon, setHorizon] = useState<Goal['horizon']>(goal?.horizon ?? 'long');
   const [title, setTitle] = useState(goal?.title ?? (preset === 'weight' ? 'Race weight' : ''));
@@ -53,11 +65,27 @@ function GoalEditor({ goal, preset, onDone }: { goal?: Goal; preset?: MeasureCho
   const [period, setPeriod] = useState<PowerBest['period']>(goal?.measure?.kind === 'power_best' ? goal.measure.period : '90d');
   const [manualCurrent, setManualCurrent] = useState(goal?.measure?.kind === 'manual' ? String(goal.measure.current) : '');
   const [manualUnit, setManualUnit] = useState(goal?.measure?.kind === 'manual' ? goal.measure.unit : '');
+  const [paceUnit, setPaceUnit] = useState<WeightPace['unit']>(goal?.pace?.unit ?? 'kg');
+  const [pacePer, setPacePer] = useState<WeightPace['per']>(goal?.pace?.per ?? 'week');
+  const [paceAmount, setPaceAmount] = useState<number>(goal?.pace?.amount ?? 0.5);
   const field = 'min-h-10 rounded-lg border border-line-strong px-2';
 
   const weight = choice === 'weight';
   const event = isEvent && !weight;
-  const dated = event || weight;
+  const dated = event;
+  const currentKg = goal?.progress?.current ?? trendKg;
+  const gaining = weight && target !== '' && currentKg !== undefined && Number(target) > currentKg;
+  const options = paceOptions(paceUnit, pacePer, gaining);
+  // A pace that's no longer on offer (a fast one, once the target is a gain) becomes the fastest that is.
+  const amount = options.includes(paceAmount) ? paceAmount : options[options.length - 1]!;
+  const pace: WeightPace = { amount, unit: paceUnit, per: pacePer };
+  /** Switching unit or period keeps the same step on the list (1 lb/week ↔ 0.5 kg/week ↔ 4 lb/month). */
+  const switchPace = (unit: WeightPace['unit'], per: WeightPace['per']) => {
+    const i = WEIGHT_PACES[paceUnit][pacePer].indexOf(amount as never);
+    setPaceUnit(unit);
+    setPacePer(per);
+    setPaceAmount(WEIGHT_PACES[unit][per][Math.max(0, i)]!);
+  };
 
   const save = () => {
     const measure = measureFromChoice(choice, { durationSec, period, current: Number(manualCurrent) || 0, unit: manualUnit });
@@ -68,6 +96,7 @@ function GoalEditor({ goal, preset, onDone }: { goal?: Goal; preset?: MeasureCho
       ...(dated && targetDate ? { targetDate } : {}),
       ...(event ? { event: true } : {}),
       ...(measure && target !== '' ? { measure, target: Number(target) } : {}),
+      ...(weight ? { pace } : {}),
     };
     if (goal) {
       const unset = [
@@ -75,6 +104,7 @@ function GoalEditor({ goal, preset, onDone }: { goal?: Goal; preset?: MeasureCho
         ...(dated && !targetDate ? (['targetDate'] as const) : []),
         ...(goal.event && !event ? (['event'] as const) : []),
         ...(!fields.measure ? (['measure', 'target'] as const) : []),
+        ...(goal.pace && !weight ? (['pace'] as const) : []),
       ];
       updateGoal.mutate({ id: goal.id, patch: { ...fields, ...(unset.length ? { unset } : {}) } }, { onSuccess: onDone });
     } else {
@@ -146,14 +176,36 @@ function GoalEditor({ goal, preset, onDone }: { goal?: Goal; preset?: MeasureCho
         )}
         {dated && (
           <label className="flex items-center gap-1.5 text-muted">
-            {weight ? 'Reach it by (optional)' : 'Event date'}
+            Event date
             <input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} className={field} />
           </label>
         )}
       </div>
       {weight && (
-        <div className="text-xs text-muted">
-          A weight goal sets your calorie budget: the deficit (or surplus) to reach it by the date, or your default pace without one.
+        <div className="flex flex-col gap-2 text-[13px]">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-muted">{gaining ? 'Gain' : 'Lose'}</span>
+            <select aria-label="Pace" value={amount} onChange={(e) => setPaceAmount(Number(e.target.value))} className={`${field} font-mono`}>
+              {options.map((a) => {
+                const p = { amount: a, unit: paceUnit, per: pacePer };
+                return (
+                  <option key={a} value={a}>
+                    {a} {paceUnit} ({gaining ? '+' : '−'}
+                    {fmtKcal(paceKcal(p))} kcal/day)
+                  </option>
+                );
+              })}
+            </select>
+            <div className="w-24">
+              <Segmented small label="Unit" value={paceUnit} options={[{ key: 'lb', label: 'lb' }, { key: 'kg', label: 'kg' }]} onChange={(u) => switchPace(u, pacePer)} />
+            </div>
+            <div className="w-36">
+              <Segmented small label="Per" value={pacePer} options={[{ key: 'week', label: 'a week' }, { key: 'month', label: 'a month' }]} onChange={(p) => switchPace(paceUnit, p)} />
+            </div>
+          </div>
+          <div className="text-xs text-muted">
+            A weight goal sets your calorie budget from the pace you pick. Most people do well at 0.5–1 lb (0.25–0.5 kg) a week{gaining ? '; gaining stays at 1 lb (0.5 kg) a week or less' : ''}.
+          </div>
         </div>
       )}
       <div className="flex gap-2">
@@ -169,10 +221,11 @@ function GoalEditor({ goal, preset, onDone }: { goal?: Goal; preset?: MeasureCho
   );
 }
 
-function GoalRow({ goal, main }: { goal: Goal; main: boolean }) {
+function GoalRow({ goal, main, today, trendKg }: { goal: Goal; main: boolean; today: IsoDate; trendKg?: number | undefined }) {
   const { updateGoal, deleteGoal } = useProfileMutations();
   const [editing, setEditing] = useState(false);
-  if (editing) return <GoalEditor goal={goal} onDone={() => setEditing(false)} />;
+  if (editing) return <GoalEditor goal={goal} trendKg={trendKg} onDone={() => setEditing(false)} />;
+  const pace = paceSummary(goal, today);
   const actions = (
     <>
       <button type="button" aria-label="Edit goal" onClick={() => setEditing(true)} className="border-0 bg-transparent text-muted">
@@ -225,6 +278,7 @@ function GoalRow({ goal, main }: { goal: Goal; main: boolean }) {
             </span>
             <span>target {goal.progress.target}</span>
           </div>
+          {pace && <div className="font-mono text-[11px] text-muted">{pace}</div>}
         </>
       ) : goal.measure && goal.target !== undefined ? (
         <div className="font-mono text-[11px] text-muted">
@@ -243,7 +297,22 @@ const Empty = ({ children }: { children: string }) => (
  * Goals. `mainId` is the goal the coach treats as main — the primary one, else the
  * dashboard's fallback (the first long-term goal), so exactly one card carries the badge.
  */
-export function GoalsSection({ goals, mainId, addWeightGoal, onAddedWeightGoal }: { goals: Goal[]; mainId: string | undefined; addWeightGoal?: boolean; onAddedWeightGoal?: () => void }) {
+export function GoalsSection({
+  goals,
+  mainId,
+  today,
+  trendKg,
+  addWeightGoal,
+  onAddedWeightGoal,
+}: {
+  goals: Goal[];
+  mainId: string | undefined;
+  today: IsoDate;
+  /** The trend weight, so a weight goal's editor knows a gain from a loss. */
+  trendKg?: number | undefined;
+  addWeightGoal?: boolean;
+  onAddedWeightGoal?: () => void;
+}) {
   const [adding, setAdding] = useState(false);
   useEffect(() => {
     if (addWeightGoal) setAdding(true);
@@ -262,11 +331,11 @@ export function GoalsSection({ goals, mainId, addWeightGoal, onAddedWeightGoal }
           + Add goal
         </Button>
       </div>
-      {adding && <GoalEditor preset={addWeightGoal ? 'weight' : undefined} onDone={close} />}
+      {adding && <GoalEditor preset={addWeightGoal ? 'weight' : undefined} trendKg={trendKg} onDone={close} />}
       <SectionLabel>Long term</SectionLabel>
-      {long.length ? long.map((g) => <GoalRow key={g.id} goal={g} main={g.id === mainId} />) : <Empty>No long-term goals yet.</Empty>}
+      {long.length ? long.map((g) => <GoalRow key={g.id} goal={g} main={g.id === mainId} today={today} trendKg={trendKg} />) : <Empty>No long-term goals yet.</Empty>}
       <SectionLabel>Short term</SectionLabel>
-      {short.length ? short.map((g) => <GoalRow key={g.id} goal={g} main={g.id === mainId} />) : <Empty>Nothing short-term. Add one for this block, e.g. "Hold 400 W for 5 min".</Empty>}
+      {short.length ? short.map((g) => <GoalRow key={g.id} goal={g} main={g.id === mainId} today={today} trendKg={trendKg} />) : <Empty>Nothing short-term. Add one for this block, e.g. "Hold 400 W for 5 min".</Empty>}
       <div className="text-xs text-muted">
         Goals can be measured by power at a duration, FTP or W/kg, Zwift W/kg, trend weight, fitness (CTL) or by hand. The main goal leads the coach's context.
       </div>

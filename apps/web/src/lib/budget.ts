@@ -17,7 +17,7 @@ export function restDayBudget(settings: EnergySettings, b: EnergyBudget): Energy
     steps,
     activities: [],
     planned: [],
-    goal: b.goal.goalId ? { id: b.goal.goalId, title: b.goal.title ?? '', target: b.goal.targetKg!, ...(b.goal.targetDate ? { targetDate: b.goal.targetDate } : {}) } : undefined,
+    goal: b.goal.goalId ? { id: b.goal.goalId, title: b.goal.title ?? '', target: b.goal.targetKg!, ...(b.goal.pace ? { pace: b.goal.pace } : {}) } : undefined,
   });
 }
 

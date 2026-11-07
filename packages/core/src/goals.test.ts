@@ -1,5 +1,6 @@
+import type { Goal } from '@cycling-coach/shared';
 import { describe, expect, it } from 'vitest';
-import { goalProgress, goalTakesDate, type GoalSnapshot } from './goals';
+import { goalProgress, goalTakesDate, paceKgPerWeek, paceLabel, weightEta, type GoalSnapshot } from './goals';
 import { inferSessionType } from './sessions';
 import { STARTER_WORKOUTS, STANDARD_COOLDOWN, STANDARD_WARMUP } from './starter-library';
 
@@ -12,11 +13,29 @@ const snap: GoalSnapshot = {
 };
 
 describe('goalTakesDate', () => {
-  it('is true for events and weight goals only', () => {
+  it('is true for events only; a weight goal has a pace', () => {
     expect(goalTakesDate({ event: true })).toBe(true);
-    expect(goalTakesDate({ measure: { kind: 'weight' } })).toBe(true);
-    expect(goalTakesDate({ measure: { kind: 'ftp' } })).toBe(false);
+    const weightGoal: Partial<Goal> = { measure: { kind: 'weight' }, targetDate: '2027-03-01' };
+    expect(goalTakesDate(weightGoal)).toBe(false);
     expect(goalTakesDate({})).toBe(false);
+  });
+});
+
+describe('weight paces', () => {
+  it('converts to kg per week', () => {
+    expect(paceKgPerWeek({ amount: 2, unit: 'lb', per: 'week' })).toBeCloseTo(0.907, 3);
+    expect(paceKgPerWeek({ amount: 4, unit: 'kg', per: 'month' })).toBeCloseTo(0.923, 3);
+    expect(paceKgPerWeek({ amount: 0.5, unit: 'kg', per: 'week' })).toBe(0.5);
+  });
+  it('labels as picked', () => {
+    expect(paceLabel({ amount: 1.5, unit: 'lb', per: 'week' })).toBe('1.5 lb/week');
+    expect(paceLabel({ amount: 2, unit: 'kg', per: 'month' })).toBe('2 kg/month');
+  });
+  it('estimates when the target is reached', () => {
+    expect(weightEta(85, 80, -0.5, '2026-11-01')).toBe('2027-01-10');
+    expect(weightEta(80, 82, 0.25, '2026-11-01')).toBe('2026-12-27');
+    expect(weightEta(85, 80, 0, '2026-11-01')).toBeUndefined();
+    expect(weightEta(80, 85, -0.5, '2026-11-01')).toBeUndefined();
   });
 });
 

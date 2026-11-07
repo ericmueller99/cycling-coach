@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { calendarEventInputSchema, calendarEventPatchSchema, calendarEventSchema } from './calendar';
 import { isoDateSchema, type IsoDate } from './common';
-import { goalMeasureSchema, trainingPreferenceSchema } from './profile';
+import { goalMeasureSchema, trainingPreferenceSchema, weightPaceSchema } from './profile';
 import { timeOffChangeSchema } from './time-off';
 
 /**
@@ -62,11 +62,13 @@ export const goalProposalSchema = z.object({
   horizon: z.enum(['long', 'short']),
   title: z.string().min(1).max(120),
   detail: z.string().max(500).optional(),
-  /** Only for an event or a weight goal; every other goal is open-ended. */
+  /** Only for an event; every other goal is open-ended. */
   targetDate: isoDateSchema.optional(),
   event: z.boolean().optional(),
   measure: goalMeasureSchema.optional(),
   target: z.number().optional(),
+  /** A weight goal's pace, from the safe list (DECISIONS #96). */
+  pace: weightPaceSchema.optional(),
   primary: z.boolean().optional(),
 });
 export type GoalProposal = z.infer<typeof goalProposalSchema>;

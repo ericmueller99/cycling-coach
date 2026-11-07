@@ -5,6 +5,7 @@ import {
   formatLongDay,
   formatWorkoutDuration,
   isTimeOffChange,
+  paceLabel,
   previewCalendarChange,
   workoutMetrics,
   type ChangePreview,
@@ -490,6 +491,7 @@ function GoalCard({ proposal, threadId }: { proposal: Extract<Proposal, { kind: 
       {g.measure && g.target !== undefined && (
         <div className="font-mono text-[13px]">
           {describeMeasure(g.measure)} → {g.target} {measureUnit(g.measure)}
+          {g.measure.kind === 'weight' && g.pace ? ` at ${paceLabel(g.pace)}` : ''}
         </div>
       )}
       <div className="flex gap-2">

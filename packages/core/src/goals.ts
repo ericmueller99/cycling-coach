@@ -1,4 +1,5 @@
-import type { Goal, GoalProgress, PowerBest } from '@cycling-coach/shared';
+import type { Goal, GoalProgress, IsoDate, PowerBest, WeightPace } from '@cycling-coach/shared';
+import { addDays } from './dates';
 
 export interface GoalSnapshot {
   /** Unset until the athlete knows their FTP (DECISIONS #62). */
@@ -14,11 +15,31 @@ export interface GoalSnapshot {
 }
 
 /**
- * Whether a goal's date means anything: an event, or a weight goal (it sets the calorie pace). Every
- * other goal is open-ended, and any date an older one still has is ignored (DECISIONS #86).
+ * Whether a goal's date means anything: only an event's. Every other goal is open-ended (DECISIONS #86),
+ * and a weight goal has a pace instead (#96); a date an older one still has is ignored.
  */
-export function goalTakesDate(goal: Pick<Goal, 'event' | 'measure'>): boolean {
-  return goal.event === true || goal.measure?.kind === 'weight';
+export function goalTakesDate(goal: Pick<Goal, 'event'>): boolean {
+  return goal.event === true;
+}
+
+export const KG_PER_LB = 0.45359237;
+/** Weeks in a month, for a monthly pace. */
+const WEEKS_PER_MONTH = 52 / 12;
+
+/** A weight goal's pace in kg per week, always positive (the direction comes from the target). */
+export function paceKgPerWeek(pace: WeightPace): number {
+  return (pace.amount * (pace.unit === 'lb' ? KG_PER_LB : 1)) / (pace.per === 'month' ? WEEKS_PER_MONTH : 1);
+}
+
+/** "1 lb/week", "4 kg/month". */
+export function paceLabel(pace: WeightPace): string {
+  return `${pace.amount} ${pace.unit}/${pace.per}`;
+}
+
+/** The day a weight target is reached at a steady rate from today's trend weight; undefined with no rate. */
+export function weightEta(trendKg: number, targetKg: number, kgPerWeek: number, today: IsoDate): IsoDate | undefined {
+  if (kgPerWeek === 0 || Math.sign(targetKg - trendKg) !== Math.sign(kgPerWeek)) return undefined;
+  return addDays(today, Math.ceil((Math.abs(targetKg - trendKg) / Math.abs(kgPerWeek)) * 7));
 }
 
 const PERIOD: Record<PowerBest['period'], string> = { '90d': '90 days', season: 'season', allTime: 'all-time' };

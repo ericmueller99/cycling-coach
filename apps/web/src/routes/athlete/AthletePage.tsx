@@ -94,6 +94,8 @@ export function AthletePage({ tab, addWeightGoal }: { tab: AthleteTab; addWeight
             <GoalsSection
               goals={data.goals}
               mainId={mainGoal?.id}
+              today={today}
+              trendKg={data.profile.weightKg}
               addWeightGoal={addWeightGoal}
               onAddedWeightGoal={() => addWeightGoal && void navigate({ to: '/athlete/$tab', params: { tab: 'goals' }, search: {}, replace: true })}
             />

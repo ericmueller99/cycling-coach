@@ -17,11 +17,11 @@ import {
 import type { Activity, BodyScanInput, BodyScanPatch, CalendarEvent, DaysPayload, EnergyBudget, EnergyPatch, EnergyPayload, EnergySettings, Goal, IsoDate, Profile, StepDay, Workout } from '@cycling-coach/shared';
 import type { TrainingData } from './training-data';
 
-/** The open weight goal that drives the budget: the primary one, else the soonest dated, else the first. */
+/** The open weight goal that drives the budget: the primary one, else the first (DECISIONS #96). */
 export function weightGoal(goals: readonly Goal[]): WeightGoalInput | undefined {
   const open = goals.filter((g) => !g.done && g.measure?.kind === 'weight' && g.target != null);
-  const pick = open.find((g) => g.primary) ?? [...open].sort((a, b) => (a.targetDate ?? '9999').localeCompare(b.targetDate ?? '9999'))[0];
-  return pick ? { id: pick.id, title: pick.title, target: pick.target!, ...(pick.targetDate ? { targetDate: pick.targetDate } : {}) } : undefined;
+  const pick = open.find((g) => g.primary) ?? open[0];
+  return pick ? { id: pick.id, title: pick.title, target: pick.target!, ...(pick.pace ? { pace: pick.pace } : {}) } : undefined;
 }
 
 interface BudgetContext {

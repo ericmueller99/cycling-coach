@@ -1,19 +1,21 @@
-import { energyDefaults, formatShortDate, HARD_DAY_KCAL, LIVING_FACTOR, STEPS_AVERAGE_DAYS, stepsKcal, type ResolvedEnergySettings } from '@cycling-coach/core';
+import { energyDefaults, HARD_DAY_KCAL, LIVING_FACTOR, paceNote, STEPS_AVERAGE_DAYS, stepsKcal, type ResolvedEnergySettings } from '@cycling-coach/core';
 import type { EnergyBudget, EnergyPatch } from '@cycling-coach/shared';
 import { useEffect, useId, useState } from 'react';
 import { Button, Card, ErrorNote, Segmented, Spinner, inputCls } from '../../components/ui';
 import { restDayBudget } from '../../lib/budget';
 import { fmtKcal } from '../../lib/food';
+import { etaLabel } from '../../lib/goals';
 import { useEnergy, useEnergyBudget, useEnergyMutations } from '../../lib/foodQueries';
 import { errorMessage } from '../../lib/queries';
 import { SwitchRow } from '../events/controls';
 
-type Draft = Pick<ResolvedEnergySettings, 'activityMode' | 'activityFactor' | 'exerciseSource' | 'protectHardDays' | 'defaultKgPerWeek' | 'proteinGPerKg' | 'fatGPerKg'>;
-const KEYS = ['activityMode', 'activityFactor', 'exerciseSource', 'protectHardDays', 'defaultKgPerWeek', 'proteinGPerKg', 'fatGPerKg'] as const;
+// `defaultKgPerWeek` isn't edited here any more: it's only the pace of a weight goal from before paces (DECISIONS #96).
+type Draft = Pick<ResolvedEnergySettings, 'activityMode' | 'activityFactor' | 'exerciseSource' | 'protectHardDays' | 'proteinGPerKg' | 'fatGPerKg'>;
+const KEYS = ['activityMode', 'activityFactor', 'exerciseSource', 'protectHardDays', 'proteinGPerKg', 'fatGPerKg'] as const;
 
 const signed = (n: number) => `${n > 0 ? '+' : n < 0 ? '−' : ''}${fmtKcal(Math.abs(n))}`;
 
-function GoalBlock({ b, onAddWeightGoal }: { b: EnergyBudget; onAddWeightGoal: () => void }) {
+function GoalBlock({ b, today, onAddWeightGoal }: { b: EnergyBudget; today: string; onAddWeightGoal: () => void }) {
   const g = b.goal;
   if (!g.goalId) {
     return (
@@ -30,12 +32,16 @@ function GoalBlock({ b, onAddWeightGoal }: { b: EnergyBudget; onAddWeightGoal: (
   return (
     <div className="flex flex-col gap-0.5 rounded-[10px] bg-accent-tint px-3 py-2.5 text-[13px]">
       <div>
-        <strong>{g.title}</strong>: {g.targetKg} kg{g.targetDate ? ` by ${formatShortDate(g.targetDate)}` : ''} · now {g.trendKg} kg (trend)
+        <strong>{g.title}</strong>: {g.targetKg} kg{g.trendKg != null ? ` · now ${g.trendKg} kg (trend)` : ''}
       </div>
-      <div className="font-mono">
-        {g.mode === 'reached' ? 'At target — maintaining' : `${g.kgPerWeek > 0 ? '+' : ''}${g.kgPerWeek} kg/week · ${signed(g.kcalPerDay)} kcal/day`}
-      </div>
-      {g.note && <div className="text-xs text-muted">{g.note}</div>}
+      <div className="font-mono">{g.mode === 'reached' ? 'At target — maintaining' : g.mode === 'maintain' ? 'Maintaining' : `${paceNote(g)} · ${signed(g.kcalPerDay)} kcal/day`}</div>
+      {g.etaDate && <div className="text-xs text-muted">At this pace, about {etaLabel(g.etaDate, today)}</div>}
+      {g.note && g.mode !== 'reached' && (
+        <div className="text-xs text-muted">
+          {g.note}
+          {!g.pace && g.mode !== 'maintain' ? '. Edit the goal under Goals to pick a pace.' : ''}
+        </div>
+      )}
     </div>
   );
 }
@@ -106,19 +112,7 @@ export function BudgetSection({ today, onAddWeightGoal }: { today: string; onAdd
 
       <section className="flex flex-col gap-2">
         <div className="text-[13px] font-semibold">Goal</div>
-        <GoalBlock b={b} onAddWeightGoal={onAddWeightGoal} />
-        <div className="flex flex-wrap items-center gap-2 text-[13px]">
-          <label htmlFor={`${id}-pace`} className="text-muted">
-            Pace when a weight goal has no date
-          </label>
-          <select id={`${id}-pace`} value={draft.defaultKgPerWeek} onChange={(e) => set('defaultKgPerWeek', Number(e.target.value))} className={`${inputCls} min-h-9`}>
-            {[0.25, 0.5, 0.75, 1].map((v) => (
-              <option key={v} value={v}>
-                {v} kg/week ({signed(-Math.round((v * 7700) / 7))} kcal/day)
-              </option>
-            ))}
-          </select>
-        </div>
+        <GoalBlock b={b} today={today} onAddWeightGoal={onAddWeightGoal} />
         <SwitchRow
           on={draft.protectHardDays}
           onChange={(v) => set('protectHardDays', v)}
