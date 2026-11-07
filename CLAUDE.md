@@ -62,9 +62,9 @@ deleted it from intervals.icu (DECISIONS #17).
 `messages` is the verbatim Anthropic transcript, thinking blocks included. Never edit or delete a
 stored message, and never re-render `systemSnapshot` within an API context. New facts reach the coach
 as appended context messages (DECISIONS #6). Only `restartContext` replaces the snapshot, for a new
-context that sends nothing older (DECISIONS #80). One exception: `clearContexts` removes what only
+context that sends nothing older (DECISIONS #80). Two exceptions. `clearContexts` removes what only
 Claude saw when a deployment takes a source's data back, and only after `forgetContexts`, so those
-messages can't be sent again (DECISIONS #93).
+messages can't be sent again (DECISIONS #93). The other is `deleteUserData`, when an account closes (#95).
 
 ### 3. `packages/core` is pure
 No I/O, no clock, no `new Date()` without an argument, no `fetch`, no `process`. ESLint enforces it.

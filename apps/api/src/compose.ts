@@ -32,6 +32,7 @@ import {
   listEventSearches,
   saveActivities,
   deleteActivities,
+  deleteUserData,
   forgetContexts,
   removeRideReferences,
   rideIdsFrom,
@@ -157,6 +158,15 @@ export interface Core {
     forgetContexts(userId: string): Promise<void>;
     /** After `forgetContexts`: remove what only Claude saw from stored chats. The athlete's and coach's words stay. */
     clearContexts(userId: string, rule: { marker: string; note: string }): Promise<void>;
+  };
+  /** Closing an athlete's account (DECISIONS #95). */
+  account: {
+    /**
+     * Stop their jobs and delete everything of theirs: the database and their photos. Safe to repeat,
+     * which the caller should do once running work has ended: `jobs.remove` doesn't stop a job in
+     * progress. Their sign-in is the caller's, and so is anything held outside the core.
+     */
+    deleteData(userId: string): Promise<void>;
   };
   /** Hand back job leases and close the database. */
   close(): Promise<void>;
@@ -603,6 +613,14 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     coach: {
       forgetContexts: (userId) => forgetContexts(c, userId),
       clearContexts: (userId, rule) => clearContexts(c, userId, rule),
+    },
+    account: {
+      deleteData: async (userId) => {
+        await Promise.all([JOB.delta, JOB.full, JOB.zwiftMetrics].map((kind) => jobs.remove(kind, userId)));
+        await deleteUserData(c, userId);
+        // Last, and by prefix: with S3 down the data above is still gone, and a repeat needs no keys.
+        await photos?.removeAll(userId);
+      },
     },
     close: async () => {
       // Hand back leases so another process can pick the jobs up at once.

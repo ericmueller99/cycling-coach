@@ -598,6 +598,8 @@ export async function ensureIndexes(db: Db): Promise<void> {
     c.threads.createIndex({ userId: 1, lastMessageAt: -1 }),
     c.messages.createIndex({ threadId: 1, seq: 1 }, { unique: true }),
     c.proposals.createIndex({ threadId: 1 }),
+    c.messages.createIndex({ userId: 1 }),
+    c.proposals.createIndex({ userId: 1 }),
     c.integrations.createIndex({ userId: 1, provider: 1 }, { unique: true }),
     c.aiCalls.createIndex({ userId: 1, createdAt: -1 }),
     c.aiCalls.createIndex({ createdAt: -1 }),

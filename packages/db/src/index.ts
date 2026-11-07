@@ -1,5 +1,6 @@
 export * from './client';
 export * from './collections';
+export * from './repos/account';
 export * from './repos/activities';
 export * from './repos/calendar';
 export * from './repos/coach-food';

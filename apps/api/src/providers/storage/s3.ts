@@ -1,4 +1,4 @@
-import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 /**
@@ -44,6 +44,22 @@ export class PhotoStore {
 
   async remove(key: string): Promise<void> {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.config.bucket, Key: key }));
+  }
+
+  /**
+   * Every photo of a user's, attached to a food or not: a reading uploads before anything points at it.
+   * One at a time, because S3-compatible providers differ on bulk deletes. The bucket may be shared, so
+   * an id that couldn't be a folder name is refused rather than widening the prefix.
+   */
+  async removeAll(userId: string): Promise<void> {
+    if (!/^[\w-]+$/.test(userId)) throw new Error('removeAll needs a user id');
+    const prefix = userImagePrefix(userId);
+    let token: string | undefined;
+    do {
+      const page = await this.client.send(new ListObjectsV2Command({ Bucket: this.config.bucket, Prefix: prefix, ContinuationToken: token }));
+      for (const { Key: key } of page.Contents ?? []) if (key) await this.remove(key);
+      token = page.IsTruncated ? page.NextContinuationToken : undefined;
+    } while (token);
   }
 }
 

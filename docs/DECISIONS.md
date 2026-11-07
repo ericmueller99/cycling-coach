@@ -2164,3 +2164,17 @@ theirs that isn't one. They're left out of recipe ingredients, where the tag wou
 - *Reusing `adjustFood`*: it targets one food, can't add an item, and doesn't move ranges.
 - *The model's own confidence*: it wouldn't change as the rider edits.
 
+## 95. A deployment can delete everything of an athlete's (Nov 6)
+
+**Decision.** `Core.account.deleteData(userId)` removes an athlete's jobs, everything in the collections that hold their data, and their photos. It's a seam for a deployment that closes accounts. The self-hosted app has no route to it and no UI: an install has one user.
+- **`USER_COLLECTIONS` and `OTHER_COLLECTIONS`** in `repos/account.ts` list every collection between them, and a test fails if a new one is in neither.
+- **This is the second exception to append-only transcripts,** after #93. The account is going, so nothing can be sent again. `foods` and `memories`, which are normally archived or soft-deleted, go too.
+- **AI costs stay,** without `threadId` and `turnId`. They hold no words, and a deployment's cost history shouldn't shrink.
+- **Photos go by prefix, not from stored keys,** because a reading uploads before anything points at it. One object at a time, since S3-compatible providers differ on bulk deletes. `removeAll` refuses an id that isn't a plain folder name, because the bucket may be shared.
+- **It's safe to repeat, and should be.** `jobs.remove` doesn't stop a job in progress, and a running sync or coach turn can still write. Sign-in rows are the caller's.
+- `messages` and `proposals` gain a `userId` index, since they only had `threadId`.
+
+**Rejected.**
+- *A delete hook in `createCore` options:* nothing in the core needs to call out, so a method the deployment calls is simpler.
+- *Deleting through `threads`:* a turn still running can write to a thread that's gone.
+
