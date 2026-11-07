@@ -43,7 +43,7 @@ function BusyRing() {
   return <span className="h-4 w-4 flex-none animate-spin rounded-full border-2 border-current border-t-transparent motion-reduce:animate-none" aria-hidden />;
 }
 
-/** "Pulled 16 rides from intervals.icu · Oct 20 – 28 · 5 races, 10.1 h", expandable to the rows. */
+/** "Pulled 16 rides · Oct 20 – 28 · 5 races, 10.1 h", expandable to the rows. */
 export function ToolChip({ block }: { block: ToolChipBlock }) {
   const [open, setOpen] = useState(false);
   const running = block.status === 'running';

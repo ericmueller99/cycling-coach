@@ -1,6 +1,7 @@
 export * from './adjust';
 export * from './barcode';
 export * from './energy';
+export * from './estimate';
 export * from './nutrients';
 export * from './portions';
 export * from './recipes';

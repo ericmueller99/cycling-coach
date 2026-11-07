@@ -15,11 +15,11 @@ import {
 import { Navigate, useNavigate, useRouterState } from '@tanstack/react-router';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { BrandTile } from '../../components/BrandTile';
-import { CheckIcon, ChevronLeft, MemoryIcon, PlusIcon, XIcon } from '../../components/icons';
+import { CheckIcon, ChevronLeft, MemoryIcon, PlusIcon, PulseIcon, XIcon } from '../../components/icons';
 import { ErrorNote, Spinner } from '../../components/ui';
 import { VerifyEmailBanner } from '../../components/VerifyEmailBanner';
 import { ZoneChart } from '../../components/ZoneChart';
-import { useExtensions } from '../../extensions';
+import { useExtensions, type WizardSync } from '../../extensions';
 import { errorMessage, useIntervals, useOnboarding, useOnboardingMutations, useProfileMutations } from '../../lib/queries';
 
 /**
@@ -93,7 +93,8 @@ function draftFrom(s: OnboardingState): Draft {
 
 function Wizard({ initial }: { initial: OnboardingState }) {
   const navigate = useNavigate();
-  const { brand } = useExtensions();
+  const { brand, useWizardSync } = useExtensions();
+  const sync = useWizardSync();
   const server = useOnboarding().data ?? initial;
   const m = useOnboardingMutations();
   const { createMemory, deleteMemory } = useProfileMutations();
@@ -111,6 +112,7 @@ function Wizard({ initial }: { initial: OnboardingState }) {
   }, [step]);
 
   const connected = intervals?.status === 'connected';
+  const anyConnected = connected || !!sync?.sources.some((s) => s.connected);
   const ftpNum = Number(d.ftp);
   const kg = d.unit === 'lb' ? Number(d.weight) * KG_PER_LB : Number(d.weight);
   const go = (n: number) => {
@@ -222,13 +224,15 @@ function Wizard({ initial }: { initial: OnboardingState }) {
             {step === 1 && <BodyStep d={d} set={set} ftp={d.known && ftpNum ? ftpNum : undefined} kg={kg} />}
             {step === 2 && <GoalsStep d={d} set={set} />}
             {step === 3 && <MemoryStep d={d} set={set} notes={server.memories} add={addNote} remove={removeNote} busy={createMemory.isPending || deleteMemory.isPending} />}
-            {step === 4 && <SyncStep connected={connected} />}
+            {step === 4 && <SyncStep connected={connected} sync={sync} />}
             {done && (
               <DoneStep
                 d={d}
                 kg={kg}
                 state={server}
                 connected={connected}
+                anyConnected={anyConnected}
+                sources={sync?.sources ?? []}
                 edit={(i) => {
                   setError(null);
                   setEditing(true);
@@ -250,7 +254,7 @@ function Wizard({ initial }: { initial: OnboardingState }) {
               </button>
             )}
             <span className="flex-1" />
-            {(step === 3 || (step === 4 && !connected)) && !editing && (
+            {(step === 3 || (step === 4 && !anyConnected)) && !editing && (
               <button type="button" onClick={skip} disabled={busy} className="min-h-[46px] rounded-[10px] border-0 bg-transparent px-3 font-semibold text-muted">
                 Skip for now
               </button>
@@ -563,7 +567,7 @@ function MemoryStep({
   );
 }
 
-function SyncStep({ connected }: { connected: boolean }) {
+function SyncStep({ connected, sync }: { connected: boolean; sync: WizardSync | null }) {
   const { intervalsConnect } = useExtensions();
   const arrow = (dir: 'out' | 'in') => (
     <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -574,20 +578,30 @@ function SyncStep({ connected }: { connected: boolean }) {
     <>
       <StepHead
         eyebrow="Step 5 · Sync · optional"
-        title="Connect intervals.icu"
-        sub="Keep your training in sync both ways. Planned workouts go out to your intervals.icu calendar, and from there to the apps and devices you ride with. Your rides come back so your coach knows what you actually did."
+        title={sync?.title ?? 'Connect intervals.icu'}
+        sub={
+          sync?.sub ??
+          'Keep your training in sync both ways. Planned workouts go out to your intervals.icu calendar, and from there to the apps and devices you ride with. Your rides come back so your coach knows what you actually did.'
+        }
       />
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-2.5">
-        <div className="flex flex-col gap-1.5 rounded-xl bg-surface-2 px-3.5 py-3">
-          <span className="flex items-center gap-1.5 text-xs font-semibold text-muted">{arrow('out')}Sends</span>
-          <span>Planned workouts and races</span>
+      {!sync && (
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-2.5">
+          <div className="flex flex-col gap-1.5 rounded-xl bg-surface-2 px-3.5 py-3">
+            <span className="flex items-center gap-1.5 text-xs font-semibold text-muted">{arrow('out')}Sends</span>
+            <span>Planned workouts and races</span>
+          </div>
+          <div className="flex flex-col gap-1.5 rounded-xl bg-surface-2 px-3.5 py-3">
+            <span className="flex items-center gap-1.5 text-xs font-semibold text-muted">{arrow('in')}Brings back</span>
+            <span>Completed rides, fitness and load, weigh-ins</span>
+          </div>
         </div>
-        <div className="flex flex-col gap-1.5 rounded-xl bg-surface-2 px-3.5 py-3">
-          <span className="flex items-center gap-1.5 text-xs font-semibold text-muted">{arrow('in')}Brings back</span>
-          <span>Completed rides, fitness and load, weigh-ins</span>
+      )}
+      {sync ? (
+        <div className="flex flex-col gap-2.5">
+          <IntervalsRow connected={connected} />
+          {sync.rows}
         </div>
-      </div>
-      {connected ? (
+      ) : connected ? (
         <div className="flex flex-wrap items-center gap-3 rounded-[14px] border-2 border-accent-ring bg-[#F9FCEF] p-4">
           <span className="flex h-9 w-9 items-center justify-center rounded-full bg-success text-white">
             <CheckIcon size={18} />
@@ -608,7 +622,44 @@ function SyncStep({ connected }: { connected: boolean }) {
   );
 }
 
-function DoneStep({ d, kg, state, connected, edit }: { d: Draft; kg: number; state: OnboardingState; connected: boolean; edit: (step: number) => void }) {
+/** intervals.icu as a row like the other sources beside it, none of them the main choice (DECISIONS #89). */
+function IntervalsRow({ connected }: { connected: boolean }) {
+  const { intervalsConnect } = useExtensions();
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-[10px] bg-surface-2 p-3">
+      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-data-tint text-data">
+        <PulseIcon size={18} />
+      </div>
+      <div className="min-w-0 flex-[1_1_160px]">
+        <div className="font-semibold">intervals.icu</div>
+        <div className="text-xs text-muted">{connected ? 'Recent rides show up within a few minutes.' : intervalsConnect.hint}</div>
+      </div>
+      <span className={`flex items-center gap-1.5 text-xs font-semibold ${connected ? 'text-[#15803D]' : 'text-[#5B6472]'}`}>
+        <span className={`h-2 w-2 rounded-full ${connected ? 'bg-[#15803D]' : 'bg-[#9CA3AF]'}`} />
+        {connected ? 'Connected' : 'Not set up'}
+      </span>
+      {!connected && intervalsConnect.action}
+    </div>
+  );
+}
+
+function DoneStep({
+  d,
+  kg,
+  state,
+  connected,
+  anyConnected,
+  sources,
+  edit,
+}: {
+  d: Draft;
+  kg: number;
+  state: OnboardingState;
+  connected: boolean;
+  anyConnected: boolean;
+  sources: WizardSync['sources'];
+  edit: (step: number) => void;
+}) {
   const ftp = d.known ? Number(d.ftp) : undefined;
   const goals = state.createdGoals.map((g) => g.title);
   const rows = [
@@ -618,11 +669,12 @@ function DoneStep({ d, kg, state, connected, edit }: { d: Draft; kg: number; sta
     { label: 'Training', value: TRAINING_PREFERENCE_LABEL[d.preference], step: 2 },
     { label: 'Memory', value: state.memories.length === 1 ? '1 note' : `${state.memories.length} notes`, step: 3 },
     { label: 'intervals.icu', value: connected ? 'Connected' : 'Not connected', step: 4 },
+    ...sources.map((s) => ({ label: s.label, value: s.connected ? 'Connected' : 'Not connected', step: 4 })),
   ];
   const todos = [
     ...(!ftp ? [{ title: 'Ramp test', meta: 'About 25 min · on your calendar for tomorrow', accent: true }] : []),
     { title: 'Plan your first week', meta: 'Tell your coach when you can ride', accent: false },
-    ...(!connected ? [{ title: 'Connect intervals.icu', meta: 'Sync workouts and rides', accent: false }] : []),
+    ...(!anyConnected ? [{ title: 'Connect intervals.icu', meta: 'Sync workouts and rides', accent: false }] : []),
   ];
   return (
     <>

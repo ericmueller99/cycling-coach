@@ -12,6 +12,7 @@ import {
 } from '@cycling-coach/core';
 import {
   nutrientKeys,
+  readableNutrientKeys,
   type Food,
   type FoodImageRef,
   type FoodInput,
@@ -95,7 +96,7 @@ export function draftFromReading(r: NutritionReading, kind: PhotoKind, images: F
   const flags = new Set<string>();
   const nutrients: Partial<Record<NutrientKey, string>> = {};
   let read = 0;
-  for (const k of nutrientKeys) {
+  for (const k of readableNutrientKeys) {
     const v = r.nutrients[k];
     if (v.value != null) {
       nutrients[k] = str(v.value);

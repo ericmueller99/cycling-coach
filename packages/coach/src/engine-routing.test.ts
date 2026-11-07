@@ -45,7 +45,7 @@ function fakeClient(script: Scripted[]) {
   return { client: { beta: { messages: { stream } } } as unknown as Anthropic, calls };
 }
 
-const ROUTER: ModelRouter = { chat: { model: SONNET, effort: 'medium' }, build: { model: OPUS, effort: 'high' }, small: 'claude-haiku-5-5' };
+const ROUTER: ModelRouter = { chat: { model: SONNET, effort: 'medium' }, build: { model: OPUS, effort: 'high' }, small: 'claude-haiku-5-5', estimate: { model: 'claude-sonnet-5-5', effort: 'medium' } };
 
 const engineWith = (script: Scripted[], router: ModelRouter | (() => ModelRouter) = ROUTER) => {
   const fake = fakeClient(script);

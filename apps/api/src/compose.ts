@@ -32,6 +32,9 @@ import {
   listEventSearches,
   saveActivities,
   deleteActivities,
+  forgetContexts,
+  removeRideReferences,
+  rideIdsFrom,
 } from '@cycling-coach/db';
 import { addDays, sessionRideIds, todayIn, visibleMemories } from '@cycling-coach/core';
 import type { Activity, IntegrationStatus, ZwiftStatus } from '@cycling-coach/shared';
@@ -54,9 +57,10 @@ import { MemoryService } from './services/memory';
 import { OpenFoodFacts } from './providers/openfoodfacts';
 import { photoStoreFromEnv } from './providers/storage/s3';
 import { UsdaClient } from './providers/usda';
-import { getThreadView, listThreadSummaries, sendMessage, startThread, type CoachContext, type CoachDeps } from './services/coach';
+import { getThreadView, listThreadSummaries, sendMessage, startThread, type CoachContext, type CoachDeps, type CoachHiddenProviders, type OtherRideSource } from './services/coach';
 import { CoachFoodService } from './services/coach-food';
 import { IntervalsSync, manualRetryAt } from './services/intervals-sync';
+import { clearContexts } from './services/coach-forget';
 import { MATCH_DAYS, settleRides } from './services/rides';
 import { TrainingData } from './services/training-data';
 import { weightHistory } from './services/weight';
@@ -94,6 +98,10 @@ export interface CoreOptions {
   router?: (ctx: CoreContext) => RouterSource;
   /** More for the coach to know each turn. Default: nothing (DECISIONS #72). */
   coachContext?: CoachContext;
+  /** Whether an athlete has a ride source of this deployment's own connected. Default: none (DECISIONS #90). */
+  otherRideSource?: OtherRideSource;
+  /** Ride sources the coach mustn't read for an athlete, though they stay on show. Default: none (DECISIONS #92). */
+  coachHiddenProviders?: CoachHiddenProviders;
   /**
    * Appended to workout names pushed to intervals.icu, e.g. " via example.com". Zwift titles the ride
    * after the workout, so it shows wherever the ride is shared. Stripped from names read back.
@@ -140,6 +148,15 @@ export interface Core {
     remove(userId: string, ids: readonly string[]): Promise<void>;
     /** After saving: drop what intervals.icu also has, then tick off sessions. */
     settle(userId: string): Promise<void>;
+    /** Delete all of one source's rides, and what points at them. */
+    purge(userId: string, provider: string): Promise<void>;
+  };
+  /** Taking a source's data back from the coach (DECISIONS #93). */
+  coach: {
+    /** Old chats are never sent again: each one's next turn starts with nothing older and no recap. */
+    forgetContexts(userId: string): Promise<void>;
+    /** After `forgetContexts`: remove what only Claude saw from stored chats. The athlete's and coach's words stay. */
+    clearContexts(userId: string, rule: { marker: string; note: string }): Promise<void>;
   };
   /** Hand back job leases and close the database. */
   close(): Promise<void>;
@@ -215,7 +232,8 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   const calendar = new CalendarService(c, integrations, authorName, now, opts.eventNameSuffix, (userId) => jobs.kickSoon(JOB.delta, userId, PUSH_RETRY_MS));
   const feedback = new FeedbackService(c, training, now);
   const onboarding = new OnboardingService(c, calendar, now);
-  const food = new FoodService(c, now);
+  const photos = photoStoreFromEnv(env);
+  const food = new FoodService(c, now, photos);
   const recipeShares = new RecipeShareService(c, env.APP_URL, now);
   const energy = new EnergyService(c, training, now);
   /** USDA works without a key on its shared DEMO_KEY (30 requests an hour) — enough for the odd staple. */
@@ -224,14 +242,14 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   const foodAi = new FoodAiService(
     c,
     env.CLAUDE_API_KEY ? new FoodAi({ apiKey: env.CLAUDE_API_KEY, router }) : null,
-    photoStoreFromEnv(env),
+    photos,
     new OpenFoodFacts(),
     (userId) => food.library(userId),
     async (userId) => (await getProfile(c, userId))?.timezone ?? 'UTC',
     now,
     spendGuard,
   );
-  if (!photoStoreFromEnv(env)) console.warn('S3_* not set — food label photos are read but not kept.');
+  if (!photos) console.warn('S3_* not set — food label photos are read but not kept.');
   void staples.imported().then((n) => {
     if (!n) console.warn('Canadian Nutrient File not imported — staples search is empty. Run: pnpm food:import-cnf');
   });
@@ -265,6 +283,8 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     events: zwiftEvents,
     spendGuard,
     ...(opts.coachContext ? { coachContext: opts.coachContext } : {}),
+    ...(opts.otherRideSource ? { otherRideSource: opts.otherRideSource } : {}),
+    ...(opts.coachHiddenProviders ? { coachHiddenProviders: opts.coachHiddenProviders } : {}),
     food: { food, energy, coachFood },
     now,
   };
@@ -503,6 +523,12 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
       imageUrls: (userId, id) => foodAi.imageUrls(userId, id),
       parse: (userId, input) => foodAi.parse(userId, input),
       adjust: (userId, input) => foodAi.adjust(userId, input),
+      logCalories: (userId, input) => food.logCalories(userId, input),
+      logEstimate: (userId, input) => food.logEstimate(userId, input),
+      editCalories: (userId, id, edit) => food.editCalories(userId, id, edit),
+      entryPhotos: (userId, id) => food.entryPhotos(userId, id),
+      estimate: (userId, input) => foodAi.estimate(userId, input),
+      adjustEstimate: (userId, input) => foodAi.adjustEstimate(userId, input),
     },
 
     energy: {
@@ -568,6 +594,15 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
         const today = todayIn(profile.timezone, now());
         await settleRides(c, userId, addDays(today, -MATCH_DAYS), today, now());
       },
+      purge: async (userId, provider) => {
+        const ids = await rideIdsFrom(c, userId, provider);
+        await removeRideReferences(c, userId, ids, now());
+        await deleteActivities(c, userId, ids);
+      },
+    },
+    coach: {
+      forgetContexts: (userId) => forgetContexts(c, userId),
+      clearContexts: (userId, rule) => clearContexts(c, userId, rule),
     },
     close: async () => {
       // Hand back leases so another process can pick the jobs up at once.
@@ -580,7 +615,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
 export type { CredentialSource, FeatureSource, IntegrationResolver } from './integrations';
 export type { AuthExtension } from './auth';
 export type { AiUse, SpendDecision, SpendGuard } from './lib/spend';
-export type { CoachContext } from './services/coach';
+export type { CoachContext, CoachHiddenProviders, OtherRideSource } from './services/coach';
 export { JobRunner } from './jobs';
 export { IntervalsError, IntervalsIcu } from './providers/intervals-icu';
 export { serveSpa } from './lib/spa';

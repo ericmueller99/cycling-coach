@@ -90,6 +90,14 @@ describe('meal tools', () => {
 });
 
 describe('renderFoodLine', () => {
+  const day = { date: '2026-11-01', slot: 'Dinner', chosen: true, eaten: { kcal: 1980, protein: 92, carbs: 230, fat: 60 }, budgetKcal: 2822 };
+
+  it('says when the totals include an estimate, and only then', () => {
+    expect(renderFoodLine({ ...day, estimates: 1 })).toContain('include a restaurant meal logged as an estimate, so treat them as approximate');
+    expect(renderFoodLine({ ...day, estimates: 2 })).toContain('include 2 restaurant meals');
+    expect(renderFoodLine({ ...day, estimates: 0 })).not.toContain('estimate');
+  });
+
   it('gives eaten, left and the meal being planned', () => {
     expect(
       renderFoodLine({ date: '2026-11-01', slot: 'Dinner', chosen: true, eaten: { kcal: 1980, protein: 92, carbs: 230, fat: 60 }, budgetKcal: 2822, proteinTargetG: 150 }),

@@ -53,7 +53,7 @@ export class EnergyService {
    * their workouts, and the synced rides and steps (DECISIONS #49). Without intervals.icu the
    * budget has no exercise or steps, and says so.
    */
-  private async context(userId: string, from: IsoDate, to: IsoDate): Promise<BudgetContext> {
+  private async context(userId: string, from: IsoDate, to: IsoDate, hidden: readonly string[] = []): Promise<BudgetContext> {
     const [settings, profile, goals, events] = await Promise.all([
       getEnergySettings(this.c, userId),
       getProfile(this.c, userId),
@@ -66,6 +66,7 @@ export class EnergyService {
     let dataWarning: string | undefined;
     if (this.training) {
       [activities, steps] = await Promise.all([this.training.activities(userId, from, to), this.training.steps(userId, addDays(from, -15), to)]);
+      activities = activities.filter((a) => !a.provider || !hidden.includes(a.provider));
     } else dataWarning = 'intervals.icu is not connected — exercise and steps are missing.';
     const workoutIds = [...new Set(events.filter((e) => e.status === 'planned' && e.workoutId).map((e) => e.workoutId!))];
     const workouts = new Map<string, Workout>();
@@ -103,8 +104,8 @@ export class EnergyService {
    * One day's budget: RMR + everyday living + steps + exercise (rides' kJ, planned sessions
    * projected until ridden) + the weight goal's adjustment.
    */
-  async budget(userId: string, date: IsoDate): Promise<EnergyBudget> {
-    return this.dayBudget(await this.context(userId, date, date), date);
+  async budget(userId: string, date: IsoDate, hidden: readonly string[] = []): Promise<EnergyBudget> {
+    return this.dayBudget(await this.context(userId, date, date, hidden), date);
   }
 
   /** Every day's budget in a range, from one read of each source (the calendar grid). */
@@ -129,7 +130,7 @@ export class EnergyService {
     for (let d = from; d <= to; d = addDays(d, 1)) {
       const b = this.dayBudget(x, d);
       const t = totals.get(d);
-      days.push({ date: d, eaten: t?.eaten ?? null, slots: t?.slots ?? [], budget: b.ready ? b.total : null });
+      days.push({ date: d, eaten: t?.eaten ?? null, slots: t?.slots ?? [], budget: b.ready ? b.total : null, estimates: t?.estimates ?? 0 });
     }
     const starts: IsoDate[] = [];
     for (let w = weekStart(from); w <= to; w = addDays(w, 7)) starts.push(w);

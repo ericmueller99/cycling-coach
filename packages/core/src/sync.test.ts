@@ -71,9 +71,24 @@ describe('the same ride from two sources', () => {
   it('allows a little drift in start and length', () => {
     expect(isSameRide(at('2026-11-03T09:00:00'), at('2026-11-03T09:04:00', 3400))).toBe(true);
   });
-  it('tells two rides apart', () => {
-    expect(isSameRide(at('2026-11-03T09:00:00'), at('2026-11-03T09:06:00'))).toBe(false);
-    expect(isSameRide(at('2026-11-03T09:00:00'), at('2026-11-03T09:00:00', 2000))).toBe(false);
+  it('matches a ride with a long stop when one source counts only the riding', () => {
+    expect(isSameRide(at('2026-11-03T09:00:00', 12_600), at('2026-11-03T09:00:00', 10_800))).toBe(true);
+  });
+  it('matches a recording started late', () => {
+    expect(isSameRide(at('2026-11-03T09:00:00'), at('2026-11-03T09:08:00', 3120))).toBe(true);
+  });
+  it('matches a recording stopped early', () => {
+    expect(isSameRide(at('2026-11-03T09:00:00'), at('2026-11-03T09:00:00', 2000))).toBe(true);
+  });
+  it('tells back-to-back rides apart', () => {
+    expect(isSameRide(at('2026-11-03T09:00:00'), at('2026-11-03T10:05:00'))).toBe(false);
+    expect(isSameRide(at('2026-11-03T09:00:00'), at('2026-11-03T10:00:00'))).toBe(false);
+  });
+  it('tells a short ride apart from a long recording around it', () => {
+    expect(isSameRide(at('2026-11-03T09:00:00', 7200), at('2026-11-03T09:30:00', 1200))).toBe(false);
+  });
+  it('never matches a record with no length', () => {
+    expect(isSameRide(at('2026-11-03T09:00:00', 0), at('2026-11-03T09:00:00', 0))).toBe(false);
   });
 
   it('finds the second-source copy, never the intervals.icu one', () => {

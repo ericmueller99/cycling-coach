@@ -1,5 +1,6 @@
 import type { FullSyncProgress } from '@cycling-coach/shared';
-import { useState } from 'react';
+import { useLocation } from '@tanstack/react-router';
+import { useEffect, useRef, useState } from 'react';
 import { PulseIcon } from '../../components/icons';
 import { Button, Card, ErrorNote } from '../../components/ui';
 import { useExtensions } from '../../extensions';
@@ -78,9 +79,15 @@ export function ConnectionsSection() {
   const s = intervals.data;
   const ok = s?.status === 'connected';
   const importing = s?.fullSync?.status === 'running';
+  const hash = useLocation({ select: (l) => l.hash });
+  const anchor = useRef<HTMLDivElement>(null);
+  // Here, not the router's own hash scrolling: this section only exists once the page's data has loaded.
+  useEffect(() => {
+    if (hash === 'connections') anchor.current?.scrollIntoView();
+  }, [hash]);
 
   return (
-    <Card className="flex flex-col gap-2.5 p-[18px]">
+    <Card ref={anchor} id="connections" className="flex scroll-mt-4 flex-col gap-2.5 p-[18px] mobile:scroll-mt-36">
       <h2 className="mt-0 mb-1 text-base">Connections</h2>
       <div className="flex flex-wrap items-center gap-3 rounded-[10px] bg-surface-2 p-3">
         <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-data-tint text-data">

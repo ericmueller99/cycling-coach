@@ -149,7 +149,7 @@ describe('what the coach is sent, over real turns', () => {
     const d = {
       c,
       engine,
-      training: { fitnessOn: async () => undefined },
+      training: { fitnessOn: async () => undefined, hasRides: async () => false },
       intervalsConnected: async () => false,
       events: {},
       food: {},

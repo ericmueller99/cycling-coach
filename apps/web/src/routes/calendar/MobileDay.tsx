@@ -124,7 +124,7 @@ export function MobileDay({ today, date }: { today: IsoDate; date: IsoDate }) {
       <div className="flex items-baseline justify-between px-4 pt-3">
         <h2 className="m-0 text-[17px]">{dayTitle(date, today)}</h2>
       </div>
-      <MobileEnergy total={d.total} budget={d.budget} isToday={date === today} />
+      <MobileEnergy total={d.total} budget={d.budget} estimates={d.estimates} isToday={date === today} />
 
       <div className="flex flex-col gap-3 px-4 pt-3 pb-28">
         {off.map((t) => (

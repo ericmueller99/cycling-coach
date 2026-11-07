@@ -163,7 +163,7 @@ export function DayPage({ date, today }: { date: IsoDate; today: IsoDate }) {
           )}
         </div>
         <aside aria-label="Day summary" className="sticky top-5 flex min-w-0 flex-[1_1_300px] flex-col gap-4">
-          <EnergyCard budget={d.budget} eaten={d.total.kcal} isToday={date === today} />
+          <EnergyCard budget={d.budget} eaten={d.total.kcal} estimates={d.estimates} isToday={date === today} />
           <MacrosCard total={d.total} budget={d.budget?.ready ? d.budget : undefined} />
           {!d.budget && <Card className="p-4 text-[13px] text-muted">Loading the day's budget…</Card>}
         </aside>

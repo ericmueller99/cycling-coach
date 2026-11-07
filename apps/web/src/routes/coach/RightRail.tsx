@@ -8,6 +8,7 @@ import { ZwiftWeightAlert } from '../../components/ZwiftWeightAlert';
 import { useExtensions } from '../../extensions';
 import { SESSION_STYLE, durationText } from '../../lib/session';
 import { useCalendarMutations, useDashboard, useProfile, useProfileMutations } from '../../lib/queries';
+import { ConnectNudge } from './ConnectNudge';
 import { useMemoryNotes } from './MemoryPanel';
 import { RIGHT_COL } from './rightColumn';
 
@@ -210,6 +211,8 @@ export function RightRail({ onAsk, onOpenMemory }: { onAsk: (prompt: string) => 
 
   return (
     <aside aria-label="Today and snapshot" className={`flex flex-col gap-4 bg-surface-alt px-5 py-6 @min-[940px]:overflow-y-auto ${RIGHT_COL}`}>
+      <ConnectNudge />
+
       <Card className="flex flex-col gap-2.5 p-4">
         <SectionLabel>Today · {formatLongDay(data.today)}</SectionLabel>
         {today ? (

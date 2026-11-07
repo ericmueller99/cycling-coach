@@ -1,4 +1,5 @@
 import type { DayFoodSummary, FoodLogEntry, IsoDate } from '@cycling-coach/shared';
+import { countEstimates } from './estimate';
 import { roundTo } from './units';
 
 /**
@@ -6,14 +7,14 @@ import { roundTo } from './units';
  * slot in `slotOrder` (slots not in the settings come after, alphabetically). Days without entries
  * aren't returned.
  */
-export function dayTotals(entries: readonly FoodLogEntry[], slotOrder: readonly string[]): Map<IsoDate, Pick<DayFoodSummary, 'eaten' | 'slots'>> {
+export function dayTotals(entries: readonly FoodLogEntry[], slotOrder: readonly string[]): Map<IsoDate, Pick<DayFoodSummary, 'eaten' | 'slots' | 'estimates'>> {
   const byDay = new Map<IsoDate, FoodLogEntry[]>();
   for (const e of entries) byDay.set(e.date, [...(byDay.get(e.date) ?? []), e]);
   const rank = (name: string) => {
     const i = slotOrder.indexOf(name);
     return i < 0 ? slotOrder.length : i;
   };
-  const out = new Map<IsoDate, Pick<DayFoodSummary, 'eaten' | 'slots'>>();
+  const out = new Map<IsoDate, Pick<DayFoodSummary, 'eaten' | 'slots' | 'estimates'>>();
   for (const [date, list] of byDay) {
     const eaten = { kcal: 0, protein: 0, carbs: 0, fat: 0 };
     const slots = new Map<string, number>();
@@ -29,6 +30,7 @@ export function dayTotals(entries: readonly FoodLogEntry[], slotOrder: readonly 
       slots: [...slots]
         .sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b))
         .map(([name, kcal]) => ({ name, kcal: Math.round(kcal) })),
+      estimates: countEstimates(list),
     });
   }
   return out;

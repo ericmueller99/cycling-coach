@@ -27,6 +27,7 @@ import { useChatScroll } from './useChatScroll';
 import { LongChatNotice } from './LongChatNotice';
 import { MemoryPanel, useMemoryNotes } from './MemoryPanel';
 import { RecipePane, RecipePaneSkeleton } from './RecipePane';
+import { ConnectNudgeRow } from './ConnectNudge';
 import { RightRail, TodayStrip } from './RightRail';
 import { SuggestionsMenu } from './SuggestionsMenu';
 
@@ -45,12 +46,12 @@ const isFoodBlock = (b: UiBlock) => b.type === 'meal_ideas' || b.type === 'recip
 
 type ThreadFilter = 'all' | 'training' | 'food';
 
-/** Where the coach started afresh from a recap, so a forgotten detail isn't a surprise (DECISIONS #80). */
-function ContextBreak() {
+/** Where the coach started afresh, so a forgotten detail isn't a surprise (DECISIONS #80, #93). */
+function ContextBreak({ reset }: { reset: boolean }) {
   return (
     <div role="separator" className="flex items-center gap-3 text-xs text-muted">
       <span className="h-px flex-auto bg-line" />
-      Earlier messages are summarized for your coach
+      {reset ? 'Your coach no longer sees earlier messages' : 'Earlier messages are summarized for your coach'}
       <span className="h-px flex-auto bg-line" />
     </div>
   );
@@ -464,6 +465,7 @@ export function CoachPage({
             }
           >
             <TodayStrip onAsk={(p) => void send(p)} />
+            <ConnectNudgeRow />
           </AppBar>
         ) : (
         <div className="sticky top-0 z-20 bg-bg">
@@ -484,6 +486,7 @@ export function CoachPage({
             New chat
           </Button>
         </PageHeader>
+        <ConnectNudgeRow className="border-b border-line @min-[940px]:hidden" />
         </div>
         )}
         {threadsOpen && (
@@ -520,7 +523,7 @@ export function CoachPage({
           )}
           {messages.map((m) => (
             <Fragment key={m.id}>
-              {view?.contextBreaks.includes(m.id) && <ContextBreak />}
+              {view?.contextBreaks.includes(m.id) && <ContextBreak reset={view.contextResets.includes(m.id)} />}
               <MessageRow message={m} view={view} cards={cards} />
             </Fragment>
           ))}

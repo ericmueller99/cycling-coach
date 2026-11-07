@@ -71,8 +71,12 @@ export interface MatchDeps {
  */
 export async function matchLines(deps: MatchDeps, items: readonly IngredientLine[]): Promise<Line[]> {
   const { lines, refs } = buildCatalog(deps.library);
-  const foodLines = lines.filter((l) => refs.get(l.id)?.kind === 'food');
   const foodsById = new Map(deps.library.foods.map((f) => [f.id, f]));
+  // A restaurant estimate is a whole meal and a guess: a recipe would lose the Estimate tag.
+  const foodLines = lines.filter((l) => {
+    const ref = refs.get(l.id);
+    return ref?.kind === 'food' && foodsById.get(ref.id)?.source !== 'estimate';
+  });
   const wanted = items.map((it, i) => ({ it, i })).filter(({ it }) => !it.toTaste);
 
   const byIndex = new Map<number, IngredientMatchResult['items'][number]>();
@@ -132,7 +136,7 @@ export async function suggestMatches(deps: Pick<MatchDeps, 'library' | 'searchSt
     seen.add(key);
     out.push(s);
   };
-  const foods = deps.library.foods.filter((f) => !f.archived);
+  const foods = deps.library.foods.filter((f) => !f.archived && f.source !== 'estimate');
   for (const q of queries) for (const f of rankByText(foods, q, MAX_SUGGESTIONS)) add(`food:${f.id}`, { kind: 'food', foodId: f.id, name: f.name, source: f.source });
   for (const q of queries.slice(0, 3)) {
     if (out.length >= MAX_SUGGESTIONS) break;

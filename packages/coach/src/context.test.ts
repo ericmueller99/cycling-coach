@@ -133,6 +133,17 @@ describe('renderAthleteBlock — FTP not known yet (DECISIONS #62)', () => {
   });
 });
 
+describe('renderTurnContext training data', () => {
+  const base = { today: '2026-11-03', localTime: '9:14 PM', timezone: 'UTC', athleteBlock: 'athlete', shortTermBlock: '', timeOffBlock: '', timeOffToday: '', calendarBlock: '', seen: { athlete: 'athlete' } } as const;
+
+  it('points to intervals.icu only when there is nothing to read', () => {
+    expect(renderTurnContext({ ...base, training: 'not_configured' })).toContain('Suggest connecting it');
+    const stored = renderTurnContext({ ...base, training: 'stored' });
+    expect(stored).toContain('the ride tools read them');
+    expect(stored).not.toContain('Suggest connecting it');
+  });
+});
+
 describe('renderTurnContext calendar', () => {
   const base = { today: '2026-11-03', localTime: '9:14 PM', timezone: 'UTC', training: 'connected', athleteBlock: 'athlete', shortTermBlock: '', timeOffBlock: '', timeOffToday: '' } as const;
   const calendar = (from: string, to: string, body: string) => `# Calendar ${from} → ${to} (id · date)\n${body}`;

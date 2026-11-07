@@ -3,7 +3,7 @@ import type { EnergyBudget, Nutrients } from '@cycling-coach/shared';
 import { Link } from '@tanstack/react-router';
 import { KcalBar } from '../../components/KcalBar';
 import { Card } from '../../components/ui';
-import { fmtG, fmtKcal, MACRO_COLOR } from '../../lib/food';
+import { approx, includesEstimates, fmtG, fmtKcal, MACRO_COLOR } from '../../lib/food';
 
 const MACROS = [
   { key: 'protein', label: 'Protein', target: 'proteinG' },
@@ -26,7 +26,7 @@ function SettingsLink({ children = 'Settings' }: { children?: string }) {
  * Energy today: kcal left, eaten vs budget, and where the budget comes from. The
  * settings live on the Athlete page.
  */
-export function EnergyCard({ budget, eaten, isToday }: { budget: EnergyBudget | undefined; eaten: number; isToday: boolean }) {
+export function EnergyCard({ budget, eaten, estimates, isToday }: { budget: EnergyBudget | undefined; eaten: number; estimates: number; isToday: boolean }) {
   if (!budget) return null;
   if (!budget.ready) {
     return (
@@ -45,19 +45,27 @@ export function EnergyCard({ budget, eaten, isToday }: { budget: EnergyBudget | 
         <SettingsLink />
       </div>
       <div className="flex items-baseline gap-2">
-        <span className={`font-mono text-[34px] leading-none font-semibold ${left < 0 ? 'text-danger' : ''}`}>{signed(left)}</span>
+        <span className={`font-mono text-[34px] leading-none font-semibold ${left < 0 ? 'text-danger' : ''}`}>
+          {approx(estimates)}
+          {signed(left)}
+        </span>
         <span className="text-muted">{left < 0 ? 'kcal over' : 'kcal left'}</span>
       </div>
       <div className="flex flex-col gap-1.5">
         <KcalBar eaten={eaten} budget={budget.total} className="h-3 rounded-md" />
         <div className="flex justify-between text-xs text-muted">
           <span>
-            <strong className="text-ink">{fmtKcal(eaten)}</strong> eaten
+            <strong className="text-ink">
+              {approx(estimates)}
+              {fmtKcal(eaten)}
+            </strong>{' '}
+            eaten
           </span>
           <span>
             <strong className="text-ink">{fmtKcal(budget.total)}</strong> budget
           </span>
         </div>
+        {estimates > 0 && <div className="text-xs text-muted">{includesEstimates(estimates)}</div>}
       </div>
       <div className="flex flex-col gap-1.5 border-t border-divider pt-2.5 text-[13px]">
         {budget.lines.map((l) => (
@@ -116,19 +124,29 @@ export function MacrosCard({ total, budget }: { total: Nutrients; budget: Energy
 }
 
 /** The phone summary block: kcal left, eaten / budget, mini macro bars. */
-export function MobileEnergy({ total, budget, isToday }: { total: Nutrients; budget: EnergyBudget | undefined; isToday: boolean }) {
+export function MobileEnergy({ total, budget, estimates, isToday }: { total: Nutrients; budget: EnergyBudget | undefined; estimates: number; isToday: boolean }) {
   const ready = budget?.ready;
   const left = ready ? budget.total - total.kcal : 0;
   return (
     <div className="flex flex-col gap-2.5 border-b border-line bg-surface px-4 pt-1 pb-3.5">
       <div className="flex items-end justify-between">
         <div>
-          <div className={`font-mono text-[30px] leading-[1.1] font-semibold ${ready && left < 0 ? 'text-danger' : ''}`}>{ready ? signed(left) : fmtKcal(total.kcal)}</div>
-          <div className="text-xs text-muted">{ready ? `${left < 0 ? 'kcal over' : 'kcal left'}${isToday ? ' today' : ''}` : 'kcal eaten'}</div>
+          <div className={`font-mono text-[30px] leading-[1.1] font-semibold ${ready && left < 0 ? 'text-danger' : ''}`}>
+            {approx(estimates)}
+            {ready ? signed(left) : fmtKcal(total.kcal)}
+          </div>
+          <div className="text-xs text-muted">
+            {ready ? `${left < 0 ? 'kcal over' : 'kcal left'}${isToday ? ' today' : ''}` : 'kcal eaten'}
+            {estimates > 0 ? ` · ${includesEstimates(estimates)}` : ''}
+          </div>
         </div>
         {ready ? (
           <Link to="/athlete/$tab" params={{ tab: 'body' }} className="text-right text-xs text-muted no-underline">
-            <strong className="text-ink">{fmtKcal(total.kcal)}</strong> eaten
+            <strong className="text-ink">
+              {approx(estimates)}
+              {fmtKcal(total.kcal)}
+            </strong>{' '}
+            eaten
             <br />
             <strong className="text-ink">{fmtKcal(budget.total)}</strong> budget
           </Link>

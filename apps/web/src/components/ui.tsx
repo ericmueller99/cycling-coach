@@ -1,5 +1,5 @@
 import type { SessionType } from '@cycling-coach/shared';
-import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import type { ButtonHTMLAttributes, ComponentProps, ReactNode } from 'react';
 import { ApiError } from '../lib/api';
 import { errorMessage } from '../lib/queries';
 import { SESSION_STYLE, TENTATIVE } from '../lib/session';
@@ -32,8 +32,12 @@ export function Button({
   );
 }
 
-export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <div className={`rounded-[14px] border border-line bg-surface ${className}`}>{children}</div>;
+export function Card({ children, className = '', ...rest }: ComponentProps<'div'>) {
+  return (
+    <div {...rest} className={`rounded-[14px] border border-line bg-surface ${className}`}>
+      {children}
+    </div>
+  );
 }
 
 export function SectionLabel({ children }: { children: ReactNode }) {

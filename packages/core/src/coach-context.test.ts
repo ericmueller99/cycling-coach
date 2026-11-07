@@ -18,6 +18,11 @@ const state = (over: Partial<ContextState> = {}): ContextState => ({
 });
 
 describe('restartReason', () => {
+  it('restarts a forgotten context, even under a turn that may be running', () => {
+    expect(restartReason(state({ forget: true }))).toBe('reset');
+    expect(restartReason(state({ forget: true, tail: { finished: false, at: NOW } }))).toBe('reset');
+    expect(restartReason(state({ forget: true, tail: null }))).toBeNull();
+  });
   it('leaves a small, recent chat alone', () => {
     expect(restartReason(state())).toBeNull();
   });

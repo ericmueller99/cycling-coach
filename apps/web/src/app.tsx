@@ -42,7 +42,7 @@ import { SharedRecipePage } from './routes/SharedRecipePage';
  * this package with `@source`.
  */
 
-export { defaultExtensions, ExtensionsProvider, useExtensions, CORE_NAV, type ConnectSlot, type Extensions, type NavItem } from './extensions';
+export { defaultExtensions, ExtensionsProvider, useExtensions, CORE_NAV, type ConnectSlot, type Extensions, type NavItem, type WizardSync } from './extensions';
 export { reloadOnStaleChunks } from './lib/appVersion';
 
 export interface RouterContext {

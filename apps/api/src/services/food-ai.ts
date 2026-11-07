@@ -1,8 +1,22 @@
 import { randomUUID } from 'node:crypto';
 import type { CallUsage, FoodAi } from '@cycling-coach/coach';
-import { buildCatalog, formatLongDay, normalizeBarcode, resolveWords } from '@cycling-coach/core';
+import { applyEstimateAdjustment, buildCatalog, estimateFromReading, formatLongDay, normalizeBarcode, resolveWords } from '@cycling-coach/core';
 import { findFoodByBarcode, getFood, recordAiCall, type Collections } from '@cycling-coach/db';
-import type { BarcodeLookup, FoodAdjustInput, FoodAdjustment, FoodImageRef, FoodLibrary, FoodParseInput, FoodParseResult, PhotoReadInput, PhotoReadResult } from '@cycling-coach/shared';
+import type {
+  BarcodeLookup,
+  EstimateAdjustInput,
+  EstimateAdjustResult,
+  EstimateInput,
+  EstimateResult,
+  FoodAdjustInput,
+  FoodAdjustment,
+  FoodImageRef,
+  FoodLibrary,
+  FoodParseInput,
+  FoodParseResult,
+  PhotoReadInput,
+  PhotoReadResult,
+} from '@cycling-coach/shared';
 import type { ServiceFailure as Failure } from '../app';
 import { OpenFoodFactsError, type OpenFoodFacts } from '../providers/openfoodfacts';
 import { userImagePrefix, type PhotoStore } from '../providers/storage/s3';
@@ -73,7 +87,32 @@ export class FoodAiService {
     return result.ok ? result.value : { error: result.error, status: 502 };
   }
 
-  private async record(userId: string, purpose: 'food_vision' | 'food_parse' | 'food_adjust', u: CallUsage | undefined) {
+  /**
+   * Photos and words → an itemised estimate of a restaurant meal. A proposal like everything here,
+   * and the photos aren't kept: they only reach storage if the rider logs it (`FoodService.logEstimate`).
+   */
+  async estimate(userId: string, input: EstimateInput): Promise<EstimateResult | Failure> {
+    if (!this.ai) return { error: 'Estimating a meal needs CLAUDE_API_KEY on the server. Log the calories yourself instead.', status: 503 };
+    const decision = await this.spendGuard(userId, 'food_estimate');
+    if (!decision.allow) return refusal(decision);
+    if (input.images.some((img) => Buffer.byteLength(img.data, 'base64') > MAX_IMAGE_BYTES)) return { error: 'That photo is too large — try again (the app shrinks photos before sending).', status: 413 };
+    const result = await this.ai.estimateMeal(input);
+    await this.record(userId, 'food_estimate', result.usage);
+    return result.ok ? estimateFromReading(result.value) : { error: result.error, status: 502 };
+  }
+
+  /** "Anything different?": the items with the change in them. Still a proposal. */
+  async adjustEstimate(userId: string, input: EstimateAdjustInput): Promise<EstimateAdjustResult | Failure> {
+    if (!this.ai) return { error: 'Changing an estimate with AI needs CLAUDE_API_KEY on the server. Change the portions by hand instead.', status: 503 };
+    const decision = await this.spendGuard(userId, 'food_adjust');
+    if (!decision.allow) return refusal(decision);
+    const result = await this.ai.adjustEstimate(input);
+    await this.record(userId, 'food_adjust', result.usage);
+    if (!result.ok) return { error: result.error, status: 502 };
+    return { reply: result.value.reply, items: applyEstimateAdjustment(input.items, result.value) };
+  }
+
+  private async record(userId: string, purpose: 'food_vision' | 'food_parse' | 'food_adjust' | 'food_estimate', u: CallUsage | undefined) {
     if (!u) return;
     await recordAiCall(this.c, {
       userId,

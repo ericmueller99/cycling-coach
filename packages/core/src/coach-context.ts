@@ -27,7 +27,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
 
-export type RestartReason = 'tools' | 'repair' | 'size' | 'age';
+export type RestartReason = 'tools' | 'repair' | 'size' | 'age' | 'reset';
 
 export interface ContextState {
   /** The latest coach call's prompt and reply in this context; 0 when it hasn't had one. */
@@ -41,12 +41,16 @@ export interface ContextState {
   tail: { finished: boolean; at: Date } | null;
   /** A tool call in this context has no result, which the API rejects. */
   openToolUse: boolean;
+  /** What this context holds must not be sent again (DECISIONS #93). */
+  forget?: boolean;
   now: Date;
 }
 
 /** Why this turn should start a new context, or null to carry on in this one. */
 export function restartReason(s: ContextState): RestartReason | null {
   if (!s.tail) return null;
+  // Ahead of the turn check: a promise not to send this outranks a stranded tool result, which `repair` fixes.
+  if (s.forget) return 'reset';
   // Another tab's turn may be running. Restarting under it would strand its tool results.
   if (!s.tail.finished && s.now.getTime() - s.tail.at.getTime() < TURN_IN_FLIGHT_MS) return null;
   // Replayed thinking is tied to the tools it was written with, so a changed tool list is a 400 on

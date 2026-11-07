@@ -2,6 +2,7 @@ import type { TrainingDataPort } from '@cycling-coach/coach';
 import { fitnessDays, stepDays, weighInsFrom, type WeighIn } from '@cycling-coach/core';
 import {
   getStoredActivity,
+  hasRides,
   latestFitnessDay,
   listActivities,
   listWellness,
@@ -24,6 +25,11 @@ export class TrainingData {
     private readonly integrations: Pick<IntegrationResolver, 'intervalsFor'>,
     private readonly now: () => Date = () => new Date(),
   ) {}
+
+  /** Any ride stored, leaving out sources hidden from the coach. */
+  hasRides(userId: string, hidden: readonly string[] = []): Promise<boolean> {
+    return hasRides(this.c, userId, hidden);
+  }
 
   activities(userId: string, from: IsoDate, to: IsoDate): Promise<Activity[]> {
     return listActivities(this.c, userId, from, to);
@@ -83,14 +89,15 @@ export class TrainingData {
     return (doc?.curves ?? []).filter((c) => periods.includes(c.period));
   }
 
-  /** The coach's training tools, over the stored copy. */
-  port(userId: string): TrainingDataPort {
+  /** The coach's training tools, over the stored copy, without the sources hidden from it (DECISIONS #92). */
+  port(userId: string, hidden: readonly string[] = []): TrainingDataPort {
+    const shown = (a: Activity) => !a.provider || !hidden.includes(a.provider);
     return {
-      listActivities: ({ start, end }) => this.activities(userId, start, end),
-      searchActivities: (query) => searchActivities(this.c, userId, query),
+      listActivities: async ({ start, end }) => (await this.activities(userId, start, end)).filter(shown),
+      searchActivities: async (query) => (await searchActivities(this.c, userId, query)).filter(shown),
       getActivityDetail: async (id, { powerCurve }) => {
         const d = await this.detail(userId, id, { powerCurve });
-        if (!d) throw new Error(`No ride ${id} — use an id from get_recent_activities or search_activities.`);
+        if (!d || !shown(d.activity)) throw new Error(`No ride ${id} — use an id from get_recent_activities or search_activities.`);
         return d;
       },
       getPowerCurves: (periods) => this.powerCurves(userId, periods),

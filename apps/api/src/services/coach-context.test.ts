@@ -1,12 +1,13 @@
 import { HARD_TOKENS, NUDGE_TOKENS, RESTART_TOKENS } from '@cycling-coach/core';
-import { TOOLS_HASH } from '@cycling-coach/coach';
-import { collections, createProposal, ensureIndexes, listMessages, listThreads, recordAiCall, restartContext, saveProfile, type Collections } from '@cycling-coach/db';
+import { TOOLS_HASH, type CoachPorts } from '@cycling-coach/coach';
+import { collections, createProposal, ensureIndexes, listMessages, listThreads, forgetContexts, recordAiCall, restartContext, saveActivities, saveProfile, type Collections } from '@cycling-coach/db';
 import { MongoClient, ObjectId } from 'mongodb';
 import { MongoMemoryServer } from 'mongodb-memory-server-core';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SpendGuard } from '../lib/spend';
 import { getThreadView, listThreadSummaries, sendMessage, startThread, type CoachDeps } from './coach';
 import { createCoachProposal } from './proposals';
+import { TrainingData } from './training-data';
 
 let server: MongoMemoryServer;
 let client: MongoClient;
@@ -31,13 +32,14 @@ const START = new Date('2026-11-04T12:00:00Z');
 const after = (minutes: number) => new Date(START.getTime() + minutes * 60_000);
 
 beforeEach(async () => {
-  await Promise.all([c.profiles.deleteMany({}), c.threads.deleteMany({}), c.messages.deleteMany({}), c.aiCalls.deleteMany({}), c.proposals.deleteMany({})]);
+  await Promise.all([c.activities.deleteMany({}), c.profiles.deleteMany({}), c.threads.deleteMany({}), c.messages.deleteMany({}), c.aiCalls.deleteMany({}), c.proposals.deleteMany({})]);
   await saveProfile(c, U, { ftpZwift: 250, weightKg: 70, weightSource: 'manual', timezone: 'Etc/UTC' }, START);
 });
 
 interface Sent {
   system: string[];
   messages: { role: string; content: { type: string; text?: string }[] }[];
+  ports?: CoachPorts;
 }
 
 /** A coach that says "ok" and keeps every request, with a recap that can be scripted. */
@@ -47,7 +49,7 @@ function deps(clock: { now: Date }, recap: (transcript: string, signal?: AbortSi
   const timeouts: (number | undefined)[] = [];
   const engine = {
     async *runTurn(args: Sent & { persist: (m: object) => Promise<void> }) {
-      sent.push({ system: args.system, messages: args.messages });
+      sent.push({ system: args.system, messages: args.messages, ...(args.ports ? { ports: args.ports } : {}) });
       await args.persist({ role: 'assistant', kind: 'assistant', content: [{ type: 'thinking', thinking: 'secret reasoning' }, { type: 'text', text: 'ok' }] });
       yield { type: 'text_delta', text: 'ok' };
     },
@@ -61,7 +63,7 @@ function deps(clock: { now: Date }, recap: (transcript: string, signal?: AbortSi
   const d = {
     c,
     engine,
-    training: { fitnessOn: async () => undefined },
+    training: { fitnessOn: async () => undefined, hasRides: async () => false },
     intervalsConnected: async () => false,
     events: {},
     food: {},
@@ -110,6 +112,205 @@ async function longChat(clock: { now: Date }, d: CoachDeps) {
   await chatSize(thread.id, RESTART_TOKENS, clock.now);
   return thread.id;
 }
+
+describe('training data from any source (DECISIONS #90)', () => {
+  const NOT_CONNECTED = 'Suggest connecting it';
+  const STORED = 'rides are stored here from another source';
+  const lastContext = (sent: Sent[]) => JSON.stringify(sent.at(-1)!.messages);
+
+  async function turn(over: Partial<CoachDeps>) {
+    const clock = { now: START };
+    const { d, sent } = deps(clock);
+    const real = { ...d, training: new TrainingData(c, { intervalsFor: async () => null }, () => clock.now), ...over } as CoachDeps;
+    const thread = (await startThread(real, U))!;
+    await say(real, thread.id, 'How was my ride?');
+    return sent;
+  }
+
+  const otherRide = {
+    id: 'other:1',
+    provider: 'other',
+    sourceLabel: 'Other',
+    name: 'Morning ride',
+    type: 'Ride',
+    startLocal: '2026-11-03T09:00:00',
+    distanceM: 30000,
+    movingSec: 3600,
+    elapsedSec: 3600,
+  };
+
+  it('has nothing to read with no source at all', async () => {
+    const sent = await turn({});
+    expect(lastContext(sent)).toContain(NOT_CONNECTED);
+    expect(sent.at(-1)!.ports!.training).toBeNull();
+  });
+
+  it('reads rides from another source without intervals.icu', async () => {
+    await saveActivities(c, U, [otherRide], START);
+    const sent = await turn({});
+    expect(lastContext(sent)).toContain(STORED);
+    expect(lastContext(sent)).not.toContain(NOT_CONNECTED);
+    const rides = await sent.at(-1)!.ports!.training!.listActivities({ start: '2026-11-03', end: '2026-11-03' });
+    expect(rides.map((r) => r.id)).toEqual(['other:1']);
+  });
+
+  it('doesn’t send a rider elsewhere when their source just has no rides yet', async () => {
+    const sent = await turn({ otherRideSource: async () => true });
+    expect(lastContext(sent)).toContain(STORED);
+    expect(lastContext(sent)).not.toContain(NOT_CONNECTED);
+  });
+
+  it('still counts as connected with intervals.icu', async () => {
+    await saveActivities(c, U, [otherRide], START);
+    const sent = await turn({ intervalsConnected: async () => true });
+    expect(lastContext(sent)).toContain('intervals.icu connected');
+    expect(lastContext(sent)).not.toContain(STORED);
+  });
+});
+
+describe('a source hidden from the coach (DECISIONS #92)', () => {
+  const ride = {
+    id: 'other:1',
+    provider: 'other',
+    sourceLabel: 'Other',
+    name: 'Secret ride name',
+    type: 'Ride',
+    startLocal: '2026-11-03T09:00:00',
+    distanceM: 30000,
+    movingSec: 3600,
+    elapsedSec: 3600,
+  };
+  const range = { start: '2026-11-03', end: '2026-11-03' };
+
+  async function hiddenTurn(hidden: string[], over: Partial<CoachDeps> = {}) {
+    const clock = { now: START };
+    const { d, sent } = deps(clock);
+    const budget = vi.fn(async () => ({ ready: false }));
+    const real = {
+      ...d,
+      training: new TrainingData(c, { intervalsFor: async () => null }, () => clock.now),
+      food: { food: { getSettings: async () => ({ slots: [] }) }, energy: { budget } },
+      coachHiddenProviders: async () => hidden,
+      ...over,
+    } as unknown as CoachDeps;
+    const thread = (await startThread(real, U))!;
+    await say(real, thread.id, 'How was my ride?');
+    return { ports: sent.at(-1)!.ports!, context: JSON.stringify(sent.at(-1)!.messages), budget };
+  }
+
+  beforeEach(async () => {
+    await saveActivities(c, U, [ride, { ...ride, id: 'i1', provider: undefined, sourceLabel: undefined, name: 'Kept ride', startLocal: '2026-11-03T15:00:00' } as never], START);
+    await c.sessionFeedback.deleteMany({});
+    await c.sessionFeedback.insertMany([
+      { userId: U, activityId: 'other:1', date: '2026-11-03', title: 'Secret ride name', rpe: 6, createdAt: START, updatedAt: START },
+      { userId: U, activityId: 'i1', date: '2026-11-03', title: 'Kept ride', rpe: 4, createdAt: START, updatedAt: START },
+    ] as never);
+  });
+
+  it('reads none of it, from any tool', async () => {
+    const { ports } = await hiddenTurn(['other'], { intervalsConnected: async () => true });
+    const training = ports.training!;
+    expect((await training.listActivities(range)).map((a) => a.id)).toEqual(['i1']);
+    expect((await training.searchActivities('ride')).map((a) => a.id)).toEqual(['i1']);
+    await expect(training.getActivityDetail('other:1', { powerCurve: false })).rejects.toThrow('No ride');
+    expect((await ports.feedbackForActivities(['other:1', 'i1'])).map((f) => f.activityId)).toEqual(['i1']);
+    expect((await ports.listFeedback(range)).map((f) => f.activityId)).toEqual(['i1']);
+  });
+
+  it('keeps it out of the turn’s context and the food budget', async () => {
+    const { context, budget } = await hiddenTurn(['other'], { intervalsConnected: async () => true });
+    expect(context).not.toContain('Secret ride name');
+    expect(budget).toHaveBeenCalledWith(U, expect.any(String), ['other']);
+  });
+
+  it('doesn’t count it as a source', async () => {
+    await c.activities.deleteMany({ id: 'i1' });
+    const { ports, context } = await hiddenTurn(['other']);
+    expect(ports.training).toBeNull();
+    expect(context).toContain('Suggest connecting it');
+  });
+
+  it('reads everything with nothing hidden', async () => {
+    const { ports } = await hiddenTurn([], { intervalsConnected: async () => true });
+    expect((await ports.training!.listActivities(range)).map((a) => a.id).sort()).toEqual(['i1', 'other:1']);
+  });
+
+  it('fails the turn rather than guess', async () => {
+    const clock = { now: START };
+    const { d, sent } = deps(clock);
+    const thread = (await startThread(d, U))!;
+    await expect(say({ ...d, coachHiddenProviders: async () => Promise.reject(new Error('db down')) }, thread.id, 'Hi')).rejects.toThrow('db down');
+    expect(sent).toHaveLength(0);
+  });
+});
+
+describe('forgetting old chats (DECISIONS #93)', () => {
+  const allSent = (sent: Sent[]) => JSON.stringify(sent.at(-1));
+
+  it('starts the next turn with nothing older and no recap', async () => {
+    const clock = { now: START };
+    const { d, sent, recaps } = deps(clock);
+    const thread = (await startThread(d, U))!;
+    await say(d, thread.id, 'My readiness is secret-number');
+    expect(allSent(sent)).toContain('secret-number');
+    await forgetContexts(c, U);
+    await say(d, thread.id, 'Hello again');
+    expect(allSent(sent)).not.toContain('secret-number');
+    expect(allSent(sent)).toContain('Hello again');
+    expect(recaps).toHaveLength(0);
+    expect((await threadDoc(thread.id))!.contexts!.at(-1)!.reason).toBe('reset');
+    expect((await threadDoc(thread.id))!.forgetContext).toBeUndefined();
+    expect((await stored(thread.id)).map((m) => m.kind)).toContain('user');
+  });
+
+  it('tells the athlete nothing was summarized', async () => {
+    const clock = { now: START };
+    const { d } = deps(clock);
+    const thread = (await startThread(d, U))!;
+    await say(d, thread.id, 'One');
+    await forgetContexts(c, U);
+    await say(d, thread.id, 'Two');
+    const view = await getThreadView(d, U, thread.id);
+    expect(view!.contextResets).toHaveLength(1);
+    expect(view!.contextResets).toEqual(view!.contextBreaks);
+  });
+
+  it('won’t wait for a turn that looks unfinished', async () => {
+    const clock = { now: START };
+    const { d, sent } = deps(clock);
+    const thread = (await startThread(d, U))!;
+    await say(d, thread.id, 'secret-number');
+    await c.messages.deleteMany({ threadId: new ObjectId(thread.id), kind: 'assistant' });
+    await forgetContexts(c, U);
+    await say(d, thread.id, 'Hello again');
+    expect(allSent(sent)).not.toContain('secret-number');
+  });
+
+  it('gives a new chat no recap of a forgotten one', async () => {
+    const clock = { now: START };
+    const { d, sent, recaps } = deps(clock);
+    const old = (await startThread(d, U))!;
+    await say(d, old.id, 'secret-number');
+    await forgetContexts(c, U);
+    clock.now = after(10);
+    const fresh = (await startThread(d, U))!;
+    await say(d, fresh.id, 'A new chat');
+    expect(allSent(sent)).not.toContain('secret-number');
+    expect(recaps).toHaveLength(0);
+  });
+
+  it('carries on normally afterwards', async () => {
+    const clock = { now: START };
+    const { d, sent } = deps(clock);
+    const thread = (await startThread(d, U))!;
+    await say(d, thread.id, 'One');
+    await forgetContexts(c, U);
+    await say(d, thread.id, 'Two');
+    await say(d, thread.id, 'Three');
+    expect(allSent(sent)).toContain('Two');
+    expect((await threadDoc(thread.id))!.contexts!.at(-1)!.reason).toBe('reset');
+  });
+});
 
 describe('the spend guard', () => {
   it('asks once to start a turn, then as a continuation between its calls', async () => {

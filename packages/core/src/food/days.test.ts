@@ -27,6 +27,7 @@ describe('dayTotals', () => {
     );
     expect(t.get('2026-11-01')).toEqual({
       eaten: { kcal: 1200, protein: 60, carbs: 120, fat: 24 },
+      estimates: 0,
       slots: [
         { name: 'Breakfast', kcal: 500 },
         { name: 'Dinner', kcal: 700 },

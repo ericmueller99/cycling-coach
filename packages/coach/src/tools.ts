@@ -240,7 +240,7 @@ export function activityChip(activities: Activity[], start: IsoDate, end: IsoDat
   const noun = activities.length === 1 ? 'ride' : 'rides';
   const tail = [races ? `${races} race${races === 1 ? '' : 's'}` : '', `${hours.toFixed(1)} h`, load ? `load ${load}` : ''].filter(Boolean);
   return {
-    summary: [`Pulled ${activities.length} ${noun} from intervals.icu`, formatRange(start, end), tail.join(', ')].join(' · '),
+    summary: [`Pulled ${activities.length} ${noun}`, formatRange(start, end), tail.join(', ')].join(' · '),
     rows: activities.map(rowFor),
   };
 }
@@ -315,7 +315,7 @@ export const COACH_TOOLS = [
       "Fetch the athlete's rides from intervals.icu between two local dates (inclusive, at most 120 days). One line per ride: id, start, type, name, moving time, distance, average and normalized power, intensity factor, training load, HR, cadence, intervals.icu's detected intervals, and the athlete's rating when they gave one (felt: RPE 1–10 and their note). Use this before advising on recent training, fatigue or what to ride.",
     schema: rangeSchema,
     source: 'data',
-    runningLabel: 'Pulling rides from intervals.icu…',
+    runningLabel: 'Pulling your rides…',
     async run({ start, end }, { ports }) {
       if (!ports.training) return trainingUnavailable();
       if (daysBetween(start, end) < 0) return { content: 'end must be on or after start.', isError: true };
@@ -340,7 +340,7 @@ export const COACH_TOOLS = [
       "Search the athlete's activities by name (case-insensitive), or by tag when the query starts with #. Use for 'my last crit' or 'the spring fondo'. Same line format as get_recent_activities.",
     schema: z.object({ query: z.string().min(1).describe('e.g. "crit", "fondo", "#race".') }),
     source: 'data',
-    runningLabel: 'Searching intervals.icu…',
+    runningLabel: 'Searching your rides…',
     async run({ query }, { ports }) {
       if (!ports.training) return trainingUnavailable();
       const activities = await ports.training.searchActivities(query);
@@ -352,7 +352,7 @@ export const COACH_TOOLS = [
           toolUseId: '',
           name: 'search_activities',
           status: 'ok',
-          summary: `Searched intervals.icu for “${query}” · ${activities.length} found`,
+          summary: `Searched your rides for “${query}” · ${activities.length} found`,
           source: 'data',
           rows: activities.map(rowFor),
         },
@@ -369,7 +369,7 @@ export const COACH_TOOLS = [
       include_power_curve: z.boolean().optional(),
     }),
     source: 'data',
-    runningLabel: 'Reading ride from intervals.icu…',
+    runningLabel: 'Reading the ride…',
     async run({ activity_id, include_power_curve }, { ports }) {
       if (!ports.training) return trainingUnavailable();
       const d = await ports.training.getActivityDetail(activity_id, { powerCurve: include_power_curve ?? false });
@@ -383,7 +383,7 @@ export const COACH_TOOLS = [
         : '';
       return {
         content: `${formatActivityForModel(d.activity, felt.get(d.activity.id))}\nIntervals:\n${intervals.join('\n') || '(none detected)'}${curve}`,
-        ui: { type: 'tool', toolUseId: '', name: 'get_activity_detail', status: 'ok', summary: `Read ${d.activity.name} from intervals.icu`, source: 'data', rows: intervals },
+        ui: { type: 'tool', toolUseId: '', name: 'get_activity_detail', status: 'ok', summary: `Read ${d.activity.name}`, source: 'data', rows: intervals },
       };
     },
   }),
@@ -396,7 +396,7 @@ export const COACH_TOOLS = [
       periods: z.array(z.enum(['90d', 'season', '1y', 'allTime'])).min(1).max(4),
     }),
     source: 'data',
-    runningLabel: 'Pulling power curve from intervals.icu…',
+    runningLabel: 'Pulling your power curve…',
     async run({ periods }, { ports }) {
       if (!ports.training) return trainingUnavailable();
       const curves = await ports.training.getPowerCurves(periods);
@@ -411,7 +411,7 @@ export const COACH_TOOLS = [
           toolUseId: '',
           name: 'get_power_curve',
           status: 'ok',
-          summary: `Pulled ${periods.map((p) => PERIOD_LABEL[p]).join(', ')} power curve from intervals.icu`,
+          summary: `Pulled ${periods.map((p) => PERIOD_LABEL[p]).join(', ')} power curve`,
           source: 'data',
           rows: lines,
         },
@@ -425,7 +425,7 @@ export const COACH_TOOLS = [
       "Daily fitness (CTL), fatigue (ATL), form (CTL − ATL) and ramp rate from intervals.icu for a date range (at most 120 days). Use to judge freshness before races and how fast load is building. Today's values are already in the context message.",
     schema: rangeSchema,
     source: 'data',
-    runningLabel: 'Pulling fitness from intervals.icu…',
+    runningLabel: 'Pulling your fitness…',
     async run({ start, end }, { ports }) {
       if (!ports.training) return trainingUnavailable();
       if (daysBetween(start, end) < 0 || daysBetween(start, end) > MAX_RANGE_DAYS) {
@@ -437,7 +437,7 @@ export const COACH_TOOLS = [
       );
       return {
         content: lines.join('\n') || 'No fitness data in that range.',
-        ui: { type: 'tool', toolUseId: '', name: 'get_fitness', status: 'ok', summary: `Pulled fitness ${formatRange(start, end)} from intervals.icu`, source: 'data', rows: lines },
+        ui: { type: 'tool', toolUseId: '', name: 'get_fitness', status: 'ok', summary: `Pulled fitness ${formatRange(start, end)}`, source: 'data', rows: lines },
       };
     },
   }),

@@ -260,11 +260,18 @@ export async function deleteLogEntry(c: Collections, userId: string, id: string)
 /** The fields `core.foodUsage` needs, for entries on or after `since`. */
 export async function logUsageSince(c: Collections, userId: string, since: IsoDate) {
   const docs = await c.foodLog
-    .find({ userId, date: { $gte: since } }, { projection: { kind: 1, refId: 1, slot: 1, quantity: 1, unit: 1, date: 1, createdAt: 1, fromMealId: 1 } })
+    .find({ userId, date: { $gte: since }, kind: { $in: ['food', 'recipe'] } }, { projection: { kind: 1, refId: 1, slot: 1, quantity: 1, unit: 1, date: 1, createdAt: 1, fromMealId: 1 } })
     .toArray();
-  return docs.map((d) =>
-    compact({ kind: d.kind, refId: d.refId, slot: d.slot, quantity: d.quantity, unit: d.unit, date: d.date, createdAt: d.createdAt.toISOString(), fromMealId: d.fromMealId }),
+  return docs.flatMap((d) =>
+    d.kind !== 'calories' && d.refId
+      ? [compact({ kind: d.kind, refId: d.refId, slot: d.slot, quantity: d.quantity, unit: d.unit, date: d.date, createdAt: d.createdAt.toISOString(), fromMealId: d.fromMealId })]
+      : [],
   );
+}
+
+/** Whether any entry still shows this photo: a meal logged as items shares its photos. */
+export async function logPhotoInUse(c: Collections, userId: string, key: string): Promise<boolean> {
+  return (await c.foodLog.countDocuments({ userId, 'estimate.images.key': key }, { limit: 1 })) > 0;
 }
 
 // ── Settings ───────────────────────────────────────────────────────────────

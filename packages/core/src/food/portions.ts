@@ -1,5 +1,7 @@
 import type {
+  EstimateRange,
   Food,
+  FoodLogEntry,
   FoodSource,
   FoodUsage,
   IsoDate,
@@ -25,6 +27,13 @@ export interface Loggable {
   /** Per one reference serving. */
   nutrients: Nutrients;
   servingLabel?: string | undefined;
+  /** Per one reference serving; on a saved estimate. */
+  estimate?: EstimateRange | undefined;
+}
+
+/** What an entry was logged from. A `calories` entry has nothing behind it, so this is null. */
+export function entryRef(e: Pick<FoodLogEntry, 'kind' | 'refId'>): { kind: LoggableKind; refId: string } | null {
+  return e.kind === 'calories' || !e.refId ? null : { kind: e.kind, refId: e.refId };
 }
 
 export const foodAsLoggable = (f: Food): Loggable => ({
@@ -37,6 +46,7 @@ export const foodAsLoggable = (f: Food): Loggable => ({
   defaultPortion: f.defaultPortion,
   nutrients: f.nutrients,
   servingLabel: f.servingLabel,
+  estimate: f.estimate,
 });
 
 /** A recipe's reference serving is one serving; with a finished weight it can be logged in grams too. */

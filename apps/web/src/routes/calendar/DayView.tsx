@@ -1,4 +1,4 @@
-import { addDays, slotForTime } from '@cycling-coach/core';
+import { addDays, entryRef, slotForTime } from '@cycling-coach/core';
 import type { FoodLogEntry, IsoDate, MealItem } from '@cycling-coach/shared';
 import { useState, type ReactNode } from 'react';
 import { MealEditor } from '../food/MealEditor';
@@ -22,7 +22,13 @@ export function useDayActions(date: IsoDate, today: IsoDate, d: ReturnType<typeo
   const [panel, setPanel] = useState<Selection>(null);
   const [saveMeal, setSaveMeal] = useState<{ slot: string; items: MealItem[] } | null>(null);
   const saveAsMeal = (slotName: string, entries: FoodLogEntry[]) =>
-    setSaveMeal({ slot: slotName, items: entries.map((e) => ({ kind: e.kind, refId: e.refId, quantity: e.quantity, unit: e.unit })) });
+    setSaveMeal({
+      slot: slotName,
+      items: entries.flatMap((e) => {
+        const ref = entryRef(e);
+        return ref ? [{ ...ref, quantity: e.quantity, unit: e.unit }] : [];
+      }),
+    });
 
   const event = panel?.type === 'event' ? d.calendar.events.find((e) => e.id === panel.id) : undefined;
   const activity = panel?.type === 'activity' ? d.calendar.activities.find((a) => a.id === panel.id) : undefined;

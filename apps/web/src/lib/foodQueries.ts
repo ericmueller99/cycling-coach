@@ -1,7 +1,12 @@
 import type {
   BodyScanInput,
   BodyScanPatch,
+  CaloriesEdit,
+  CaloriesLogInput,
   EnergyPatch,
+  EstimateAdjustInput,
+  EstimateInput,
+  EstimateLogInput,
   FoodAdjustInput,
   FoodInput,
   FoodLibrary,
@@ -124,6 +129,19 @@ export function useFoodMutations() {
       mutationFn: async (entries: FoodLogInput[]) => unwrap(await api.api.food.log.$post({ json: { entries } })),
       onSuccess: everything,
     }),
+    logCalories: useMutation({
+      mutationFn: async (input: CaloriesLogInput) => unwrap(await api.api.food.log.calories.$post({ json: input })),
+      onSuccess: everything,
+    }),
+    logEstimate: useMutation({
+      mutationFn: async (input: EstimateLogInput) => unwrap(await api.api.food.log.estimate.$post({ json: input })),
+      onSuccess: everything,
+    }),
+    editCalories: useMutation({
+      mutationFn: async ({ id, edit }: { id: string; edit: CaloriesEdit }) =>
+        unwrap(await api.api.food.log[':id'].calories.$patch({ param: { id }, json: edit })),
+      onSuccess: everything,
+    }),
     patchEntry: useMutation({
       mutationFn: async ({ id, patch }: { id: string; patch: FoodLogPatch }) =>
         unwrap(await api.api.food.log[':id'].$patch({ param: { id }, json: patch })),
@@ -167,6 +185,26 @@ export function useReadPhoto() {
 /** Ask how much a food's values move (nothing is saved — the form applies the answer, or doesn't). */
 export function useAdjustFood() {
   return useMutation({ mutationFn: async (input: FoodAdjustInput) => unwrap(await api.api.food.adjust.$post({ json: input })) });
+}
+
+/** Eating out: photos and words to an itemised estimate (nothing is saved or kept). */
+export function useEstimateMeal() {
+  return useMutation({ mutationFn: async (input: EstimateInput) => unwrap(await api.api.food.estimate.$post({ json: input })) });
+}
+
+/** "Anything different?" on an estimate (nothing is saved). */
+export function useAdjustEstimate() {
+  return useMutation({ mutationFn: async (input: EstimateAdjustInput) => unwrap(await api.api.food.estimate.adjust.$post({ json: input })) });
+}
+
+/** Links to an estimate's photos. They last 15 minutes, so they go stale before that. */
+export function useEntryPhotos(id: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['food', 'photos', id],
+    queryFn: async () => unwrap(await api.api.food.log[':id'].photos.$get({ param: { id } })),
+    enabled,
+    staleTime: 10 * 60_000,
+  });
 }
 
 /** One of the user's foods for a barcode, else an Open Food Facts product to review. */

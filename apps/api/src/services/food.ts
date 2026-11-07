@@ -1,9 +1,14 @@
+import { randomUUID } from 'node:crypto';
 import {
   addDays,
   amountPerServing,
   canonicalUnit,
   computePortion,
   duplicateMeasureUnits,
+  entryRef,
+  estimateAsFood,
+  estimateItemTotals,
+  estimateTotals,
   foodAsLoggable,
   foodUsage,
   mealTotal,
@@ -11,6 +16,7 @@ import {
   recipeAsLoggable,
   recipeTotals,
   scaleNutrients,
+  scaleRange,
   todayIn,
   type Loggable,
 } from '@cycling-coach/core';
@@ -35,6 +41,7 @@ import {
   listLog,
   listMeals,
   listRecipes,
+  logPhotoInUse,
   logUsageSince,
   markFoodIntroSeen,
   saveFoodSettings,
@@ -49,6 +56,13 @@ import {
   type StoredRecipe,
 } from '@cycling-coach/db';
 import type {
+  CaloriesEdit,
+  CaloriesLogInput,
+  EntryEstimate,
+  EntryPhoto,
+  EstimateLogInput,
+  EstimatePhotoRef,
+  Nutrients,
   Food,
   FoodInput,
   FoodLibrary,
@@ -67,7 +81,7 @@ import type {
   RecipePatch,
 } from '@cycling-coach/shared';
 import type { ServiceFailure as Failure } from '../app';
-import { userImagePrefix } from '../providers/storage/s3';
+import { userImagePrefix, type PhotoStore } from '../providers/storage/s3';
 
 /** How far back "usual portion" and search ranking look. */
 const USAGE_DAYS = 180;
@@ -76,13 +90,15 @@ const bad = (error: string): Failure => ({ error, status: 400 });
 const notFound = (what: string): Failure => ({ error: `${what} not found.`, status: 404 });
 
 /**
- * The user's foods database and log (DECISIONS #33). No AI here: logging is always from
- * the database, and the portion maths is `core`'s.
+ * The user's foods database and log (DECISIONS #33). No AI here: logging is from the database, or
+ * numbers the user has confirmed (#94), and the portion maths is `core`'s.
  */
 export class FoodService {
   constructor(
     private readonly c: Collections,
     private readonly now: () => Date = () => new Date(),
+    /** Null when S3 isn't set up: an estimate is logged without its photos. */
+    private readonly photos: Pick<PhotoStore, 'put' | 'remove' | 'signedUrl'> | null = null,
   ) {}
 
   private async today(userId: string): Promise<IsoDate> {
@@ -137,8 +153,14 @@ export class FoodService {
     };
     const checked = await this.checkFood(userId, merged, id);
     if ('error' in checked) return checked;
+    // A saved estimate's range follows its kcal, so editing the food can't leave it behind.
+    const rescaled =
+      current.estimate && patch.nutrients && !patch.estimate && !patch.unset?.includes('estimate') && current.nutrients.kcal > 0
+        ? { estimate: scaleRange(current.estimate, patch.nutrients.kcal / current.nutrients.kcal) }
+        : {};
     const fixed: FoodPatch = {
       ...patch,
+      ...rescaled,
       ...(patch.measures ? { measures: checked.measures } : {}),
       ...(patch.defaultPortion ? { defaultPortion: checked.defaultPortion } : {}),
       ...(patch.barcodes ? { barcodes: checked.barcodes } : {}),
@@ -256,9 +278,114 @@ export class FoodService {
     return insertLogEntries(this.c, userId, docs, this.now());
   }
 
+  /** Numbers the user knows, with no food behind them. Blank macros count as 0 in the day's totals. */
+  async logCalories(userId: string, input: CaloriesLogInput): Promise<FoodLogEntry> {
+    const entry = caloriesEntry(input, input.name || 'Calories', fullNutrients(input.nutrients), 'manual', 'manual');
+    const [logged] = await insertLogEntries(this.c, userId, [entry], this.now());
+    return logged!;
+  }
+
+  /**
+   * The rider pressed Log on an estimate: the first time anything is written, photos included, so an
+   * abandoned estimate leaves nothing behind. Totals are worked out here from the items.
+   */
+  async logEstimate(userId: string, input: EstimateLogInput): Promise<FoodLogEntry[]> {
+    const images = await this.keepPhotos(userId, input.images);
+    const shared = {
+      ...(input.place ? { place: input.place } : {}),
+      images,
+      ...(input.saveAs ? { savedAs: input.saveAs } : {}),
+    };
+    const total = estimateTotals(input.items);
+    const group = randomUUID();
+    const docs: NewLogEntry[] =
+      input.logAs === 'meal'
+        ? [caloriesEntry(input, input.name, total.nutrients, 'estimate', 'estimate', { low: total.low, high: total.high, items: input.items, ...shared })]
+        : input.items.map((item) => {
+            const t = estimateItemTotals(item);
+            return caloriesEntry(input, item.name, t.nutrients, 'estimate', 'estimate', { low: t.low, high: t.high, group, items: [item], ...shared });
+          });
+    let entries: FoodLogEntry[];
+    try {
+      entries = await insertLogEntries(this.c, userId, docs, this.now());
+    } catch (err) {
+      await this.dropPhotos(images.map((i) => i.key));
+      throw err;
+    }
+    if (input.saveAs) await this.saveEstimate(userId, input);
+    return entries;
+  }
+
+  /** Keeping the photos is a nice-to-have, so one that won't upload is left out, not an error. */
+  private async keepPhotos(userId: string, photos: EstimateLogInput['images']): Promise<EstimatePhotoRef[]> {
+    const store = this.photos;
+    if (!store) return [];
+    const kept = await Promise.allSettled(
+      photos.map(async (p): Promise<EstimatePhotoRef> => {
+        const key = `${userImagePrefix(userId)}${randomUUID()}.${p.mediaType === 'image/png' ? 'png' : p.mediaType === 'image/webp' ? 'webp' : 'jpg'}`;
+        await store.put(key, Buffer.from(p.data, 'base64'), p.mediaType);
+        return { key, kind: p.kind };
+      }),
+    );
+    return kept.flatMap((r) => {
+      if (r.status === 'fulfilled') return [r.value];
+      console.warn('estimate photo upload failed', r.reason instanceof Error ? r.reason.message : r.reason);
+      return [];
+    });
+  }
+
+  private async dropPhotos(keys: readonly string[]) {
+    const store = this.photos;
+    if (!store) return;
+    await Promise.allSettled(keys.map((k) => store.remove(k)));
+  }
+
+  /**
+   * Save a logged estimate to their foods, to find by search next time. The same name updates the
+   * estimate that's there, and never touches a food of theirs that isn't one. The meal is already
+   * logged, so a failure here doesn't undo it.
+   */
+  private async saveEstimate(userId: string, input: EstimateLogInput): Promise<void> {
+    const food = estimateAsFood(input.saveAs!, input.items, input.place);
+    const same = (await listFoods(this.c, userId)).find((f) => !f.archived && f.name.toLowerCase() === food.name.toLowerCase());
+    if (!same) {
+      await this.createFood(userId, food);
+    } else if (same.source === 'estimate') {
+      await this.updateFood(userId, same.id, { nutrients: food.nutrients, estimate: food.estimate, notes: food.notes });
+    }
+  }
+
+  /** Short-lived links to an entry's photos. */
+  async entryPhotos(userId: string, id: string): Promise<EntryPhoto[] | Failure> {
+    const entry = await getLogEntry(this.c, userId, id);
+    if (!entry) return notFound('Entry');
+    const store = this.photos;
+    if (!store || !entry.estimate) return [];
+    return Promise.all(entry.estimate.images.map(async (i) => ({ kind: i.kind, url: await store.signedUrl(i.key) })));
+  }
+
+  /** Change a `calories` entry: its numbers, or an estimate's items, whose sums happen here. */
+  async editCalories(userId: string, id: string, edit: CaloriesEdit): Promise<FoodLogEntry | Failure> {
+    const entry = await getLogEntry(this.c, userId, id);
+    if (!entry) return notFound('Entry');
+    if (entry.kind !== 'calories') return bad('Only a calories entry can be changed this way.');
+    const set: Partial<NewLogEntry> = edit.name ? { name: edit.name } : {};
+    if (edit.items) {
+      if (!entry.estimate) return bad('This entry has no items.');
+      const { low, high, nutrients } = estimateTotals(edit.items);
+      Object.assign(set, { nutrients, estimate: { ...entry.estimate, low, high, items: edit.items } });
+    }
+    if (edit.nutrients) {
+      if (entry.estimate) return bad('Change an estimate through its items.');
+      set.nutrients = fullNutrients(edit.nutrients);
+    }
+    return (await updateLogEntry(this.c, userId, id, set, [], this.now())) ?? notFound('Entry');
+  }
+
   /**
    * Edit an entry's portion, slot, time or day. A new portion is priced from the food as it is
-   * now; if the food is gone, the old snapshot is scaled.
+   * now; if the food is gone, the old snapshot is scaled. A `calories` entry has no portion: its
+   * numbers change through `editCalories`, which keeps an estimate's header equal to its items.
    */
   async patchEntry(userId: string, id: string, patch: FoodLogPatch): Promise<FoodLogEntry | Failure> {
     const entry = await getLogEntry(this.c, userId, id);
@@ -267,9 +394,11 @@ export class FoodService {
     const unsetKeys: string[] = [...unset];
     const set: Partial<NewLogEntry> = compact(rest);
     if (quantity != null || unit != null) {
+      const ref = entryRef(entry);
+      if (!ref) return bad(`${entry.name} has no portion to change.`);
       const q = quantity ?? entry.quantity;
       const u = canonicalUnit(unit ?? entry.unit);
-      const item = (await this.lookupFor(userId, [entry]))(entry.kind, entry.refId);
+      const item = (await this.lookupFor(userId, [ref]))(ref.kind, ref.refId);
       const priced = item ? computePortion(item, q, u) : null;
       if (priced) Object.assign(set, { quantity: q, unit: u, servings: priced.servings, grams: priced.grams, nutrients: priced.nutrients });
       else if (u === canonicalUnit(entry.unit)) {
@@ -282,20 +411,39 @@ export class FoodService {
         });
       } else return bad(`${entry.name} can't be measured in "${u}".`);
       if (priced && priced.grams == null) unsetKeys.push('grams');
+      // From a saved estimate: its range moves with the portion.
+      const servings = (set as { servings?: number }).servings;
+      if (entry.estimate && servings != null && entry.servings > 0) {
+        set.estimate = { ...entry.estimate, ...scaleRange(entry.estimate, servings / entry.servings) };
+      }
     }
     return (await updateLogEntry(this.c, userId, id, set, unsetKeys, this.now())) ?? notFound('Entry');
   }
 
-  deleteEntry(userId: string, id: string) {
-    return deleteLogEntry(this.c, userId, id);
+  /** A photo goes with the last entry showing it: a meal logged as items shares them. */
+  async deleteEntry(userId: string, id: string) {
+    const entry = await getLogEntry(this.c, userId, id);
+    const deleted = await deleteLogEntry(this.c, userId, id);
+    const keys = deleted ? (entry?.estimate?.images ?? []).map((i) => i.key) : [];
+    const inUse = await Promise.all(keys.map((k) => logPhotoInUse(this.c, userId, k)));
+    await this.dropPhotos(keys.filter((_, i) => !inUse[i]));
+    return deleted;
   }
 
   /** "Copy to another day": the same portion, priced from the food as it is now. */
   async copyEntry(userId: string, id: string, to: { date: IsoDate; slot?: string | undefined }): Promise<FoodLogEntry | Failure> {
     const entry = await getLogEntry(this.c, userId, id);
     if (!entry) return notFound('Entry');
+    const ref = entryRef(entry);
+    if (!ref) {
+      // Nothing to price it from, so it's the same numbers. The photos stay with the original.
+      const at = { date: to.date, slot: to.slot ?? entry.slot, ...(entry.time ? { time: entry.time } : {}) };
+      const doc = caloriesEntry(at, entry.name, entry.nutrients, entry.source, entry.via, entry.estimate && soloEstimate(entry.estimate));
+      const [copy] = await insertLogEntries(this.c, userId, [doc], this.now());
+      return copy!;
+    }
     const result = await this.log(userId, [
-      { date: to.date, slot: to.slot ?? entry.slot, kind: entry.kind, refId: entry.refId, quantity: entry.quantity, unit: entry.unit, via: 'manual', ...(entry.time ? { time: entry.time } : {}) },
+      { date: to.date, slot: to.slot ?? entry.slot, ...ref, quantity: entry.quantity, unit: entry.unit, via: 'manual', ...(entry.time ? { time: entry.time } : {}) },
     ]);
     return 'error' in result ? result : result[0]!;
   }
@@ -355,6 +503,39 @@ function snapshot(item: Loggable, input: FoodLogInput): NewLogEntry | null {
     nutrients: priced.nutrients,
     via: input.via,
     ...(input.fromMealId ? { fromMealId: input.fromMealId } : {}),
+    ...(item.estimate ? { estimate: { ...scaleRange(item.estimate, priced.servings), items: [], images: [] } } : {}),
+  };
+}
+
+/** A copy stands alone: it's in no group, and the photos stay with the original. */
+function soloEstimate({ group: _group, ...estimate }: EntryEstimate): EntryEstimate {
+  return { ...estimate, images: [] };
+}
+
+const fullNutrients = (n: CaloriesLogInput['nutrients']): Nutrients => ({ ...n, fat: n.fat ?? 0, carbs: n.carbs ?? 0, protein: n.protein ?? 0 });
+
+/** An entry with no food behind it: one serving of itself. */
+function caloriesEntry(
+  at: Pick<CaloriesLogInput, 'date' | 'slot' | 'time'>,
+  name: string,
+  nutrients: Nutrients,
+  source: FoodLogEntry['source'],
+  via: FoodLogEntry['via'],
+  estimate?: EntryEstimate,
+): NewLogEntry {
+  return {
+    date: at.date,
+    slot: at.slot,
+    ...(at.time ? { time: at.time } : {}),
+    kind: 'calories',
+    name,
+    source,
+    quantity: 1,
+    unit: 'serving',
+    servings: 1,
+    nutrients,
+    via,
+    ...(estimate ? { estimate } : {}),
   };
 }
 

@@ -1,7 +1,8 @@
 import type Anthropic from '@anthropic-ai/sdk';
-import { foodAdjustmentSchema, nutritionReadingSchema, phraseParseSchema, type NutritionReading } from '@cycling-coach/shared';
+import { estimateAdjustmentSchema, estimateReadingSchema, foodAdjustmentSchema, nutritionReadingSchema, phraseParseSchema, type NutritionReading } from '@cycling-coach/shared';
 import { describe, expect, it } from 'vitest';
 import { FoodAi, jsonFormat } from './food';
+import { DEFAULT_ROUTER } from './router';
 
 const v = (value: number | null, confidence: 'high' | 'low' = 'high') => ({ value, confidence });
 const reading: NutritionReading = {
@@ -59,6 +60,8 @@ describe('FoodAi.readNutrition', () => {
     expect(count(jsonFormat(nutritionReadingSchema).schema)).toBeLessThanOrEqual(16);
     expect(count(jsonFormat(phraseParseSchema).schema)).toBeLessThanOrEqual(16);
     expect(count(jsonFormat(foodAdjustmentSchema).schema)).toBeLessThanOrEqual(16);
+    expect(count(jsonFormat(estimateReadingSchema).schema)).toBeLessThanOrEqual(16);
+    expect(count(jsonFormat(estimateAdjustmentSchema).schema)).toBeLessThanOrEqual(16);
   });
 
   it('sends the images with a strict JSON schema to the small model', async () => {
@@ -134,5 +137,44 @@ describe('FoodAi.adjustFood', () => {
   it('turns down a nutrient the app does not have', async () => {
     const { client } = fake({ content: [{ type: 'text', text: JSON.stringify({ ...answer, changes: [{ nutrient: 'caffeine', delta: -1 }] }) }], stop_reason: 'end_turn' });
     expect((await new FoodAi({ apiKey: 'x' }, client).adjustFood({ food, turns: [], message: 'no whip' })).ok).toBe(false);
+  });
+});
+
+describe('FoodAi.estimateMeal', () => {
+  const answer = { dish: 'Sirloin dinner', found: [], items: [], questions: [] };
+  const photo = { mediaType: 'image/jpeg' as const, data: 'x'.repeat(200), kind: 'menu' as const };
+  const router = () => ({ ...DEFAULT_ROUTER, estimate: { model: 'claude-sonnet-5-5', effort: 'low' as const } });
+
+  it('uses the estimate job, not the small model, and says what each photo is', async () => {
+    const { client, calls } = fake({ content: [{ type: 'text', text: JSON.stringify(answer) }], stop_reason: 'end_turn' });
+    const r = await new FoodAi({ apiKey: 'k', router }, client).estimateMeal({ place: 'The Keg', text: 'A steak', images: [photo] });
+    expect(r.ok).toBe(true);
+    const body = calls[0] as { model: string; output_config: { effort: string }; messages: { content: { type: string; text?: string }[] }[] };
+    expect(body.model).toBe('claude-sonnet-5-5');
+    expect(body.output_config.effort).toBe('low');
+    const content = body.messages[0]!.content;
+    expect(content.map((b) => b.type)).toEqual(['text', 'image', 'text']);
+    expect(content[0]?.text).toBe('Photo of the menu:');
+    expect(content[2]?.text).toContain('Place: The Keg');
+    expect(content[2]?.text).toContain('They said: A steak');
+  });
+
+  it('goes by the photos when nothing was said', async () => {
+    const { client, calls } = fake({ content: [{ type: 'text', text: JSON.stringify(answer) }], stop_reason: 'end_turn' });
+    await new FoodAi({ apiKey: 'k', router }, client).estimateMeal({ images: [photo] });
+    const body = calls[0] as { messages: { content: { text?: string }[] }[] };
+    expect(body.messages[0]!.content.at(-1)?.text).toContain('go by the photos');
+  });
+});
+
+describe('FoodAi.adjustEstimate', () => {
+  const item = { name: 'Fries', why: '', unit: 'side', quantity: 1, kcal: 400, low: 300, high: 500, protein: 5, carbs: 50, fat: 20, alcohol: 0, sizes: [], modifiers: [], qty: 0.5, scale: 1, size: -1, mods: [], assumed: '' };
+
+  it('sends the items as they stand, on the small model', async () => {
+    const { client, calls } = fake({ content: [{ type: 'text', text: JSON.stringify({ reply: 'Done.', changes: [], removed: [], added: [] }) }], stop_reason: 'end_turn' });
+    await new FoodAi({ apiKey: 'k' }, client).adjustEstimate({ items: [item], message: 'no salt' });
+    const body = calls[0] as { model: string; messages: { content: { text: string }[] }[] };
+    expect(body.model).toBe('claude-haiku-5-5');
+    expect(body.messages[0]!.content[0]!.text).toContain('0. Fries, 0.5 side: 200 kcal (150-250)');
   });
 });

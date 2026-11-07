@@ -31,6 +31,16 @@ export interface ConnectSlot {
   manage?: ReactNode;
 }
 
+/** What a deployment with other sources shows on the wizard's Sync step, beside intervals.icu (DECISIONS #89). */
+export interface WizardSync {
+  title: string;
+  sub: string;
+  /** Under the intervals.icu card. */
+  rows: ReactNode;
+  /** One summary row each at the end of the wizard. */
+  sources: readonly { label: string; connected: boolean }[];
+}
+
 export interface Extensions {
   /** The product name: sidebar, sign-in page, share links. */
   brand: string;
@@ -58,6 +68,14 @@ export interface Extensions {
   zwiftConnect: ConnectSlot;
   /** More rows on Connections, above the usage row, for sources only this deployment has (DECISIONS #73). */
   extraConnections: ReactNode;
+  /** A hook, so the step can follow live connection state. Null keeps the step to intervals.icu alone. */
+  useWizardSync: () => WizardSync | null;
+  /**
+   * Whether this athlete has a source other than intervals.icu bringing rides in. Coach still asks them to
+   * connect it, for sending workouts out, in words that don't say their rides are missing (DECISIONS #92).
+   * Undefined while loading. Self-host: none.
+   */
+  useOtherTrainingSource: () => boolean | undefined;
   /** Extra cards on Athlete › Body & energy, above the budget (DECISIONS #73). */
   athleteBodyCards: ReactNode;
   /** The usage row on Connections (the self-hosted app shows Claude API spend); `null` hides it. */
@@ -96,6 +114,8 @@ export const defaultExtensions: Extensions = {
   intervalsConnect: { hint: 'Set INTERVALS_ICU_KEY on the server — it connects the owner account only' },
   zwiftConnect: { hint: 'Set ZWIFT_USERNAME and ZWIFT_PASSWORD on the server (owner account only), or enter zFTP by hand' },
   extraConnections: null,
+  useWizardSync: () => null,
+  useOtherTrainingSource: () => false,
   athleteBodyCards: null,
   usageCard: ClaudeUsageRow,
   accountCards: null,

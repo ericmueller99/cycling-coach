@@ -149,6 +149,8 @@ export interface ThreadDoc {
    * so per-turn context messages only repeat what changed (packages/coach/src/context.ts).
    */
   seen: { calendar?: string; athlete: string; extra?: string; shortTerm?: string; timeOff?: string };
+  /** The next turn restarts with nothing older and no recap, and a new chat won't recap this one (DECISIONS #93). */
+  forgetContext?: true;
   /** When a call last started on the build model, for the one warm follow-up (`warmFollowUp`). */
   lastBuildStartedAt?: Date;
   /** That one follow-up has been used, so the next turn goes back to the chat model. */
@@ -474,7 +476,7 @@ export interface AiCallDoc {
   _id?: ObjectId;
   userId: string;
   threadId?: ObjectId;
-  purpose: 'coach' | 'title' | 'recap' | 'food_parse' | 'food_vision' | 'food_match' | 'food_adjust';
+  purpose: 'coach' | 'title' | 'recap' | 'food_parse' | 'food_vision' | 'food_match' | 'food_adjust' | 'food_estimate';
   model: string;
   inputTokens: number;
   outputTokens: number;

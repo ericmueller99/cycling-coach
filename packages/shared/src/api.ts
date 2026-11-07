@@ -33,6 +33,8 @@ export interface ThreadView {
   messages: UiMessage[];
   /** Messages the coach started afresh from: it has only a recap of what's above them (DECISIONS #80). */
   contextBreaks: string[];
+  /** The breaks that carried nothing over, so nothing is summarized either (DECISIONS #93). */
+  contextResets: string[];
   /** Big enough to suggest a new chat. */
   contextLong: boolean;
   proposals: Proposal[];

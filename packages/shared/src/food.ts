@@ -5,7 +5,9 @@ import { isoDateSchema, type IsoDate } from './common';
  * Food module (DECISIONS #33). The user's own foods database: it starts empty and only
  * grows when they add something — a staple from the Canadian Nutrient File / USDA, a label or
  * screenshot read by a small model, an Open Food Facts barcode hit, or by hand. Logging is then
- * always from this database, never AI.
+ * from this database with no AI. The two exceptions are a `calories` entry, which is numbers the
+ * user typed, and an Eating out estimate, which is the one place food logging guesses and is marked
+ * as a guess everywhere it shows (DECISIONS #94).
  *
  * Units model: a food stores its nutrients for ONE reference serving, exactly as the source gave
  * them ("per 3/4 cup (175 g)", "per 100 g", "per grande"). `measures` lists everything that equals
@@ -44,19 +46,24 @@ export const nutrientsSchema = z.object({
   potassiumMg: z.number().min(0).max(100_000).optional(),
   calciumMg: z.number().min(0).max(100_000).optional(),
   ironMg: z.number().min(0).max(10_000).optional(),
+  /** Grams of alcohol. Not on a Nutrition Facts table, so nothing reads it off a label. */
+  alcohol: z.number().min(0).max(5_000).optional(),
 });
 export type Nutrients = z.infer<typeof nutrientsSchema>;
 export const nutrientKeys = [
   'kcal', 'fat', 'satFat', 'transFat', 'carbs', 'fibre', 'sugars', 'protein',
-  'cholesterolMg', 'sodiumMg', 'potassiumMg', 'calciumMg', 'ironMg',
+  'cholesterolMg', 'sodiumMg', 'potassiumMg', 'calciumMg', 'ironMg', 'alcohol',
 ] as const satisfies readonly (keyof Nutrients)[];
 export type NutrientKey = (typeof nutrientKeys)[number];
+/** The nutrients a photo reading carries: everything but alcohol. */
+export const readableNutrientKeys = nutrientKeys.filter((k): k is Exclude<NutrientKey, 'alcohol'> => k !== 'alcohol');
 
 /**
  * Where a food came from — drives the source tag in lists. `label` and `screenshot` were read from
- * a photo by the small model; `cnf` = Canadian Nutrient File; `off` = Open Food Facts (barcode).
+ * a photo by the small model; `cnf` = Canadian Nutrient File; `off` = Open Food Facts (barcode);
+ * `estimate` = a restaurant meal the AI estimated, which stays marked as an estimate wherever it goes.
  */
-export const foodSources = ['label', 'screenshot', 'cnf', 'usda', 'off', 'manual'] as const;
+export const foodSources = ['label', 'screenshot', 'cnf', 'usda', 'off', 'manual', 'estimate'] as const;
 export type FoodSource = (typeof foodSources)[number];
 
 /** UPC / EAN digits. Normalised to EAN-13 where possible (`core.normalizeBarcode`). */
@@ -69,6 +76,10 @@ export const foodImageRefSchema = z.object({
   kind: z.enum(foodImageKinds),
 });
 export type FoodImageRef = z.infer<typeof foodImageRefSchema>;
+
+/** The likely kcal range of an estimate, for the same amount as the kcal beside it. */
+export const estimateRangeSchema = z.object({ low: z.number().min(0).max(50_000), high: z.number().min(0).max(50_000) });
+export type EstimateRange = z.infer<typeof estimateRangeSchema>;
 
 /** Food fields without defaults — Zod applies defaults inside `.partial()` (CLAUDE.md rule 1b). */
 const foodFields = z.object({
@@ -90,6 +101,8 @@ const foodFields = z.object({
   nutrients: nutrientsSchema,
   notes: z.string().max(500).optional(),
   images: z.array(foodImageRefSchema).max(4),
+  /** Per ONE reference serving; only on a saved estimate. */
+  estimate: estimateRangeSchema.optional(),
 });
 export const foodInputSchema = foodFields.extend({
   aliases: foodFields.shape.aliases.default([]),
@@ -99,7 +112,7 @@ export const foodInputSchema = foodFields.extend({
 export type FoodInput = z.infer<typeof foodInputSchema>;
 /** A partial update; `unset` clears optional fields (JSON can't send `undefined`). */
 export const foodPatchSchema = foodFields.partial().extend({
-  unset: z.array(z.enum(['brand', 'sourceRef', 'servingLabel', 'notes'])).optional(),
+  unset: z.array(z.enum(['brand', 'sourceRef', 'servingLabel', 'notes', 'estimate'])).optional(),
 });
 export type FoodPatch = z.infer<typeof foodPatchSchema>;
 
@@ -251,8 +264,8 @@ export interface Meal extends MealInput {
 // ── The log ───────────────────────────────────────────────────────────────
 
 export const timeOfDaySchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Expected HH:MM');
-/** `coach` = logged from a recipe the coach built in chat. */
-export const foodLogVias = ['manual', 'words', 'meal', 'scan', 'coach'] as const;
+/** `coach` = logged from a recipe the coach built in chat; `estimate` = from Eating out. */
+export const foodLogVias = ['manual', 'words', 'meal', 'scan', 'coach', 'estimate'] as const;
 
 export const foodLogInputSchema = z.object({
   date: isoDateSchema,
@@ -286,8 +299,9 @@ export interface FoodLogEntry {
   date: IsoDate;
   slot: string;
   time?: string | undefined;
-  kind: LoggableKind;
-  refId: string;
+  /** `calories` is numbers with no food behind them: it has no `refId`. Read refs through `core.entryRef`. */
+  kind: LoggableKind | 'calories';
+  refId?: string | undefined;
   /** Snapshots at log time — editing the food later never rewrites history. */
   name: string;
   brand?: string | undefined;
@@ -300,6 +314,8 @@ export interface FoodLogEntry {
   nutrients: Nutrients;
   via: (typeof foodLogVias)[number];
   fromMealId?: string | undefined;
+  /** Only on an estimate: its range, and what's in it. */
+  estimate?: EntryEstimate | undefined;
   createdAt: string;
 }
 
@@ -454,6 +470,8 @@ export interface DayFoodSummary {
   slots: { name: string; kcal: number }[];
   /** The day's budget; null until RMR is set. Future days include planned sessions. */
   budget: number | null;
+  /** How many estimates `eaten` includes. A meal logged as N items is one estimate. */
+  estimates: number;
 }
 
 /** `GET /api/energy/days` — the calendar's food layer for a range of weeks. */
@@ -708,4 +726,224 @@ export interface FoodParseResult {
   slot: string;
   time?: string | undefined;
   items: WordsItem[];
+}
+
+// ── Calories: numbers with no food behind them ────────────────────────────
+
+/** Only kcal is required. Blank macros are stored as 0, because totals add them up. */
+export const caloriesNutrientsSchema = nutrientsSchema.partial().required({ kcal: true });
+
+export const caloriesLogInputSchema = z.object({
+  date: isoDateSchema,
+  slot: z.string().trim().min(1).max(30),
+  time: timeOfDaySchema.optional(),
+  /** Blank means "Calories". */
+  name: z.string().trim().max(120).optional(),
+  nutrients: caloriesNutrientsSchema,
+});
+export type CaloriesLogInput = z.infer<typeof caloriesLogInputSchema>;
+
+// ── Eating out: an AI estimate of a restaurant meal ───────────────────────
+
+export const estimatePhotoKinds = ['plate', 'menu'] as const;
+export type EstimatePhotoKind = (typeof estimatePhotoKinds)[number];
+export const estimatePhotoRefSchema = z.object({ key: z.string().min(1).max(200), kind: z.enum(estimatePhotoKinds) });
+export type EstimatePhotoRef = z.infer<typeof estimatePhotoRefSchema>;
+
+/** Shrunk in the browser. Four at 3.5M characters each fits the routes' 15 MB limit, with room for the rest. */
+export const estimatePhotoSchema = z.object({
+  mediaType: z.enum(['image/jpeg', 'image/png', 'image/webp']),
+  data: z.string().min(100).max(3_500_000),
+  kind: z.enum(estimatePhotoKinds),
+});
+export type EstimatePhoto = z.infer<typeof estimatePhotoSchema>;
+
+export const estimateInputSchema = z
+  .object({
+    place: z.string().trim().max(120).optional(),
+    text: z.string().trim().max(2000).optional(),
+    images: z.array(estimatePhotoSchema).max(4),
+  })
+  .refine((v) => v.images.length > 0 || (v.text ?? '').length >= 2, { message: 'Add a photo or say what you had.' });
+export type EstimateInput = z.infer<typeof estimateInputSchema>;
+
+/**
+ * What the model returns. Strict-output friendly: no optionals and no nullable fields, with "" and []
+ * for none. Limits live in the descriptions and `core.estimateFromReading` enforces them, so a stray
+ * value is tidied rather than failing a call that's already been paid for.
+ */
+const readingChoiceSchema = z.object({ label: z.string(), factor: z.number() });
+
+export const estimateItemReadingSchema = z.object({
+  name: z.string().describe('The item alone, with no size in it: "Top sirloin", "Lager".'),
+  why: z.string().describe('Where the amount came from, in a few words: "Menu says 8 oz raw", "From the photo", "You said 2". No kcal figures.'),
+  unit: z.string().describe('What one portion is called, for a stepper: "side", "piece". Empty when `sizes` is used.'),
+  quantity: z.number().describe('How many of `unit` were eaten, e.g. 2. Every number below is for this amount. 1 when `sizes` is used.'),
+  kcal: z.number().describe('The most likely kcal for this amount.'),
+  low: z.number().describe('The low end of the likely kcal. Never above `kcal`.'),
+  high: z.number().describe('The high end of the likely kcal. Never below `kcal`.'),
+  protein: z.number().describe('Grams.'),
+  carbs: z.number().describe('Grams.'),
+  fat: z.number().describe('Grams.'),
+  alcohol: z.number().describe('Grams of alcohol, 0 for food.'),
+  sizes: z
+    .array(readingChoiceSchema)
+    .describe('Set sizes only, e.g. a steak\'s 6, 8, 10 and 12 oz. `factor` scales the numbers above, and the size they describe has factor 1. Empty for anything else.'),
+  modifiers: z
+    .array(readingChoiceSchema)
+    .describe('At most 3 changes that matter, off by default: "Dressing on the side" factor 0.6. `factor` scales the whole item. Usually empty.'),
+});
+export type EstimateItemReading = z.infer<typeof estimateItemReadingSchema>;
+
+export const estimateReadingSchema = z.object({
+  dish: z.string().describe('Two or three words for the meal, with no place in it: "Sirloin dinner". Empty when nothing was found.'),
+  found: z
+    .array(z.object({ from: z.enum(['menu', 'plate', 'said']), text: z.string() }))
+    .describe('At most one short line each for what the menu says, what the plate shows and what the rider said.'),
+  items: z.array(estimateItemReadingSchema).describe('One per thing eaten or drunk. Empty when the photos and words show no food.'),
+  questions: z
+    .array(
+      z.object({
+        item: z.number().int().describe('Index into `items` of the one item this changes.'),
+        text: z.string().describe('The question, in a few words: "How big was the pint?"'),
+        options: z
+          .array(
+            z.object({
+              label: z.string().describe('A tap-to-answer label: "About half", "20 oz", "Not sure".'),
+              factor: z.number().describe('What this answer multiplies the item by. 1 means the numbers as given, 0 means they didn\'t have it.'),
+              amount: z.boolean().describe('True when the answer is how much they had or how big it was. False when it changes what\'s in the item, like how much butter.'),
+              note: z.string().describe('Replaces the item\'s `why`: "About half a side, as you said". No kcal figures.'),
+              unsure: z.boolean().describe('True for "Not sure": the amount is still a guess.'),
+            }),
+          )
+          .describe('2 to 4 answers.'),
+        typical: z.number().int().describe('Index into `options` of the usual amount, used when the question is skipped.'),
+        assumed: z.string().describe('What a skip assumes: "You weren\'t sure of the size, so this is 16 oz". No kcal figures.'),
+      }),
+    )
+    .describe('At most 2, only where the answer moves the total most. Empty when nothing is unclear.'),
+});
+export type EstimateReading = z.infer<typeof estimateReadingSchema>;
+export type EstimateQuestion = EstimateReading['questions'][number];
+
+const estimateChoiceSchema = z.object({ label: z.string().trim().min(1).max(80), factor: z.number().min(0).max(50) });
+
+/**
+ * One item of an estimate: what the model said, and the rider's changes on top. The base numbers are
+ * for the amount as served. `core.estimateItemTotals` applies `qty`, `size` and `mods`, and is the
+ * only thing that does.
+ */
+export const estimateItemSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  why: z.string().trim().max(200),
+  unit: z.string().trim().max(30),
+  quantity: z.number().positive().max(1000),
+  kcal: z.number().min(0).max(20_000),
+  low: z.number().min(0).max(20_000),
+  high: z.number().min(0).max(20_000),
+  protein: z.number().min(0).max(2_000),
+  carbs: z.number().min(0).max(2_000),
+  fat: z.number().min(0).max(2_000),
+  alcohol: z.number().min(0).max(2_000),
+  sizes: z.array(estimateChoiceSchema).max(8),
+  modifiers: z.array(estimateChoiceSchema).max(6),
+  /** Multiplies the amount as served; 0.5 is half of it. */
+  qty: z.number().positive().max(100),
+  /** Multiplies the numbers but not the amount: "a lot of butter" is still 2 pieces of bread. */
+  scale: z.number().positive().max(50),
+  /** Index into `sizes`; -1 when there are none. */
+  size: z.number().int().min(-1).max(7),
+  /** Indexes into `modifiers` that are on. */
+  mods: z.array(z.number().int().min(0).max(5)).max(6),
+  /** What was assumed because the rider skipped a question or wasn't sure; "" when nothing was. */
+  assumed: z.string().trim().max(200),
+});
+export type EstimateItem = z.infer<typeof estimateItemSchema>;
+
+/** What the Eating out tab shows after estimating. Nothing's been written yet. */
+export interface EstimateResult {
+  dish: string;
+  found: EstimateReading['found'];
+  items: EstimateItem[];
+  questions: EstimateQuestion[];
+}
+
+export interface EntryEstimate extends EstimateRange {
+  place?: string | undefined;
+  /** Shared by the entries of a meal logged as separate items. */
+  group?: string | undefined;
+  /** Empty when logged from a saved food, which has one set of numbers and a normal portion. */
+  items: EstimateItem[];
+  images: EstimatePhotoRef[];
+  /** The name it was saved to their foods under, when it was. */
+  savedAs?: string | undefined;
+}
+
+export const estimateLogInputSchema = z.object({
+  date: isoDateSchema,
+  slot: z.string().trim().min(1).max(30),
+  time: timeOfDaySchema.optional(),
+  name: z.string().trim().min(1).max(120),
+  place: z.string().trim().max(120).optional(),
+  items: z.array(estimateItemSchema).min(1).max(20),
+  /** `items` logs one entry per item. */
+  logAs: z.enum(['meal', 'items']),
+  /** Also save it to their foods under this name, to log by search next time. */
+  saveAs: z.string().trim().min(1).max(120).optional(),
+  images: z.array(estimatePhotoSchema).max(4),
+});
+export type EstimateLogInput = z.infer<typeof estimateLogInputSchema>;
+
+/** A replacement item list is what "Change portions" sends. No defaults (rule 1b). */
+export const caloriesEditSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120).optional(),
+    nutrients: caloriesNutrientsSchema.optional(),
+    items: z.array(estimateItemSchema).min(1).max(20).optional(),
+  })
+  .refine((v) => !(v.nutrients && v.items), { message: 'Change the items or the numbers, not both.' });
+export type CaloriesEdit = z.infer<typeof caloriesEditSchema>;
+
+/**
+ * "Anything different?". Like #78 the model gives changes and code does the sums, but a change can
+ * target one item, and a portion is a change here: "I only had half" is the likeliest thing to say.
+ */
+export const estimateAdjustmentSchema = z.object({
+  reply: z.string().describe('One or two plain sentences on what changed. Or one question, with nothing else filled in.'),
+  changes: z
+    .array(
+      z.object({
+        item: z.number().int().describe('Index into the list of items.'),
+        factor: z.number().describe('Multiplies the amount: 0.5 for "only half", 1 when the amount didn\'t change.'),
+        kcal: z.number().describe('Added to the item at its current amount: -80 for "no cheese". 0 when only the amount changed.'),
+        protein: z.number().describe('Grams to add, negative for less.'),
+        carbs: z.number().describe('Grams to add, negative for less.'),
+        fat: z.number().describe('Grams to add, negative for less.'),
+        alcohol: z.number().describe('Grams to add, negative for less.'),
+        why: z.string().describe('The new reason for the item, in a few words: "No cheese, as you said". No kcal figures.'),
+      }),
+    )
+    .describe('Only the items that change.'),
+  removed: z.array(z.number().int()).describe('Indexes of items they didn\'t have.'),
+  added: z.array(estimateItemReadingSchema).describe('Things to add, with a likely range. Empty for none.'),
+});
+export type EstimateAdjustment = z.infer<typeof estimateAdjustmentSchema>;
+
+export const estimateAdjustInputSchema = z.object({
+  place: z.string().trim().max(120).optional(),
+  items: z.array(estimateItemSchema).min(1).max(20),
+  message: z.string().trim().min(2).max(500),
+});
+export type EstimateAdjustInput = z.infer<typeof estimateAdjustInputSchema>;
+
+/** The items with the change applied, for the review to show. Nothing's been written. */
+export interface EstimateAdjustResult {
+  reply: string;
+  items: EstimateItem[];
+}
+
+/** Signed URLs for an entry's photos. Short-lived, so fetched when they're shown. */
+export interface EntryPhoto {
+  kind: EstimatePhotoKind;
+  url: string;
 }

@@ -109,16 +109,21 @@ export function diffActivities(
   };
 }
 
-const SAME_RIDE_START_SEC = 5 * 60;
-const SAME_RIDE_DURATION_SHARE = 0.1;
+/** How much of the longer ride two records must share. */
+const SAME_RIDE_OVERLAP_SHARE = 0.5;
 
 type RideTiming = Pick<Activity, 'startLocal' | 'elapsedSec'>;
 
-/** Two records of one ride: they started within 5 minutes and lasted within 10% of each other. */
+/**
+ * Two records of one ride: their time windows overlap by at least half of the longer one. One rider
+ * can't do two rides at once, and sources disagree on when a ride started, ended or how long a stop
+ * counts for, so overlap holds up where comparing lengths doesn't (DECISIONS #91).
+ */
 export function isSameRide(a: RideTiming, b: RideTiming): boolean {
-  const apart = Math.abs(Date.parse(`${a.startLocal}Z`) - Date.parse(`${b.startLocal}Z`)) / 1000;
-  const longest = Math.max(a.elapsedSec, b.elapsedSec);
-  return apart <= SAME_RIDE_START_SEC && Math.abs(a.elapsedSec - b.elapsedSec) <= longest * SAME_RIDE_DURATION_SHARE;
+  const startA = Date.parse(`${a.startLocal}Z`) / 1000;
+  const startB = Date.parse(`${b.startLocal}Z`) / 1000;
+  const overlap = Math.min(startA + a.elapsedSec, startB + b.elapsedSec) - Math.max(startA, startB);
+  return overlap > 0 && overlap >= Math.max(a.elapsedSec, b.elapsedSec) * SAME_RIDE_OVERLAP_SHARE;
 }
 
 /**

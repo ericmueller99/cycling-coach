@@ -1,12 +1,14 @@
-import { dayTimeline, sumNutrients, type CalendarDay } from '@cycling-coach/core';
-import type { CalendarActivity, IsoDate, TimeOff } from '@cycling-coach/shared';
+import { countEstimates, dayTimeline, isEstimate, sumNutrients, type CalendarDay } from '@cycling-coach/core';
+import type { CalendarActivity, FoodLogEntry, IsoDate, TimeOff } from '@cycling-coach/shared';
 import { Link } from '@tanstack/react-router';
 import { useMemo } from 'react';
 import { KcalBar } from '../../components/KcalBar';
 import { Button, SectionLabel } from '../../components/ui';
 import type { FeedbackIndex } from '../../lib/feedback';
-import { fmtKcal, fmtTime, nowTime } from '../../lib/food';
+import { approx, entryLine, fmtKcal, fmtTime, includesEstimates, nowTime } from '../../lib/food';
 import { useEnergyBudget, useFoodLibrary, useFoodLog } from '../../lib/foodQueries';
+import { EntryThumb } from '../food/EntryPhotos';
+import { SourceTag } from '../food/SourceTag';
 import { daySessions, dayTitle, sessionMeta, sessionSelection, sessionTitle } from './day';
 import type { Selection } from './panels';
 import { PANEL } from './shared';
@@ -32,6 +34,7 @@ export function DayPanel({
   onClose,
   onSelect,
   onFood,
+  onEntry,
 }: {
   date: IsoDate;
   today: IsoDate;
@@ -44,6 +47,7 @@ export function DayPanel({
   onClose: () => void;
   onSelect: (s: Selection) => void;
   onFood: (slot?: string) => void;
+  onEntry: (entry: FoodLogEntry) => void;
 }) {
   const lib = useFoodLibrary();
   const log = useFoodLog(date);
@@ -55,6 +59,8 @@ export function DayPanel({
     [lib.data, entries, sessions, date, today],
   );
   const eaten = sumNutrients((entries ?? []).map((e) => e.nutrients)).kcal;
+  const estimates = countEstimates(entries ?? []);
+  const est = approx(estimates);
   const future = date > today;
   const ready = budget?.ready;
 
@@ -76,6 +82,7 @@ export function DayPanel({
           <span className="text-[13px] text-muted">Loading…</span>
         ) : !ready ? (
           <span className="text-[13px] text-muted">
+            {est}
             {fmtKcal(eaten)} kcal eaten. <Link to="/athlete/$tab" params={{ tab: 'body' }}>Set your RMR</Link> to see a budget.
           </span>
         ) : future ? (
@@ -87,12 +94,18 @@ export function DayPanel({
         ) : (
           <>
             <span className={`font-mono text-[24px] leading-tight font-semibold ${eaten > budget.total ? 'text-danger' : ''}`}>
+              {est}
               {date === today ? `${fmtKcal(Math.abs(budget.total - eaten))} kcal ${eaten > budget.total ? 'over' : 'left'}` : `${signed(eaten - budget.total)} kcal vs budget`}
             </span>
             <KcalBar eaten={eaten} budget={budget.total} className="h-2 rounded-[4px]" />
             <span className="text-xs text-muted">
-              <strong className="text-ink">{fmtKcal(eaten)}</strong> eaten / <strong className="text-ink">{fmtKcal(budget.total)}</strong> budget
+              <strong className="text-ink">
+                {est}
+                {fmtKcal(eaten)}
+              </strong>{' '}
+              eaten / <strong className="text-ink">{fmtKcal(budget.total)}</strong> budget
             </span>
+            {estimates > 0 && <span className="text-xs text-muted">{includesEstimates(estimates)}</span>}
           </>
         )}
       </div>
@@ -129,17 +142,36 @@ export function DayPanel({
           // An untimed session (most planned ones from intervals.icu) says so rather than leaving a gap.
           const time = it.time ? fmtTime(it.time) : it.kind === 'session' ? 'Any time' : '';
           if (it.kind === 'meal') {
+            const guesses = it.entries.filter(isEstimate);
             return (
               <li key={`meal-${it.slot}`} className="flex gap-2">
                 <span className={GUTTER}>{time}</span>
-                <button type="button" onClick={() => onFood(it.slot)} className="flex min-w-0 flex-auto flex-col gap-0.5 rounded-[10px] border border-line bg-surface px-3 py-2 text-left text-ink">
-                  <span className="text-[10px] font-semibold tracking-[0.06em] text-muted uppercase">Food</span>
-                  <span className="flex justify-between gap-2">
-                    <span className="truncate font-semibold">{it.slot}</span>
-                    <span className="font-mono text-[13px]">{fmtKcal(it.kcal)}</span>
-                  </span>
-                  <span className="truncate text-xs text-muted">{it.entries.map((e) => e.name).join(', ')}</span>
-                </button>
+                <div className="flex min-w-0 flex-auto flex-col overflow-hidden rounded-[10px] border border-line bg-surface">
+                  <button type="button" onClick={() => onFood(it.slot)} className="flex min-w-0 flex-col gap-0.5 border-0 bg-transparent px-3 py-2 text-left text-ink">
+                    <span className="text-[10px] font-semibold tracking-[0.06em] text-muted uppercase">Food</span>
+                    <span className="flex justify-between gap-2">
+                      <span className="truncate font-semibold">{it.slot}</span>
+                      <span className="font-mono text-[13px]">
+                        {approx(guesses.length)}
+                        {fmtKcal(it.kcal)}
+                      </span>
+                    </span>
+                    <span className="truncate text-xs text-muted">{it.entries.filter((e) => !isEstimate(e)).map((e) => e.name).join(', ')}</span>
+                  </button>
+                  {guesses.map((e) => (
+                    <button key={e.id} type="button" onClick={() => onEntry(e)} className="flex min-w-0 items-center gap-2 border-0 border-t border-divider bg-transparent px-3 py-2 text-left text-ink hover:bg-surface-2">
+                      <EntryThumb entry={e} />
+                      <span className="min-w-0 flex-auto">
+                        <span className="flex items-center gap-2">
+                          <span className="truncate text-[13px] font-medium">{e.name}</span>
+                          <SourceTag source="estimate" />
+                        </span>
+                        <span className="block truncate text-xs text-muted">{entryLine(e)}</span>
+                      </span>
+                      <span className="flex-none font-mono text-[13px]">≈ {fmtKcal(e.nutrients.kcal)}</span>
+                    </button>
+                  ))}
+                </div>
               </li>
             );
           }

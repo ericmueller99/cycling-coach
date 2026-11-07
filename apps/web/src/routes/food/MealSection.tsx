@@ -1,8 +1,10 @@
+import { countEstimates, entryRef, isEstimate } from '@cycling-coach/core';
 import type { FoodLogEntry, Nutrients } from '@cycling-coach/shared';
 import { IconButton } from '../../components/AppBar';
 import { MoreIcon, PlusIcon } from '../../components/icons';
 import { Button } from '../../components/ui';
-import { entryPortion, fmtKcal, fmtTime, macroLine } from '../../lib/food';
+import { approx, entryLine, fmtKcal, fmtTime } from '../../lib/food';
+import { EntryThumb } from './EntryPhotos';
 import { SourceTag } from './SourceTag';
 
 /**
@@ -31,6 +33,8 @@ export function MealSection({
   onSaveMeal: () => void;
   mobile: boolean;
 }) {
+  // A meal can only hold what's backed by a food or recipe.
+  const saveable = items.filter((e) => entryRef(e));
   return (
     <section className="overflow-hidden rounded-[14px] border border-line bg-surface">
       <div className={`flex items-center gap-2.5 border-b border-divider ${mobile ? 'py-1.5 pr-1.5 pl-3.5' : 'px-4 py-3'}`}>
@@ -40,7 +44,7 @@ export function MealSection({
           </span>
           {subline && <span className="truncate text-xs font-normal text-muted">{subline}</span>}
         </h2>
-        <span className="font-mono text-[13px] font-semibold">{items.length ? `${fmtKcal(total.kcal)} kcal` : '—'}</span>
+        <span className="font-mono text-[13px] font-semibold">{items.length ? `${approx(countEstimates(items))}${fmtKcal(total.kcal)} kcal` : '—'}</span>
         {mobile ? (
           <IconButton aria-label={`Add to ${name}`} onClick={onAdd}>
             <PlusIcon size={20} />
@@ -59,31 +63,34 @@ export function MealSection({
             onClick={() => onEntry(e)}
             className="flex min-h-[52px] w-full items-center gap-2.5 border-0 border-b border-[#F1F2F4] bg-surface px-3.5 py-1.5 text-left text-ink last:border-b-0"
           >
+            <EntryThumb entry={e} />
             <span className="min-w-0 flex-auto">
-              <span className="block truncate font-medium">{e.name}</span>
-              <span className="block truncate text-xs text-muted">{entryPortion(e)}</span>
+              <span className="flex items-center gap-2">
+                <span className="truncate font-medium">{e.name}</span>
+                {isEstimate(e) && <SourceTag source="estimate" />}
+              </span>
+              <span className="block truncate text-xs text-muted">{entryLine(e)}</span>
             </span>
-            <span className="font-mono text-[13px]">{fmtKcal(e.nutrients.kcal)}</span>
+            <span className="font-mono text-[13px]">{approx(isEstimate(e) ? 1 : 0)}{fmtKcal(e.nutrients.kcal)}</span>
           </button>
         ) : (
           <div key={e.id} className="flex items-center gap-3 border-b border-[#F1F2F4] px-4 py-2.5 last:border-b-0">
+            <EntryThumb entry={e} />
             <div className="min-w-0 flex-auto">
               <div className="flex items-center gap-2">
                 <span className="truncate font-medium">{e.name}</span>
                 <SourceTag source={e.source} />
               </div>
-              <div className="truncate text-xs text-muted">
-                {entryPortion(e)} · {macroLine(e.nutrients)}
-              </div>
+              <div className="truncate text-xs text-muted">{entryLine(e)}</div>
             </div>
-            <span className="font-mono text-[13px]">{fmtKcal(e.nutrients.kcal)}</span>
+            <span className="font-mono text-[13px]">{approx(isEstimate(e) ? 1 : 0)}{fmtKcal(e.nutrients.kcal)}</span>
             <button type="button" aria-label={`Edit ${e.name}`} onClick={() => onEntry(e)} className="flex h-9 w-9 items-center justify-center rounded-lg border-0 bg-transparent text-muted hover:bg-surface-2">
               <MoreIcon size={16} />
             </button>
           </div>
         ),
       )}
-      {items.length >= 2 && !items.every((e) => e.fromMealId && e.fromMealId === items[0]!.fromMealId) && (
+      {saveable.length >= 2 && !saveable.every((e) => e.fromMealId && e.fromMealId === saveable[0]!.fromMealId) && (
         <div className="flex justify-end border-t border-[#F1F2F4] px-3 py-1">
           <button type="button" onClick={onSaveMeal} className="min-h-9 border-0 bg-transparent px-1 text-[13px] font-medium text-accent-ink">
             Save as meal

@@ -103,6 +103,16 @@ export async function countActivities(c: Collections, userId: string, opts: { ne
   return c.activities.countDocuments({ userId, ...FROM_INTERVALS, ...(opts.needingDetail ? { detailAt: { $exists: false } } : {}) });
 }
 
+/** Whether this athlete has any ride stored, from any source but these. */
+export async function hasRides(c: Collections, userId: string, except: readonly string[] = []): Promise<boolean> {
+  return (await c.activities.findOne({ userId, ...(except.length ? { provider: { $nin: [...except] } } : {}) }, { projection: { _id: 1 } })) !== null;
+}
+
+/** The ids of one source's rides. */
+export async function rideIdsFrom(c: Collections, userId: string, provider: string): Promise<string[]> {
+  return (await c.activities.find({ userId, provider }, { projection: { _id: 0, id: 1 } }).toArray()).map((a) => a.id);
+}
+
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**

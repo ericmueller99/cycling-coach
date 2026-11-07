@@ -63,6 +63,11 @@ export async function addThreadTag(c: Collections, threadId: ObjectId, tag: Thre
 /** Where the thread's current API context starts. */
 export const contextStartSeq = (thread: Pick<ThreadDoc, 'contexts'>): number => thread.contexts?.at(-1)?.startSeq ?? 0;
 
+/** Every chat of this athlete starts its next turn with nothing older (DECISIONS #93). */
+export async function forgetContexts(c: Collections, userId: string): Promise<void> {
+  await c.threads.updateMany({ userId }, { $set: { forgetContext: true } });
+}
+
 /** A thread's messages in order, from `fromSeq` on when only one API context is wanted. */
 export async function listMessages(c: Collections, threadId: ObjectId, fromSeq = 0) {
   return c.messages.find({ threadId, ...(fromSeq > 0 ? { seq: { $gte: fromSeq } } : {}) }).sort({ seq: 1 }).toArray();
@@ -87,7 +92,7 @@ export async function restartContext(
     {
       $set: { systemSnapshot: next.systemSnapshot, seen: { athlete: next.systemSnapshot[1] ?? '' } },
       $push: { contexts: next.context },
-      $unset: { lastBuildStartedAt: '', buildFollowUpUsed: '' },
+      $unset: { lastBuildStartedAt: '', buildFollowUpUsed: '', forgetContext: '' },
     },
     { returnDocument: 'after' },
   );
@@ -117,6 +122,7 @@ export async function latestChat(c: Collections, userId: string, exceptId: Objec
     .limit(5)
     .toArray();
   for (const thread of recent) {
+    if (thread.forgetContext) continue;
     if (await c.messages.findOne({ threadId: thread._id, kind: 'assistant' }, { projection: { _id: 1 } })) return thread;
   }
   return null;

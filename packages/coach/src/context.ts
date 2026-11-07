@@ -245,6 +245,17 @@ export function renderCalendarBlock(events: CalendarEvent[], from: IsoDate, to: 
   return lines.join('\n');
 }
 
+/** intervals.icu's status, or `stored`: not connected, but the ride tools have rides from elsewhere to read (DECISIONS #90). */
+export type TrainingStatus = IntegrationStatus['status'] | 'stored';
+
+const TRAINING_LINE: Record<TrainingStatus, string> = {
+  connected: 'Training data: intervals.icu connected.',
+  error: 'Training data: intervals.icu is failing right now — say so if you need ride data rather than guessing.',
+  not_configured: 'Training data: intervals.icu is not connected for this athlete — you cannot fetch rides. Suggest connecting it.',
+  stored:
+    "Training data: rides are stored here from another source, and the ride tools read them. They may have no training load, and fitness and power curves may be empty. Don't ask the athlete to connect anything else unless they ask what it would add.",
+};
+
 export interface TurnContextInput {
   /** Something the coach should know about this turn, from the deployment (e.g. a plan limit). */
   coachNote?: string | undefined;
@@ -252,7 +263,7 @@ export interface TurnContextInput {
   /** Local wall-clock time, e.g. "9:14 PM". */
   localTime: string;
   timezone: string;
-  training: IntegrationStatus['status'];
+  training: TrainingStatus;
   /** Today's fitness from intervals.icu, if available. */
   fitness?: FitnessDay | undefined;
   weight?:
@@ -288,6 +299,8 @@ export interface FoodTurnContext {
   chosen: boolean;
   /** Eaten so far that day. */
   eaten: { kcal: number; protein: number; carbs: number; fat: number };
+  /** How many restaurant estimates `eaten` includes, so the coach doesn't quote it as exact. */
+  estimates?: number | undefined;
   /** Null until RMR is set on the Athlete page. */
   budgetKcal: number | null;
   proteinTargetG?: number | undefined;
@@ -306,7 +319,8 @@ export function renderFoodLine(f: FoodTurnContext): string {
       ? 'no calorie budget yet (RMR not set on the Athlete page)'
       : `budget ${n0(f.budgetKcal)} kcal → ${n0(f.budgetKcal - f.eaten.kcal)} kcal left${f.proteinTargetG ? `; protein target ${n0(f.proteinTargetG)} g → ${n0(Math.max(0, f.proteinTargetG - f.eaten.protein))} g left` : ''}`;
   const slot = f.chosen ? `The athlete is planning ${f.slot} for ${day} (picked in the app).` : `The meal for this time of day is ${f.slot}.`;
-  return `Food ${day} (their food log): ${eaten}; ${budget}.${f.note ? ` ${f.note}.` : ''} ${slot}`;
+  const guessed = f.estimates ? ` These totals include ${f.estimates === 1 ? 'a restaurant meal' : `${f.estimates} restaurant meals`} logged as an estimate, so treat them as approximate.` : '';
+  return `Food ${day} (their food log): ${eaten}; ${budget}.${guessed}${f.note ? ` ${f.note}.` : ''} ${slot}`;
 }
 
 /**
@@ -325,13 +339,7 @@ function sameCalendar(seen: string | undefined, block: string): boolean {
  */
 export function renderTurnContext(input: TurnContextInput): string {
   const parts = [`Today is ${formatLongDay(input.today)} (${input.today}), ${input.localTime} ${input.timezone}.`];
-  parts.push(
-    input.training === 'connected'
-      ? 'Training data: intervals.icu connected.'
-      : input.training === 'error'
-        ? 'Training data: intervals.icu is failing right now — say so if you need ride data rather than guessing.'
-        : 'Training data: intervals.icu is not connected for this athlete — you cannot fetch rides. Suggest connecting it.',
-  );
+  parts.push(TRAINING_LINE[input.training]);
   if (input.fitness) {
     const f = input.fitness;
     parts.push(

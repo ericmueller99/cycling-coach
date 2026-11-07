@@ -2012,3 +2012,155 @@ empty list and had to guess why. DESIGN.md section 16 had a three-step intro tha
 **Known gap.** The log bar's one-tap add from My foods logs straight away, without a flow. Someone who built their list in
 the Library first and logs that way won't see the intro. They've already found their way around, so it's left alone.
 
+## 89. A deployment can add sources to the wizard's Sync step (Nov 6)
+
+**Decision.** `Extensions` gains `useWizardSync`, a hook returning a title, intro, rows and a list of sources, or null. Null is
+the default and keeps the step to intervals.icu alone, exactly as it was. With sources, the step uses the deployment's title and
+intro, drops the Sends and Brings back tiles, and shows intervals.icu as a row beside the others. The summary gets a row per
+source. Skip for now and the "Connect intervals.icu" to-do only show while nothing is connected.
+
+**Why.** A deployment's other source shouldn't wait to be found on Connections. It's a hook rather than a `ReactNode`, unlike
+`extraConnections` (#73), because the summary and footer need live connection state, and the copy has to fall back when the
+source turns out not to be available.
+
+**Rows, not a main card.** The rider picks any of them or all of them, so no source gets the big card and full-width button.
+
+**Rejected.**
+- *Reusing `extraConnections` alone*: the title would still say one source, and the summary couldn't show the others.
+
+## 90. The coach reads stored rides whichever source they came from (Nov 6)
+
+**Decision.** `trainingContext` gains a status, `stored`: intervals.icu isn't connected, but the athlete has stored rides or the
+deployment says another ride source is connected (`otherRideSource`, a new `createCore` option). The ride tools then work, and
+the turn line says they may lack load, fitness and power curves, and not to ask the athlete to connect anything else.
+`not_configured` now means there really is nothing to read. Labels and chips the athlete sees no longer say "from intervals.icu".
+
+**Why.** The tools already read our own copy (#49), so rides from another source (#71) were stored and only a check on
+intervals.icu kept them from the coach. It told the athlete it couldn't see rides that were on their calendar. The
+`otherRideSource` check covers day one: a source just connected has no rides yet, and the first message is "Plan my first week".
+
+**Trade-off.** Tool descriptions still say intervals.icu. Changing them would reset the cached prefix (#65), and the turn line
+already says otherwise. The persona's line on where numbers come from stays too.
+
+## 91. Two records are one ride if they overlap (Nov 6)
+
+**Decision.** `isSameRide` now asks whether the two time windows overlap by at least half of the longer one. It replaces
+"started within 5 minutes and lasted within 10%" from #71. Everything else in #71 stands: the intervals.icu copy wins, and
+sessions and feedback move to it.
+
+**Why.** One rider can't do two rides at once, so overlap is the real signal. Comparing lengths breaks when sources disagree
+about stops: 3 hours of riding with a 30-minute stop is 14% apart if one source counts only the riding. A recording started
+8 minutes late, or stopped early, also came out as two rides.
+
+**Still two rides:** back-to-back rides, and a short ride inside a much longer recording, which is under half of it.
+
+**Known gap.** Two records from the same second source aren't compared, so two devices recording one ride stay as two.
+
+## 92. Coach asks a rider with no training source to connect intervals.icu (Nov 6)
+
+**Decision.** While intervals.icu isn't connected, Coach shows a card at the top of the right rail: "<brand> works best
+with intervals.icu", what the rider gains, the deployment's Connect action (or its hint), "No account? Sign up free"
+(intervals.icu, new tab) and "All connections". On phones it's one row under the Today strip that leads to Connections.
+A broken connection gets "Reconnect intervals.icu" instead, with no sign-up link.
+- **Other sources are asked too.** intervals.icu is the only way a workout reaches Zwift or anywhere else, so a rider whose
+  rides arrive some other way still needs it. A new `useOtherTrainingSource` extension says whether another source brings
+  rides in (self-host: none), and only changes the words: those riders are told about sending workouts out, never that
+  their rides are missing. It returns undefined while loading, and the card waits for it and for the intervals.icu status,
+  so it doesn't flash. Revisit when workouts can go to another destination directly.
+- **Mid widths:** below 940 px of page width the rail wraps under the chat, where the card would go unseen, so the row sits
+  under the page header instead and the card hides. One ask at any width.
+- **Both links land on Connections** (`/athlete/goals#connections`), which sits below Goals and Memory on phones.
+- **Not dismissible.** It goes away when a source connects. A rider who never connects keeps seeing it.
+
+## 92. A source can be hidden from the coach and stay on show (Nov 6)
+
+**Decision.** `createCore` gains `coachHiddenProviders`, asked once per turn. Rides from those sources stay in `activities` and on
+every screen, but the coach can't read them: the ride tools, the `stored` check (#90), ratings on those rides, and the food budget
+in the turn's context all leave them out. A rating goes with its ride because it carries the ride's name.
+
+**Why.** A deployment may have to stop sending a source to AI while the athlete keeps seeing their data.
+
+**A failure fails the turn.** Unlike `coachContext`, which costs a line, a failed check here could send what's been withheld.
+
+**The on-screen budget still counts these rides.** Only the coach's copy is filtered, so the athlete's numbers don't change.
+
+## 93. Old chats can be forgotten, and what only Claude saw can be cleared (Nov 6)
+
+**Decision.** Two steps, on `Core.coach`:
+- `forgetContexts` flags every chat of an athlete. The next turn restarts with reason `reset`: nothing older and no recap, because a
+  recap would send the same text to the summary model. A new chat won't recap a flagged one. It goes ahead of the
+  in-flight check in `restartReason`: a promise not to send something outranks a stranded tool result, which `repair` fixes.
+- `clearContexts` then edits stored messages. Context messages and tool results lose their content, which also takes any figures
+  worked out from the data. Thinking blocks go. Chips whose result held the source's marker lose their rows. Recap blocks go. What
+  the athlete typed and the coach's words stay.
+
+**This amends rule 2 and #6.** Stored messages were never edited because replay needs them exact. A message that can't be sent again
+has no such need, so clearing must follow forgetting, every time. The athlete's view is unchanged except for those chips.
+
+**The chat says so.** A `reset` break reads "Your coach no longer sees earlier messages", because nothing was summarized.
+
+**A flag on the thread,** not a time on the profile: `getProfile` returns every field, and the thread is already loaded each turn.
+`restartContext` clears it.
+
+**Trade-off.** The coach's replies can repeat what's been cleared, with no marker to find them by, so they stay. They're never sent
+again. Memory notes the coach wrote aren't touched.
+
+## 94. Food can be logged with no food behind it, and Eating out is the one place it guesses (Nov 6)
+
+**Decision.** A log entry can be `kind: 'calories'`: numbers with no food, recipe or `refId`. It does two jobs:
+- **Log calories:** a pinned row and a footer link in Search my foods. kcal is required. Protein, carbs, fat, alcohol and the rest are optional.
+- **Eating out:** a third tab in Log food. Photos of the plate or menu, plus what they had, go to the model. They check an itemised
+  estimate, then log it. Nothing is written before Log, photos included.
+
+**This amends #33, #34 and rule 1a.** Logging was only ever from the user's own foods, and nothing was guessed. Both still hold for
+everything else: Log with AI still refuses to guess a miss. An estimate is a guess and is marked as one wherever it goes, with ≈, a range,
+a confidence and an Estimate tag, on the entry and on any total that includes it. kcal round to the nearest 5, and every item keeps a
+range of at least ±10%, even if the model calls it exact.
+
+**The model says what's in it; code does the sums (as #78).** `core/food/estimate.ts` works out every number, so the header is always the
+sum of the cards. The server recomputes from the items and never takes a total from the client. Confidence comes from the width of the
+range, not the model, so it moves when the rider changes something. Ranges add up to a wide total, so the lines are set from real estimates:
+up to 0.3 of the kcal is High and up to 0.55 Medium. A clear order came in around 0.5 and a vague one around 0.6.
+
+**How it's stored.**
+- `refId` is optional on the entry, not a union: `FoodLogDoc` is an interface over `Omit<FoodLogEntry>`, and a union would lose it. `core.entryRef`
+  is the one way to read a ref. `loggableKinds`, `mealItemSchema` and `foodLogInputSchema` didn't change, so a meal can't hold one of these.
+- Blank macros are stored as 0, because totals add them up. A row with no macros reads "kcal only". A day's macros are understated by
+  whatever was left blank, which we accept.
+- `source` is `'manual'` for typed numbers and a new `'estimate'`, and `isEstimate` reads that alone. Details are in `entry.estimate`: range,
+  place, items, photos.
+- `alcohol` is a new optional nutrient. Reading a label doesn't produce it, so `readableNutrientKeys` leaves it out.
+- A meal logged as N items is N entries sharing `estimate.group`, and counts as one estimate.
+
+**Questions cost no second call.** The one estimate call returns its questions, and each answer carries a factor on one item, so answering
+is arithmetic. An answer says whether it's about the amount: "about half" changes the portion, and "how much butter" changes `scale`, so two
+pieces of bread stay two pieces. A skip or "Not sure" uses the typical amount and draws the item amber. At most two: the prompt says so and core enforces it,
+because a schema limit would fail a call that's already been paid for.
+
+**Models.** A new router job, `estimate`, defaulting to Sonnet at medium effort: judging a portion from a photo is more than the small model
+was chosen for. On the same order, Haiku worked and cost a tenth as much, but offered no sizes and asked nothing. A real estimate took 1.5 to
+8 seconds and 0.1¢ to 1.7¢ US. It stays on `SMALL_MODELS`, so never Opus. It has its own purpose and `AiUse`, `food_estimate`. "Anything different?" is text
+only on `small`, under `food_adjust`, with its own schema and prompt: `ADJUST_SYSTEM` refuses "I only had half", the likeliest thing to say.
+
+**Photos** go up with Log, not with the estimate, so an abandoned estimate leaves nothing in the bucket. A photo goes when the last entry
+showing it does. A copy and a saved food don't carry them.
+
+**Saved estimates.** Save as a food (on when a place is named) makes one serving of the whole meal with `source: 'estimate'` and a range.
+Logging it later is a search with no AI, and the entry stays an Estimate. The same name updates that estimate, and never touches a food of
+theirs that isn't one. They're left out of recipe ingredients, where the tag would be lost.
+
+**The coach** sees a count on the Food line, so it doesn't quote the total as exact. No tool changed, so the cached prefix didn't.
+
+**Trade-offs.**
+- No web search, so a chain's numbers are what the model remembers, and it's told never to call them official. Revisit with real estimates.
+- A saved estimate is one set of numbers. Its items aren't kept, so it has a normal portion, not Change portions.
+- A new save has no usage yet, so it finds by search but isn't in Recent until it's logged from search once.
+
+**Rejected.**
+- *A built-in "Calories" food*: rule 1a says foods start empty, and every user would need a row seeded.
+- *A discriminated union for entries*: see above.
+- *A second AI call to apply answers*: slower, dearer, and it could move numbers the rider didn't ask about.
+- *Storing photos with the estimate call*: writes before the rider confirms, and leaves orphans.
+- *Reusing `adjustFood`*: it targets one food, can't add an item, and doesn't move ranges.
+- *The model's own confidence*: it wouldn't change as the rider edits.
+

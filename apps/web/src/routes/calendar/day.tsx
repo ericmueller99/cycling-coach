@@ -1,4 +1,4 @@
-import { addDays, dayTimeline, formatLongDay, groupByDay, sessionState, sumNutrients, weekStart, type CalendarDay, type TimelineItem } from '@cycling-coach/core';
+import { addDays, countEstimates, dayTimeline, formatLongDay, groupByDay, sessionState, sumNutrients, weekStart, type CalendarDay, type TimelineItem } from '@cycling-coach/core';
 import type { CalendarActivity, CalendarEvent, IsoDate, SessionFeedback } from '@cycling-coach/shared';
 import { useMemo } from 'react';
 import { DoneIcon } from '../../components/icons';
@@ -85,7 +85,8 @@ export function useDay(date: IsoDate, today: IsoDate, includeEmpty: boolean) {
     [lib.data, entries, sessions, date, today, includeEmpty],
   );
   const total = useMemo(() => sumNutrients((entries ?? []).map((e) => e.nutrients)), [entries]);
-  return { lib, log, budget: budget.data, calendar, timeOff, byDate, ratings, ridesById, sessions, timeline, total, entries: entries ?? [] };
+  const estimates = useMemo(() => countEstimates(entries ?? []), [entries]);
+  return { lib, log, budget: budget.data, calendar, timeOff, byDate, ratings, ridesById, sessions, timeline, total, estimates, entries: entries ?? [] };
 }
 
 /** A session on a timeline: type colour bar, title, meta, done/RPE — opens the session panel. */

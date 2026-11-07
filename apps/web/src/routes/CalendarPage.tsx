@@ -24,7 +24,7 @@ import { RpePill } from '../components/RpePill';
 import { Button, ErrorNote, PageHeader, Spinner } from '../components/ui';
 import { calendarChunkStart, errorMessage, useCalendarRange, useDashboard, useTimeOff } from '../lib/queries';
 import { COMPLETED, feedbackForEvent, indexFeedback, type FeedbackIndex } from '../lib/feedback';
-import { fmtKcal, nowTime } from '../lib/food';
+import { approx, fmtKcal, includesEstimates, nowTime } from '../lib/food';
 import { useDaysRange, useFoodLibrary } from '../lib/foodQueries';
 import { SESSION_STYLE, TENTATIVE, durationText, hoursLabel, kindLabel } from '../lib/session';
 import { useIsMobile } from '../lib/useIsMobile';
@@ -501,6 +501,7 @@ function ScrollingCalendar({ today, initialWeek }: { today: string; initialWeek:
             onClose={() => setSelected(null)}
             onSelect={setSelected}
             onFood={(slot) => addFood(selected.date, slot)}
+            onEntry={(entry) => flows.setFlow({ kind: 'entry', entry })}
           />
         )}
         {selectedEvent && (
@@ -549,17 +550,16 @@ function FoodFooter({ d, date, today }: { d: DayFoodSummary | undefined; date: s
   const eaten = d.eaten?.kcal;
   if (eaten == null && !isToday) return null;
   const kcal = eaten ?? 0;
-  if (d.budget == null) return <div className="mt-auto border-t border-divider px-0.5 pt-1 font-mono text-[11px] text-muted">{fmtKcal(kcal)} kcal</div>;
+  const est = approx(d.estimates);
+  if (d.budget == null) return <div className="mt-auto border-t border-divider px-0.5 pt-1 font-mono text-[11px] text-muted">{est}{fmtKcal(kcal)} kcal</div>;
   const net = kcal - d.budget;
   const fill = fillColor(net, isToday);
   const color = net > 0 ? OVER : fill;
   return (
-    <div className="mt-auto flex flex-col gap-1 border-t border-divider px-0.5 pt-1" title={`${fmtKcal(kcal)} eaten of ${fmtKcal(d.budget)} budget`}>
+    <div className="mt-auto flex flex-col gap-1 border-t border-divider px-0.5 pt-1" title={`${est}${fmtKcal(kcal)} eaten of ${fmtKcal(d.budget)} budget${d.estimates ? `. ${includesEstimates(d.estimates)}` : ''}`}>
       <KcalBar eaten={kcal} budget={d.budget} fill={fill} />
       <div className="flex justify-between gap-1 font-mono text-[11px] leading-tight">
-        <span className="truncate text-muted">
-          {fmtKcal(kcal)} / {fmtKcal(d.budget)}
-        </span>
+        <span className="truncate text-muted">{d.estimates ? `${est}${fmtKcal(kcal)} est.` : `${fmtKcal(kcal)} / ${fmtKcal(d.budget)}`}</span>
         <span className="flex-none font-semibold" style={{ color }}>
           {isToday && net <= 0 ? `${fmtKcal(-net)} left` : signed(net)}
         </span>

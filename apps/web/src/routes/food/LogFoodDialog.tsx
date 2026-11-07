@@ -2,13 +2,15 @@ import { computePortion, formatPortion, rankByUse, startingPortion } from '@cycl
 import type { FoodLibrary, IsoDate, Portion, StapleResult } from '@cycling-coach/shared';
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Dialog } from '../../components/Dialog';
-import { BarcodeIcon, CameraIcon, ChevronLeft, SearchIcon, SparkleIcon } from '../../components/icons';
+import { BarcodeIcon, CameraIcon, ChevronLeft, ForkKnifeIcon, SearchIcon, SparkleIcon } from '../../components/icons';
 import { PortionPicker } from '../../components/PortionPicker';
 import { Button, ErrorNote, Spinner, inputCls } from '../../components/ui';
 import { fmtKcal, itemUsage, libraryItems, nowTime, SOURCE_LINE, type LibraryItem } from '../../lib/food';
 import { useFoodMutations } from '../../lib/foodQueries';
 import { errorMessage } from '../../lib/queries';
 import { useIsMobile } from '../../lib/useIsMobile';
+import { CaloriesPanel } from './CaloriesPanel';
+import { EatingOut, useEatingOut } from './EatingOut';
 import { LogFoodAI } from './LogFoodAI';
 import { MealLogPanel } from './MealLogPanel';
 import { SourceTag } from './SourceTag';
@@ -64,18 +66,22 @@ function ResultRow({ item, lib, slot, selected, onPick }: { item: LibraryItem; l
           {usage ? ` · logged ${usage.count}×` : ''}
         </span>
       </span>
-      <span className="font-mono text-[13px]">{fmtKcal(kcal)}</span>
+      <span className="font-mono text-[13px]">
+        {item.kind === 'food' && item.food.source === 'estimate' ? '≈ ' : ''}
+        {fmtKcal(kcal)}
+      </span>
     </button>
   );
 }
 
 const STAPLES_KEY = 'food.logFood.staples';
 const MODE_KEY = 'food.logFood.mode';
-export type LogFoodMode = 'search' | 'ai';
+export type LogFoodMode = 'search' | 'ai' | 'out';
 
 function readMode(): LogFoodMode {
   try {
-    return localStorage.getItem(MODE_KEY) === 'ai' ? 'ai' : 'search';
+    const stored = localStorage.getItem(MODE_KEY);
+    return stored === 'ai' || stored === 'out' ? stored : 'search';
   } catch {
     return 'search';
   }
@@ -180,6 +186,7 @@ function Detail({
       onError: (e) => setError(errorMessage(e)),
     });
 
+  const guessed = item.kind === 'food' && item.food.source === 'estimate';
   const provenance =
     item.kind === 'food'
       ? `${SOURCE_LINE[item.food.source]}${item.food.servingLabel ? ` · per ${item.food.servingLabel}` : ''}`
@@ -212,7 +219,7 @@ function Detail({
           Add &amp; keep going
         </Button>
         <Button variant="primary" disabled={!priced || m.log.isPending} onClick={() => add(false)}>
-          Add {priced ? `${fmtKcal(priced.nutrients.kcal)} kcal ` : ''}to {slot}
+          Add {priced ? `${guessed ? '≈ ' : ''}${fmtKcal(priced.nutrients.kcal)} kcal ` : ''}to {slot}
         </Button>
       </div>
     </div>
@@ -222,7 +229,8 @@ function Detail({
 /**
  * Log food: search the user's own foods, recipes and meals — never a
  * public database — ranked by text, then how often and how recently they log them. Or "Log with
- * AI": describe it, check every matched item, then log. The mode is remembered here.
+ * AI": describe it, check every matched item, then log. Or Eating out: an estimate of a restaurant
+ * meal, the one thing here that guesses. The mode is remembered here.
  */
 export function LogFoodDialog({
   lib,
@@ -266,6 +274,12 @@ export function LogFoodDialog({
     }
   };
   const [staple, setStaple] = useState<StapleResult | null>(null);
+  const [calories, setCalories] = useState(false);
+  const eatingOut = useEatingOut();
+  // Closing throws away an estimate that's been paid for and not logged.
+  const close = () => {
+    if (!eatingOut.result || window.confirm('Close without logging? This estimate will be lost.')) onClose();
+  };
   const [tab, setTab] = useState<TabKey>('all');
   const [slot, setSlot] = useState(initialSlot);
   const items = useMemo(() => libraryItems(lib), [lib]);
@@ -302,11 +316,18 @@ export function LogFoodDialog({
   const { staplesOn } = staples;
   const pick = (item: LibraryItem) => {
     setStaple(null);
+    setCalories(false);
     setSelected(item);
   };
   const pickStaple = (hit: StapleResult) => {
     setSelected(null);
+    setCalories(false);
     setStaple(hit);
+  };
+  const pickCalories = () => {
+    setSelected(null);
+    setStaple(null);
+    setCalories(true);
   };
 
   const onLogged = (keepGoing: boolean) => {
@@ -325,7 +346,9 @@ export function LogFoodDialog({
     </select>
   );
 
-  const detail: ReactNode = staple ? (
+  const detail: ReactNode = calories ? (
+    <CaloriesPanel lib={lib} date={date} slot={slot} setSlot={setSlot} onLogged={onClose} />
+  ) : staple ? (
     <StapleDetailPanel key={`${staple.source}:${staple.ref}`} hit={staple} lib={lib} date={date} slot={slot} setSlot={setSlot} onLogged={onClose} />
   ) : selected ? (
     selected.kind === 'meal' ? (
@@ -343,6 +366,9 @@ export function LogFoodDialog({
       <button type="button" className="border-0 bg-transparent p-0 font-medium text-accent-ink" onClick={() => addNew.manual(q)}>
         Enter manually
       </button>
+      <button type="button" className="border-0 bg-transparent p-0 font-medium text-accent-ink" onClick={pickCalories}>
+        Just log calories
+      </button>
     </div>
   );
 
@@ -350,11 +376,12 @@ export function LogFoodDialog({
   const stapleSection = <StapleHits query={query} staples={staples} selected={staple} onPick={pickStaple} className={staplesOn ? 'mt-3' : 'mt-2'} />;
 
   const modeSwitch = (
-    <div role="tablist" aria-label="How to log" className="flex flex-none self-start rounded-[10px] bg-track p-0.5">
+    <div role="tablist" aria-label="How to log" className="flex max-w-full flex-none self-start rounded-[10px] bg-track p-0.5">
       {(
         [
-          ['search', 'Search my foods', <SearchIcon key="s" size={14} />],
+          ['search', mobile ? 'Search' : 'Search my foods', <SearchIcon key="s" size={14} />],
           ['ai', 'Log with AI', <SparkleIcon key="a" size={14} />],
+          ['out', 'Eating out', <ForkKnifeIcon key="o" size={14} />],
         ] as const
       ).map(([key, label, icon]) => (
         <button
@@ -363,7 +390,7 @@ export function LogFoodDialog({
           role="tab"
           aria-selected={mode === key}
           onClick={() => setMode(key)}
-          className={`flex min-h-8 items-center gap-1.5 rounded-lg border-0 px-3 text-[13px] text-ink mobile:min-h-10 ${mode === key ? 'bg-surface font-semibold shadow-[0_1px_2px_rgba(16,24,40,.12)]' : 'bg-transparent font-medium'}`}
+          className={`flex min-h-8 items-center gap-1.5 rounded-lg border-0 px-3 text-[13px] whitespace-nowrap text-ink mobile:min-h-11 mobile:px-2.5 ${mode === key ? 'bg-surface font-semibold shadow-[0_1px_2px_rgba(16,24,40,.12)]' : 'bg-transparent font-medium'}`}
         >
           {icon}
           {label}
@@ -430,6 +457,16 @@ export function LogFoodDialog({
 
   const resultList = (
     <div role="listbox" aria-label="Results" className="flex flex-none flex-col overflow-hidden rounded-[10px] border border-line">
+      <button
+        type="button"
+        role="option"
+        aria-selected={calories}
+        onClick={pickCalories}
+        className={`flex min-h-14 w-full flex-col justify-center border-0 border-b border-divider px-3 py-2 text-left text-ink ${calories ? 'bg-accent-tint' : 'bg-surface hover:bg-surface-2'}`}
+      >
+        <span className="font-medium">Log calories</span>
+        <span className="block text-xs text-muted">Know the number? No food needed.</span>
+      </button>
       {results.length ? (
         results.map((item) => (
           <ResultRow key={`${item.kind}:${item.id}`} item={item} lib={lib} slot={slot} selected={selected?.kind === item.kind && selected.id === item.id} onPick={() => pick(item)} />
@@ -449,9 +486,17 @@ export function LogFoodDialog({
     </span>
   );
 
+  if (mode === 'out') {
+    return (
+      <Dialog title={title} onClose={close} width={1040} tall>
+        <EatingOut s={eatingOut} lib={lib} date={date} slot={slot} isToday={dateLabel.startsWith('Today')} mobile={mobile} modeSwitch={modeSwitch} onSearchMode={() => setMode('search')} onClose={onClose} />
+      </Dialog>
+    );
+  }
+
   if (mode === 'ai') {
     return (
-      <Dialog title={title} onClose={onClose} width={960} tall>
+      <Dialog title={title} onClose={close} width={960} tall>
         <LogFoodAI
           lib={lib}
           date={date}
@@ -471,14 +516,15 @@ export function LogFoodDialog({
 
   if (mobile) {
     return (
-      <Dialog title={title} onClose={onClose} tall>
-        {selected || staple ? (
+      <Dialog title={title} onClose={close} tall>
+        {selected || staple || calories ? (
           <>
             <button
               type="button"
               onClick={() => {
                 setSelected(null);
                 setStaple(null);
+                setCalories(false);
               }} className="flex min-h-[44px] items-center gap-1 self-start border-0 bg-transparent p-0 font-medium text-accent-ink">
               <ChevronLeft /> Results
             </button>
@@ -497,7 +543,7 @@ export function LogFoodDialog({
   }
 
   return (
-    <Dialog title={title} onClose={onClose} width={960} tall>
+    <Dialog title={title} onClose={close} width={960} tall>
       <div className="grid min-h-0 flex-auto grid-cols-[minmax(0,1fr)_380px] grid-rows-[minmax(0,1fr)] gap-5">
         <div className="flex min-h-0 flex-col gap-3">
           {searchBlock}

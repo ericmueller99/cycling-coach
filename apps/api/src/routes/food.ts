@@ -2,6 +2,11 @@ import {
   bodyScanInputSchema,
   bodyScanPatchSchema,
   energyPatchSchema,
+  caloriesEditSchema,
+  caloriesLogInputSchema,
+  estimateAdjustInputSchema,
+  estimateInputSchema,
+  estimateLogInputSchema,
   foodAdjustInputSchema,
   foodInputSchema,
   foodLogBulkSchema,
@@ -20,6 +25,14 @@ import {
   stapleQuerySchema,
   stapleSources,
   type BarcodeLookup,
+  type CaloriesEdit,
+  type CaloriesLogInput,
+  type EntryPhoto,
+  type EstimateAdjustInput,
+  type EstimateAdjustResult,
+  type EstimateInput,
+  type EstimateLogInput,
+  type EstimateResult,
   type FoodAdjustInput,
   type FoodAdjustment,
   type FoodParseInput,
@@ -102,6 +115,18 @@ export interface FoodServices {
   parse(userId: string, input: FoodParseInput): Promise<FoodParseResult | ServiceFailure>;
   /** "Adjust with AI": how much a food's values move. A proposal; nothing is saved. */
   adjust(userId: string, input: FoodAdjustInput): Promise<FoodAdjustment | ServiceFailure>;
+  /** Numbers the user knows, with no food behind them. */
+  logCalories(userId: string, input: CaloriesLogInput): Promise<FoodLogEntry>;
+  /** Log a confirmed estimate. The first time anything from it is written, photos included. */
+  logEstimate(userId: string, input: EstimateLogInput): Promise<FoodLogEntry[]>;
+  /** Change a `calories` entry's numbers, or an estimate's items. */
+  editCalories(userId: string, id: string, edit: CaloriesEdit): Promise<FoodLogEntry | ServiceFailure>;
+  /** Signed links to an estimate's photos. */
+  entryPhotos(userId: string, id: string): Promise<EntryPhoto[] | ServiceFailure>;
+  /** Eating out: photos and words to an itemised estimate. Nothing is written. */
+  estimate(userId: string, input: EstimateInput): Promise<EstimateResult | ServiceFailure>;
+  /** "Anything different?" on an estimate. Nothing is written. */
+  adjustEstimate(userId: string, input: EstimateAdjustInput): Promise<EstimateAdjustResult | ServiceFailure>;
   /** Signed links to a food's stored photos. */
   imageUrls(userId: string, foodId: string): Promise<{ key: string; kind: string; url: string }[] | ServiceFailure>;
 }
@@ -126,6 +151,9 @@ const isFailure = (r: object): r is ServiceFailure => 'error' in r && 'status' i
 const notFound = { error: 'Not found' } as const;
 
 /** `/api/food/*` — mounted behind the auth guard. Chained, so the typed client sees every route. */
+/** Estimates carry photos, shrunk in the browser. Too large for every other route. */
+const photosLimit = bodyLimit({ maxSize: 15 * 1024 * 1024, onError: (c) => c.json({ error: 'Those photos are too large.' }, 413) });
+
 /** The AI routes can be refused by the spend guard, and the refusal's way forward has to reach the app. */
 const refusal = ({ error, action }: ServiceFailure) => ({ error, ...(action ? { action } : {}) });
 
@@ -161,6 +189,14 @@ export function foodRoutes(food: FoodServices) {
           return isFailure(r) ? c.json(refusal(r), r.status) : c.json(r);
         },
       )
+      .post('/estimate', photosLimit, json(estimateInputSchema), async (c) => {
+        const r = await food.estimate(c.get('user')!.id, c.req.valid('json'));
+        return isFailure(r) ? c.json(refusal(r), r.status) : c.json(r);
+      })
+      .post('/estimate/adjust', json(estimateAdjustInputSchema), async (c) => {
+        const r = await food.adjustEstimate(c.get('user')!.id, c.req.valid('json'));
+        return isFailure(r) ? c.json(refusal(r), r.status) : c.json(r);
+      })
       .post('/parse', json(foodParseInputSchema), async (c) => {
         const r = await food.parse(c.get('user')!.id, c.req.valid('json'));
         return isFailure(r) ? c.json(refusal(r), r.status) : c.json(r);
@@ -211,6 +247,21 @@ export function foodRoutes(food: FoodServices) {
       .post('/log', json(foodLogBulkSchema), async (c) => {
         const r = await food.log(c.get('user')!.id, c.req.valid('json').entries);
         return isFailure(r) ? c.json({ error: r.error }, r.status) : c.json<FoodLogPayload>({ entries: r }, 201);
+      })
+      .post('/log/calories', json(caloriesLogInputSchema), async (c) => {
+        const entry = await food.logCalories(c.get('user')!.id, c.req.valid('json'));
+        return c.json<FoodLogPayload>({ entries: [entry] }, 201);
+      })
+      .post('/log/estimate', photosLimit, json(estimateLogInputSchema), async (c) =>
+        c.json<FoodLogPayload>({ entries: await food.logEstimate(c.get('user')!.id, c.req.valid('json')) }, 201),
+      )
+      .patch('/log/:id/calories', json(caloriesEditSchema), async (c) => {
+        const r = await food.editCalories(c.get('user')!.id, c.req.param('id'), c.req.valid('json'));
+        return isFailure(r) ? c.json({ error: r.error }, r.status) : c.json(r);
+      })
+      .get('/log/:id/photos', async (c) => {
+        const r = await food.entryPhotos(c.get('user')!.id, c.req.param('id'));
+        return Array.isArray(r) ? c.json(r) : c.json({ error: r.error }, r.status);
       })
       .patch('/log/:id', json(foodLogPatchSchema), async (c) => {
         const r = await food.patchEntry(c.get('user')!.id, c.req.param('id'), c.req.valid('json'));

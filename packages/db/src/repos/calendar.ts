@@ -79,6 +79,29 @@ export async function replaceRideReferences(c: Collections, userId: string, id: 
   });
 }
 
+/**
+ * These rides are gone for good. A session keeps its status, since the athlete did ride, and any
+ * other ride on it. A rating stays with its session, and one on an unplanned ride goes with the ride,
+ * since its title is the ride's name.
+ */
+export async function removeRideReferences(c: Collections, userId: string, ids: readonly string[], now: Date): Promise<void> {
+  if (!ids.length) return;
+  const gone = new Set(ids);
+  const events = await c.calendarEvents.find({ userId, $or: [{ activityId: { $in: [...ids] } }, { extraActivityIds: { $in: [...ids] } }] }).toArray();
+  for (const e of events) {
+    const [activityId, ...extras] = [...(e.activityId ? [e.activityId] : []), ...(e.extraActivityIds ?? [])].filter((id) => !gone.has(id));
+    await c.calendarEvents.updateOne(
+      { _id: e._id },
+      {
+        $set: { updatedAt: now, ...(activityId ? { activityId } : {}), ...(extras.length ? { extraActivityIds: extras } : {}) },
+        ...(activityId && extras.length ? {} : { $unset: { ...(activityId ? {} : { activityId: '' as const }), ...(extras.length ? {} : { extraActivityIds: '' as const }) } }),
+      },
+    );
+  }
+  await c.sessionFeedback.deleteMany({ userId, activityId: { $in: [...ids] }, eventId: { $exists: false } });
+  await c.sessionFeedback.updateMany({ userId, activityId: { $in: [...ids] } }, { $unset: { activityId: '' }, $set: { updatedAt: now } });
+}
+
 /** The Mongo update for a patch: `$set` what it sets, `$unset` what it clears (a set value wins). */
 export function eventPatchUpdate(patch: CalendarEventPatch & { activityId?: string | undefined }, now: Date): UpdateFilter<CalendarEventDoc> {
   const { unset, ...fields } = patch;

@@ -94,7 +94,7 @@ async function run(engine: CoachEngine, p = ports()) {
 }
 
 const OPUS = { model: 'claude-opus-5-5', effort: 'medium' as const };
-const config = { apiKey: 'test', router: () => ({ chat: OPUS, build: OPUS, small: 'claude-haiku-5-5' }) };
+const config = { apiKey: 'test', router: () => ({ chat: OPUS, build: OPUS, small: 'claude-haiku-5-5', estimate: OPUS }) };
 
 describe('CoachEngine.runTurn', () => {
   it('says what it is working on for every tool, card tools included, and when the tools are done', async () => {
@@ -140,7 +140,7 @@ describe('CoachEngine.runTurn', () => {
       toolUseId: 'tu1',
       status: 'ok',
       source: 'data',
-      summary: 'Pulled 1 ride from intervals.icu · Oct 22 – Oct 28 · 1 race, 0.7 h, load 61',
+      summary: 'Pulled 1 ride · Oct 22 – Oct 28 · 1 race, 0.7 h, load 61',
     });
     expect(results.ui?.[0]).toHaveProperty('rows', ['Tue Oct 27 · Zwift - Race: Club Ladder · 42 min · load 61']);
     // The model sees power and load, not just the name.

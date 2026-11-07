@@ -57,8 +57,8 @@ import {
   listThreads,
 } from '@cycling-coach/db';
 import { activeShortTerm, CACHE_TTL_MS, carriesTail, carrySince, dayTotals, NUDGE_TOKENS, restartReason, slotForTime, todayIn } from '@cycling-coach/core';
-import type { CoachEvent, CoachTier, FitnessDay, IntegrationStatus, IsoDate, SendMessageInput, ThreadSummary, ThreadView, Workout } from '@cycling-coach/shared';
-import type { FoodTurnContext } from '@cycling-coach/coach';
+import type { CoachEvent, CoachTier, FitnessDay, IsoDate, SendMessageInput, SessionFeedback, ThreadSummary, ThreadView, Workout } from '@cycling-coach/shared';
+import type { FoodTurnContext, TrainingStatus } from '@cycling-coach/coach';
 import type { ObjectId } from 'mongodb';
 import { coachCalendarWindow, coachTimeOffWindow, loadAthleteContext, localNow } from './athlete';
 import type { CoachFoodService } from './coach-food';
@@ -73,6 +73,12 @@ import type { ZwiftEventsService } from './zwift-events';
 /** What a deployment wants the coach to know today, or null for nothing. */
 export type CoachContext = (userId: string, today: IsoDate) => Promise<string | null>;
 
+/** Whether this athlete has a ride source of the deployment's own connected, with or without rides yet. */
+export type OtherRideSource = (userId: string) => Promise<boolean>;
+
+/** Which ride sources are hidden from the coach for this athlete. A failure fails the turn, so nothing goes out by mistake. */
+export type CoachHiddenProviders = (userId: string) => Promise<readonly string[]>;
+
 export interface CoachDeps {
   c: Collections;
   engine: CoachEngine | null;
@@ -80,6 +86,10 @@ export interface CoachDeps {
   training: TrainingData;
   /** Whether this athlete has intervals.icu connected (DECISIONS #53). */
   intervalsConnected: (userId: string) => Promise<boolean>;
+  /** Whether the deployment has another ride source connected for this athlete (DECISIONS #90). */
+  otherRideSource?: OtherRideSource;
+  /** Ride sources the coach mustn't read for this athlete, though they stay on show (DECISIONS #92). */
+  coachHiddenProviders?: CoachHiddenProviders;
   /** The synced Zwift events (`find_events`); reads our database only. */
   events: Pick<ZwiftEventsService, 'query'>;
   /** Asked before every coach turn; a message refuses it (hosted quotas, DECISIONS #57). */
@@ -155,14 +165,15 @@ export async function getThreadView(deps: CoachDeps, userId: string, threadId: s
   const workoutDocs = workoutIds.length
     ? await deps.c.workouts.find({ _id: { $in: workoutIds }, userId }).toArray()
     : [];
-  const contextBreaks = (thread.contexts ?? []).flatMap((x) => {
+  const breaks = (thread.contexts ?? []).flatMap((x) => {
     const first = x.startSeq > 0 ? docs.find((d) => d.seq === x.startSeq) : undefined;
-    return first ? [idOf(first)] : [];
+    return first ? [{ id: idOf(first), reason: x.reason }] : [];
   });
   return {
     thread: toThreadSummary(thread),
     messages,
-    contextBreaks,
+    contextBreaks: breaks.map((b) => b.id),
+    contextResets: breaks.filter((b) => b.reason === 'reset').map((b) => b.id),
     contextLong: (await contextTokens(deps.c, thread)) >= NUDGE_TOKENS,
     proposals,
     workouts: workoutDocs.map(toWorkoutDto),
@@ -218,10 +229,16 @@ async function logUsage(deps: CoachDeps, userId: string, threadId: ObjectId, pur
   });
 }
 
-/** Today's training-data status and fitness, from the synced wellness. */
-async function trainingContext(deps: CoachDeps, userId: string, today: string): Promise<{ status: IntegrationStatus['status']; fitness?: FitnessDay }> {
+/**
+ * Today's training-data status and fitness, from the synced wellness. The ride tools read our own
+ * copy, so without intervals.icu they still work for rides from any other source (DECISIONS #90).
+ */
+async function trainingContext(deps: CoachDeps, userId: string, today: string, hidden: readonly string[]): Promise<{ status: TrainingStatus; fitness?: FitnessDay }> {
   try {
-    if (!(await deps.intervalsConnected(userId))) return { status: 'not_configured' };
+    if (!(await deps.intervalsConnected(userId))) {
+      const stored = (await deps.otherRideSource?.(userId)) || (await deps.training.hasRides(userId, hidden));
+      return { status: stored ? 'stored' : 'not_configured' };
+    }
     const fitness = await deps.training.fitnessOn(userId, today);
     return fitness ? { status: 'connected', fitness } : { status: 'connected' };
   } catch {
@@ -233,21 +250,30 @@ async function trainingContext(deps: CoachDeps, userId: string, today: string): 
  * Today's (or the strip's day's) food against the budget, for the context message. Food is extra
  * context: any failure leaves the line out rather than blocking the coach.
  */
-async function foodContext(deps: CoachDeps, userId: string, today: IsoDate, timezone: string, chosen: SendMessageInput['food']): Promise<FoodTurnContext | undefined> {
+async function foodContext(
+  deps: CoachDeps,
+  userId: string,
+  today: IsoDate,
+  timezone: string,
+  chosen: SendMessageInput['food'],
+  hidden: readonly string[],
+): Promise<FoodTurnContext | undefined> {
   try {
     const date = chosen?.date ?? today;
     const [settings, entries, budget] = await Promise.all([
       deps.food.food.getSettings(userId),
       listLog(deps.c, userId, date, date),
-      deps.food.energy.budget(userId, date),
+      deps.food.energy.budget(userId, date, hidden),
     ]);
     const hhmm = new Intl.DateTimeFormat('en-GB', { timeZone: timezone, hour: '2-digit', minute: '2-digit', hour12: false }).format(deps.now());
-    const eaten = dayTotals(entries, []).get(date)?.eaten ?? { kcal: 0, protein: 0, carbs: 0, fat: 0 };
+    const day = dayTotals(entries, []).get(date);
+    const eaten = day?.eaten ?? { kcal: 0, protein: 0, carbs: 0, fat: 0 };
     return {
       date,
       slot: chosen?.slot ?? slotForTime(settings.slots, hhmm),
       chosen: !!chosen,
       eaten,
+      estimates: day?.estimates ?? 0,
       budgetKcal: budget.ready ? budget.total : null,
       proteinTargetG: budget.macros?.proteinG,
       note: budget.dataWarning ? 'Exercise and steps may be missing from the budget (intervals.icu unavailable)' : budget.protectedDay ? 'No deficit today (hard day)' : undefined,
@@ -260,7 +286,8 @@ async function foodContext(deps: CoachDeps, userId: string, today: IsoDate, time
 
 /** A new API context, ready to start once the athlete's message has a place in the thread. */
 interface NextContext {
-  recap: string;
+  /** None for a `reset`, which carries nothing over. */
+  recap?: string;
   reason: ThreadContextReason;
   usage?: CallUsage | undefined;
 }
@@ -364,7 +391,8 @@ export async function* sendMessage(
   const tid = thread._id;
   const now = deps.now();
   const { today, localTime } = localNow(profile.timezone, now);
-  const training = await trainingContext(deps, userId, today);
+  const hidden = (await deps.coachHiddenProviders?.(userId)) ?? [];
+  const training = await trainingContext(deps, userId, today, hidden);
   // No live CTL here: it's in the context message every turn. In this block it would differ from the
   // thread's snapshot and change daily, re-sending the whole block into a permanent transcript.
   const athlete = (await loadAthleteContext(c, userId))!;
@@ -386,13 +414,16 @@ export async function* sendMessage(
     currentToolsHash: TOOLS_HASH,
     tail: last ? { finished: last.kind === 'assistant' && !openToolUse, at: last.createdAt } : null,
     openToolUse,
+    forget: thread.forgetContext === true,
     now,
   });
-  const next = restart
-    ? await restartRecap(engine, c, userId, thread, context, restart, when, signal)
-    : last
-      ? null
-      : await carryRecap(engine, c, userId, thread, now, when, signal);
+  const next: NextContext | null = restart === 'reset'
+    ? { reason: 'reset' }
+    : restart
+      ? await restartRecap(engine, c, userId, thread, context, restart, when, signal)
+      : last
+        ? null
+        : await carryRecap(engine, c, userId, thread, now, when, signal);
   if (signal?.aborted) {
     yield { type: 'error', message: 'Stopped.', retryable: true };
     return;
@@ -420,16 +451,18 @@ export async function* sendMessage(
 
   const window = coachCalendarWindow(today);
   const timeOffWindow = coachTimeOffWindow(today);
+  // A rating on a hidden ride carries its name, so it stays out with the ride.
+  const shownFeedback = (list: SessionFeedback[]) => list.filter((f) => !hidden.some((p) => f.activityId?.startsWith(`${p}:`)));
   const [windowEvents, windowFeedback, timeOff] = await Promise.all([
     listEvents(c, userId, window.from, window.to),
-    listFeedback(c, userId, window),
+    listFeedback(c, userId, window).then(shownFeedback),
     listTimeOff(c, userId, timeOffWindow.from, timeOffWindow.to),
   ]);
   const calendarBlock = renderCalendarBlock(windowEvents, window.from, window.to, windowFeedback);
   const athleteBlock = renderAthleteBlock(athlete);
   const shortTermBlock = renderShortTermBlock(activeShortTerm(athlete.shortTerm, today));
   const timeOffBlock = renderTimeOffBlock(timeOff);
-  const food = await foodContext(deps, userId, today, profile.timezone, input.food);
+  const food = await foodContext(deps, userId, today, profile.timezone, input.food, hidden);
   // Nice to have: a failure costs the coach this line, never the turn.
   const extra = await deps.coachContext?.(userId, today).catch((err: Error) => {
     console.warn('coach context failed', err.message);
@@ -473,7 +506,7 @@ export async function* sendMessage(
 
   const memories = new MemoryService(c, deps.now);
   const ports: CoachPorts = {
-    training: training.status !== 'not_configured' ? deps.training.port(userId) : null,
+    training: training.status !== 'not_configured' ? deps.training.port(userId, hidden) : null,
     listCalendar: (from, to) => listEvents(c, userId, from, to),
     listTimeOff: (from, to) => listTimeOff(c, userId, from, to),
     getTimeOff: (id) => getTimeOff(c, userId, id),
@@ -483,8 +516,8 @@ export async function* sendMessage(
     updateMemory: (memoryId, patch) => memories.update(userId, memoryId, patch),
     forget: (memoryId) => memories.remove(userId, memoryId),
     findEvents: async (query) => ({ result: await deps.events.query(userId, query), timeZone: profile.timezone }),
-    feedbackForActivities: (ids) => feedbackForActivities(c, userId, ids),
-    listFeedback: ({ start, end, workoutId }) => listFeedback(c, userId, { from: start, to: end, workoutId }),
+    feedbackForActivities: (ids) => feedbackForActivities(c, userId, ids).then(shownFeedback),
+    listFeedback: ({ start, end, workoutId }) => listFeedback(c, userId, { from: start, to: end, workoutId }).then(shownFeedback),
     food: {
       createMealIdeas: (input) => deps.food.coachFood.createMealIdeas(userId, tid, input),
       createRecipeDraft: (input) => deps.food.coachFood.createRecipeDraft(userId, tid, input),

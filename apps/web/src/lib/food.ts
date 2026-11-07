@@ -5,7 +5,10 @@ import {
   usageKey,
   type Loggable,
 } from '@cycling-coach/core';
-import type { Food, FoodLibrary, FoodLogEntry, FoodSource, Meal, NutrientKey, Nutrients, Recipe } from '@cycling-coach/shared';
+import type { CaloriesLogInput, Food, FoodLibrary, FoodLogEntry, FoodSource, Meal, NutrientKey, Nutrients, Recipe } from '@cycling-coach/shared';
+
+/** Estimates and what needs checking. */
+export const AMBER = { bg: '#FEF0C7', fg: '#B54708' } as const;
 
 /** Source tags: Label blue, Photo purple, CNF green, Meal/Recipe orange, Manual grey. */
 export const SOURCE_STYLE: Record<FoodSource | 'recipe' | 'meal', { label: string; bg: string; fg: string }> = {
@@ -15,6 +18,7 @@ export const SOURCE_STYLE: Record<FoodSource | 'recipe' | 'meal', { label: strin
   usda: { label: 'USDA', bg: '#EEF0F3', fg: '#4B5563' },
   off: { label: 'OFF', bg: '#E6F6F4', fg: '#0E7468' },
   manual: { label: 'Manual', bg: '#EEF0F3', fg: '#4B5563' },
+  estimate: { label: 'Estimate', bg: AMBER.bg, fg: AMBER.fg },
   recipe: { label: 'Recipe', bg: '#FFF4E5', fg: '#B54708' },
   meal: { label: 'Meal', bg: '#FFF4E5', fg: '#B54708' },
 };
@@ -27,6 +31,7 @@ export const SOURCE_LINE: Record<FoodSource, string> = {
   usda: 'USDA FoodData Central',
   off: 'Open Food Facts',
   manual: 'Entered by hand',
+  estimate: 'Estimated by AI from a restaurant meal',
 };
 
 /** Macro colours. */
@@ -43,6 +48,40 @@ export function entryPortion(e: Pick<FoodLogEntry, 'quantity' | 'unit' | 'grams'
 
 /** "P 9 · C 52 · F 2" */
 export const macroLine = (n: Nutrients) => `P ${fmtG(n.protein)} · C ${fmtG(n.carbs)} · F ${fmtG(n.fat)}`;
+
+/** The line under an entry's name. A `calories` entry has no portion, and blank macros aren't zeros to show. */
+export function entryLine(e: Pick<FoodLogEntry, 'kind' | 'quantity' | 'unit' | 'grams' | 'nutrients' | 'estimate'>): string {
+  if (e.estimate) return `likely ${fmtKcal(e.estimate.low)}–${fmtKcal(e.estimate.high)} · ${macroLine(e.nutrients)}`;
+  if (e.kind !== 'calories') return `${entryPortion(e)} · ${macroLine(e.nutrients)}`;
+  return e.nutrients.protein || e.nutrients.carbs || e.nutrients.fat ? macroLine(e.nutrients) : 'kcal only';
+}
+
+/** Goes in front of any total that includes an estimate. */
+export const approx = (estimates: number) => (estimates > 0 ? '≈ ' : '');
+export const includesEstimates = (n: number) => `Includes ${n === 1 ? '1 estimate' : `${n} estimates`}`;
+
+/** The rows of the Calories form, before "More nutrients". */
+export const CALORIES_ROWS: readonly NutrientKey[] = ['protein', 'carbs', 'fat', 'alcohol'];
+
+export type CaloriesDraft = Partial<Record<NutrientKey, string>>;
+
+/** Blank is left out. Null until there's a usable kcal, or when anything typed isn't a number. */
+export function parseCalories(draft: CaloriesDraft): CaloriesLogInput['nutrients'] | null {
+  const out: Partial<Record<NutrientKey, number>> = {};
+  for (const [key, raw] of Object.entries(draft) as [NutrientKey, string | undefined][]) {
+    const text = raw?.trim();
+    if (!text) continue;
+    const n = Number(text);
+    if (!Number.isFinite(n) || n < 0) return null;
+    out[key] = n;
+  }
+  return out.kcal == null ? null : { ...out, kcal: out.kcal };
+}
+
+/** What the form shows for a logged entry. A 0 that was left blank comes back blank. */
+export function caloriesDraft(n: Nutrients): CaloriesDraft {
+  return Object.fromEntries(Object.entries(n).filter(([k, v]) => v != null && (k === 'kcal' || v !== 0)).map(([k, v]) => [k, String(v)]));
+}
 
 /** One searchable, loggable thing in the Log food dialog. */
 export type LibraryItem =
@@ -102,4 +141,5 @@ export const NUTRIENT_ROWS: { key: NutrientKey; label: string; unit: string; sub
   { key: 'potassiumMg', label: 'Potassium', unit: 'mg' },
   { key: 'calciumMg', label: 'Calcium', unit: 'mg' },
   { key: 'ironMg', label: 'Iron', unit: 'mg' },
+  { key: 'alcohol', label: 'Alcohol', unit: 'g' },
 ];
