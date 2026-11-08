@@ -7,17 +7,20 @@ export const rpeSchema = z.number().int().min(1).max(10);
 
 /**
  * The athlete's optional rating of a ride: keyed by the calendar session it completed, or by the ride
- * itself when nothing was planned. No defaults — this is also the edit (rule 1b).
+ * itself when nothing was planned. A missed or skipped session takes a reason instead: a note and no
+ * RPE (DECISIONS #97), where an empty note clears it. No defaults — this is also the edit (rule 1b).
  */
 export const sessionFeedbackInputSchema = z
   .object({
     eventId: z.string().min(1).optional(),
     activityId: z.string().min(1).optional(),
-    rpe: rpeSchema,
-    /** In their own words; the coach reads it with the ride data. */
+    /** Required for a ride; never given for a missed or skipped session. */
+    rpe: rpeSchema.optional(),
+    /** In their own words; the coach reads it with the ride data, or as why a session didn't happen. */
     note: z.string().max(1000).optional(),
   })
-  .refine((f) => !!f.eventId !== !!f.activityId, { message: 'Rate either a session (eventId) or a ride (activityId).' });
+  .refine((f) => !!f.eventId !== !!f.activityId, { message: 'Rate either a session (eventId) or a ride (activityId).' })
+  .refine((f) => f.rpe !== undefined || (f.eventId && f.note !== undefined), { message: 'Give an RPE, or a note on a missed session.' });
 export type SessionFeedbackInput = z.infer<typeof sessionFeedbackInputSchema>;
 
 export interface SessionFeedback {
@@ -31,7 +34,8 @@ export interface SessionFeedback {
   title: string;
   /** The library workout the session was, if any. */
   workoutId?: string | undefined;
-  rpe: number;
+  /** Unset on a reason: a missed or skipped session's note (DECISIONS #97). `core.isRating` tells them apart. */
+  rpe?: number | undefined;
   note?: string | undefined;
   createdAt: string;
   updatedAt: string;

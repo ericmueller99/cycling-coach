@@ -164,7 +164,7 @@ export interface AppServices {
     remove(userId: string, id: string): Promise<boolean>;
   };
   feedback: {
-    save(userId: string, input: SessionFeedbackInput): Promise<SessionFeedback | ServiceFailure>;
+    save(userId: string, input: SessionFeedbackInput): Promise<SessionFeedback | { cleared: true } | ServiceFailure>;
   };
   threads: {
     /** Why a coach turn would be refused right now, or null. */

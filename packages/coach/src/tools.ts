@@ -1,5 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk';
-import { daysBetween, describeFeedback, formatLongDay, formatRange, formatStepDuration, sessionsInSpan } from '@cycling-coach/core';
+import { daysBetween, describeFeedback, formatLongDay, formatRange, formatStepDuration, isRating, sessionsInSpan, type Rating } from '@cycling-coach/core';
 import {
   calendarChangeSchema,
   eventFiltersSchema,
@@ -46,7 +46,7 @@ import {
   zwiftEventTypeSchema,
 } from '@cycling-coach/shared';
 import { z } from 'zod';
-import { describeKind, describeStatus, describeTimeOff } from './context';
+import { describeKind, describeSessionFeedback, describeStatus, describeTimeOff } from './context';
 import { toStrictSchema } from './schema';
 
 /**
@@ -197,7 +197,7 @@ function hms(sec: number): string {
 const isRaceLike = (a: Activity) => a.isRace === true || /\brace\b/i.test(a.name);
 
 /** One compact line per activity for the model — id first so it can ask for detail. */
-export function formatActivityForModel(a: Activity, feedback?: SessionFeedback): string {
+export function formatActivityForModel(a: Activity, feedback?: Rating): string {
   const parts = [
     a.id,
     a.startLocal.replace('T', ' ').slice(0, 16),
@@ -223,10 +223,10 @@ export function formatActivityForModel(a: Activity, feedback?: SessionFeedback):
  * The athlete's ratings for these rides, by activity id. Ratings are optional extras on the ride data, so
  * a failed lookup just leaves them out rather than failing the tool.
  */
-async function feedbackByActivity(ports: CoachPorts, activities: readonly Activity[]): Promise<Map<string, SessionFeedback>> {
+async function feedbackByActivity(ports: CoachPorts, activities: readonly Activity[]): Promise<Map<string, Rating>> {
   if (!activities.length) return new Map();
-  const ratings = await ports.feedbackForActivities(activities.map((a) => a.id)).catch(() => []);
-  return new Map(ratings.flatMap((f) => (f.activityId ? [[f.activityId, f] as const] : [])));
+  const ratings: SessionFeedback[] = await ports.feedbackForActivities(activities.map((a) => a.id)).catch(() => []);
+  return new Map(ratings.filter(isRating).flatMap((f) => (f.activityId ? [[f.activityId, f] as const] : [])));
 }
 
 const rowFor = (a: Activity) =>
@@ -246,7 +246,7 @@ export function activityChip(activities: Activity[], start: IsoDate, end: IsoDat
 }
 
 /** One rating for the model: date, what it was, how it felt, and ids to look further. */
-export function formatFeedbackForModel(f: SessionFeedback): string {
+export function formatFeedbackForModel(f: Rating): string {
   const ids = [f.workoutId ? `workout ${f.workoutId}` : '', f.eventId ? `event ${f.eventId}` : 'unplanned ride', f.activityId ? `activity ${f.activityId}` : '']
     .filter(Boolean)
     .join(', ');
@@ -254,7 +254,7 @@ export function formatFeedbackForModel(f: SessionFeedback): string {
 }
 
 /** "VO2 5x4 (workout w1): 3 rated, RPE 4, 5, 4 (newest first)" — the trend per session. */
-export function feedbackRollup(ratings: readonly SessionFeedback[]): string[] {
+export function feedbackRollup(ratings: readonly Rating[]): string[] {
   const groups = new Map<string, { label: string; rpes: number[] }>();
   for (const f of ratings) {
     const key = f.workoutId ?? `title:${f.title}`;
@@ -445,7 +445,7 @@ export const COACH_TOOLS = [
   defineTool({
     name: 'get_calendar',
     description:
-      "Read the athlete's training calendar for a date range outside what the per-turn context already shows (planned, done and skipped sessions, with ids, their rating of a done one when they gave it, and any time off).",
+      "Read the athlete's training calendar for a date range outside what the per-turn context already shows (planned, done, missed and skipped sessions, with ids, their rating of a done one or their reason for a missed or skipped one when they gave it, and any time off).",
     schema: rangeSchema,
     source: 'app',
     async run({ start, end }, { ports }) {
@@ -455,8 +455,8 @@ export const COACH_TOOLS = [
       const lines = [
         ...timeOff.map((t) => `Time off: ${describeTimeOff(t)}`),
         ...events.map((e) => {
-          const rating = felt.get(e.id);
-          return `${e.id} · ${e.date} · ${describeKind(e)} · ${e.type} · ${e.title}${e.durationMin ? ` · ${e.durationMin} min` : ''} · ${describeStatus(e)}${e.tentative ? ' (tentative)' : ''}${e.source === 'intervals' ? ' · added in intervals.icu' : ''}${rating ? ` · felt: ${describeFeedback(rating)}` : ''}`;
+          const said = describeSessionFeedback(e, felt.get(e.id));
+          return `${e.id} · ${e.date} · ${describeKind(e)} · ${e.type} · ${e.title}${e.durationMin ? ` · ${e.durationMin} min` : ''} · ${describeStatus(e)}${e.tentative ? ' (tentative)' : ''}${e.source === 'intervals' ? ' · added in intervals.icu' : ''}${said ? ` · ${said}` : ''}`;
         }),
       ];
       return { content: lines.length ? lines.join('\n') : 'Nothing scheduled in that range.' };
@@ -474,7 +474,8 @@ export const COACH_TOOLS = [
       if (daysBetween(start, end) < 0 || daysBetween(start, end) > FEEDBACK_MAX_DAYS) {
         return { content: `Use a range of 0–${FEEDBACK_MAX_DAYS} days.`, isError: true };
       }
-      const ratings = await ports.listFeedback({ start, end, workoutId: workout_id });
+      // Reasons on missed sessions aren't ride ratings (DECISIONS #97); the calendar carries those.
+      const ratings = (await ports.listFeedback({ start, end, workoutId: workout_id })).filter(isRating);
       const range = formatRange(start, end);
       if (!ratings.length) {
         return {

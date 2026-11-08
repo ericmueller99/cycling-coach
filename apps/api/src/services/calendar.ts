@@ -5,6 +5,8 @@ import {
   createTimeOff,
   deleteEvent,
   deleteTimeOff,
+  deleteReasonForEvent,
+  redateReasonForEvent,
   detachFeedbackFromEvent,
   findEventByActivity,
   getEvent,
@@ -110,6 +112,10 @@ export class CalendarService {
     if (!event) return null;
     // "Mark not done": a rating of a session that didn't happen goes with it.
     if (before.status === 'done' && event.status !== 'done') await detachFeedbackFromEvent(this.c, userId, id, this.now());
+    // Undo Skip, Mark done: the reason it didn't happen no longer holds (DECISIONS #97).
+    const didntHappen = (s: CalendarEvent['status']) => s === 'missed' || s === 'skipped';
+    if (didntHappen(before.status) && !didntHappen(event.status)) await deleteReasonForEvent(this.c, userId, id);
+    else if (event.date !== before.date) await redateReasonForEvent(this.c, userId, id, event.date, this.now());
 
     // Turned into a plain ride: it no longer belongs on intervals.icu.
     if (!isSynced(event) && event.intervals) {
@@ -139,6 +145,8 @@ export class CalendarService {
       if ('error' in removed) return { error: `Couldn't remove it from intervals.icu: ${removed.error}` };
     }
     await deleteEvent(this.c, userId, id);
+    // Only a session that wasn't ridden gets here, so a reason is all the feedback it could have.
+    await deleteReasonForEvent(this.c, userId, id);
     return { ok: true };
   }
 

@@ -73,7 +73,9 @@ describe('renderAthleteBlock — name', () => {
   });
 });
 
-const rating = (over: Partial<SessionFeedback> = {}): SessionFeedback => ({
+// Typed as a rating; a test that passes `rpe: undefined` builds a reason (DECISIONS #97).
+const rating = (over: Partial<SessionFeedback> = {}) =>
+  ({
   id: 'f1',
   eventId: 'e1',
   activityId: 'i9',
@@ -85,7 +87,7 @@ const rating = (over: Partial<SessionFeedback> = {}): SessionFeedback => ({
   createdAt: '',
   updatedAt: '',
   ...over,
-});
+  }) as SessionFeedback & { rpe: number };
 
 describe('renderCalendarBlock — ride ratings', () => {
   const done = { id: 'e1', date: '2026-10-31', kind: 'workout', type: 'intervals', title: 'VO2 5x4', durationMin: 64, tentative: false, status: 'done', source: 'coach', intervals: { eventId: 1 } } as CalendarEvent;
@@ -96,6 +98,20 @@ describe('renderCalendarBlock — ride ratings', () => {
     expect(renderCalendarBlock([done], '2026-10-24', '2026-11-14')).not.toContain('felt:');
     // A rating of an unplanned ride isn't a calendar session.
     expect(renderCalendarBlock([done], '2026-10-24', '2026-11-14', [rating({ eventId: undefined })])).not.toContain('felt:');
+  });
+
+  it('adds why a missed or skipped session didn\'t happen, and keeps a reason off a ridden one (DECISIONS #97)', () => {
+    const reason = rating({ rpe: undefined, activityId: undefined, note: 'Sick with a\n cold.' });
+    const missed = { ...done, status: 'missed' } as CalendarEvent;
+    const skipped = { ...done, status: 'skipped' } as CalendarEvent;
+    expect(renderCalendarBlock([missed], '2026-10-24', '2026-11-14', [reason])).toContain('· missed, on intervals.icu · why: "Sick with a cold."');
+    expect(renderCalendarBlock([skipped], '2026-10-24', '2026-11-14', [reason])).toContain('· skipped, on intervals.icu · why: "Sick with a cold."');
+    // Ridden after all (a late upload): neither a reason nor a felt line.
+    const late = renderCalendarBlock([done], '2026-10-24', '2026-11-14', [reason]);
+    expect(late).not.toContain('why:');
+    expect(late).not.toContain('felt:');
+    // A rating never reads as a reason.
+    expect(renderCalendarBlock([missed], '2026-10-24', '2026-11-14', [rating()])).not.toContain('why:');
   });
 
   it('says when a session was ridden in pieces', () => {

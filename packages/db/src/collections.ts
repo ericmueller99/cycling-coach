@@ -110,7 +110,8 @@ export interface CalendarEventDoc extends CalendarEventInput {
 /**
  * The athlete's rating of a ride. Keyed by the session it completed (`eventId`, with that
  * ride's `activityId` alongside) or, for an unplanned ride, by `activityId` alone. Date, title and
- * workout are copied in so range reads and the coach's feedback tool need no join.
+ * workout are copied in so range reads and the coach's feedback tool need no join. A missed or
+ * skipped session's reason is the same doc with no `rpe` (DECISIONS #97).
  */
 export interface SessionFeedbackDoc {
   _id?: ObjectId;
@@ -120,7 +121,7 @@ export interface SessionFeedbackDoc {
   date: string;
   title: string;
   workoutId?: string;
-  rpe: number;
+  rpe?: number;
   note?: string;
   createdAt: Date;
   updatedAt: Date;

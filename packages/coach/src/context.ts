@@ -1,5 +1,6 @@
 import {
   describeFeedback,
+  describeReason,
   describeMainSet,
   describeTargets,
   formatLongDay,
@@ -13,6 +14,7 @@ import {
   zoneWatts,
   ZONES,
   zwiftCategory,
+  isRating,
 } from '@cycling-coach/core';
 import {
   TIME_OFF_LABEL,
@@ -227,9 +229,21 @@ export function describeStatus(e: Pick<CalendarEvent, 'status' | 'extraActivityI
 }
 
 /**
- * The calendar for the per-turn context. A done session the athlete rated carries `felt: RPE …` — ratings
- * are optional, so most may not. A new or edited rating changes the text, which is how it reaches
- * an open thread (the unchanged-calendar check sends it again).
+ * What the athlete said about a session: `felt: RPE …` on a done one they rated, `why: "…"` on a missed or
+ * skipped one they gave a reason for (DECISIONS #97). Empty otherwise — both are optional. A reason left on
+ * a session that was later ridden stays out.
+ */
+export function describeSessionFeedback(e: Pick<CalendarEvent, 'status'>, fb: SessionFeedback | undefined): string {
+  if (!fb) return '';
+  if (e.status === 'done') return isRating(fb) ? `felt: ${describeFeedback(fb)}` : '';
+  if (e.status === 'missed' || e.status === 'skipped') return !isRating(fb) && fb.note?.trim() ? `why: ${describeReason(fb)}` : '';
+  return '';
+}
+
+/**
+ * The calendar for the per-turn context, with what the athlete said about past sessions
+ * (`describeSessionFeedback`). A new or edited rating or reason changes the text, which is how it
+ * reaches an open thread (the unchanged-calendar check sends it again).
  */
 export function renderCalendarBlock(events: CalendarEvent[], from: IsoDate, to: IsoDate, feedback: readonly SessionFeedback[] = []): string {
   const lines = [`# Calendar ${from} → ${to} (id · date · kind · intensity · title · duration · status)`];
@@ -239,8 +253,7 @@ export function renderCalendarBlock(events: CalendarEvent[], from: IsoDate, to: 
     const dur = e.durationLabel ?? (e.durationMin ? `${e.durationMin} min` : '');
     const sync = e.kind === 'ride' ? '' : e.intervals ? (e.intervals.error ? 'sync failing' : 'on intervals.icu') : 'not yet synced';
     const flags = [e.tentative ? 'tentative' : '', describeStatus(e), sync, e.source === 'intervals' ? 'added in intervals.icu' : ''].filter(Boolean).join(', ');
-    const rating = felt.get(e.id);
-    const tail = [e.meta, e.coachNote ? `note: ${e.coachNote}` : '', rating ? `felt: ${describeFeedback(rating)}` : ''].filter(Boolean).join(' · ');
+    const tail = [e.meta, e.coachNote ? `note: ${e.coachNote}` : '', describeSessionFeedback(e, felt.get(e.id))].filter(Boolean).join(' · ');
     lines.push(
       `- ${e.id} · ${formatLongDay(e.date)} · ${describeKind(e)} · ${e.type} · ${e.title}${dur ? ` · ${dur}` : ''} · ${flags}${tail ? ` · ${tail}` : ''}`,
     );

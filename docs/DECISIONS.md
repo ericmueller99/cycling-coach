@@ -2211,3 +2211,29 @@ coach as "reach by …". So "10 lb in 10 days" looked like a plan the app had ac
 - *Keeping the date and warning on it:* the same reason as #86. It keeps the deadline that sets people up to fail.
 - *A free kg/week number:* the list is what makes the paces safe and easy to understand.
 - *An app-wide kg/lb setting:* the right thing eventually. For now the pace carries its own unit.
+
+## 97. Missed and skipped sessions take a reason, and the coach reads it (Nov 7)
+
+**Context.** A missed session told the coach only that it didn't happen. Being sick, too busy or without power at home
+all look the same, and they call for different plans.
+
+**Decision.** A missed or skipped session's panel has **What happened?**: a short note in the athlete's own words, with
+no RPE. It's stored only, and no Claude call is made when it's saved. The coach reads it the way it reads ratings (#30).
+- **Stored as a `session_feedback` doc with no `rpe`**, keyed by the session's `eventId`. `rpe` is now optional, and
+  `core.isRating` tells a rating from a reason. `PUT /feedback` takes a note alone for a missed or skipped session,
+  refuses an RPE there, and takes an empty note to clear it (`{ cleared: true }`). A done session and a ride still need an RPE.
+- **The coach sees `why: "…"`** on missed and skipped sessions in the per-turn calendar block and in `get_calendar`.
+  A new or edited reason changes the calendar text, so open chats get it on their next turn. `get_ride_feedback` and
+  the activity tools skip reasons, because they aren't ratings.
+- **The prompt says what the field is and nothing more.** One sentence: the reason tells you what happened, so weigh it
+  as a coach would when you advise, plan or adjust. It has no rules for each kind of reason (illness, busy, equipment),
+  because the coach should use its own judgment. The existing rules still apply: changes are proposals.
+- **A reason only shows while the session is missed or skipped.** Setting the session back by hand (undo Skip, Mark
+  done) or deleting it removes the reason (`deleteReasonForEvent`, which never touches a rating). Moving the session
+  moves the reason's date with it. A late upload that marks it done goes through the sync, so the reason stays, hidden.
+  The first rating saved replaces it, and the rating form opens empty.
+
+**Rejected.** *A field on `calendar_events`*: the same reason as #30, since it would sit on the intervals.icu push
+path. *A separate collection*: it would repeat the keying, the calendar response's join and account deletion that
+`session_feedback` already has. *An automatic coach reply on save*: reviews come only when asked for (#30). *Rules for
+each kind of reason in the persona*: the coach should judge like a coach, not follow a script.

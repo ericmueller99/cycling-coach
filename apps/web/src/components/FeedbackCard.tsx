@@ -1,4 +1,4 @@
-import { rpeWord } from '@cycling-coach/core';
+import { isRating, rpeWord } from '@cycling-coach/core';
 import type { SessionFeedback } from '@cycling-coach/shared';
 import { useId, useState } from 'react';
 import { rpeStyle } from '../lib/feedback';
@@ -15,7 +15,9 @@ export function FeedbackCard({ target, feedback: stored }: { target: { eventId: 
   const save = useSaveFeedback();
   // What was just saved shows straight away; the calendar's copy takes over once it's as new.
   const saved = save.data && 'rpe' in save.data ? save.data : undefined;
-  const feedback = saved && (!stored || stored.updatedAt < saved.updatedAt) ? saved : stored;
+  const latest = saved && (!stored || stored.updatedAt < saved.updatedAt) ? saved : stored;
+  // A reason from when the session was missed isn't a rating: the form opens empty (DECISIONS #97).
+  const feedback = latest && isRating(latest) ? latest : undefined;
   const noteId = useId();
   const [editing, setEditing] = useState(!feedback);
   const [rpe, setRpe] = useState<number | null>(feedback?.rpe ?? null);

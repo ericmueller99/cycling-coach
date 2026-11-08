@@ -1,5 +1,5 @@
 import { combineRides, sessionCompliance, sessionRideIds } from '@cycling-coach/core';
-import { getEvent, getProfile, getWorkout, upsertFeedback, type Collections } from '@cycling-coach/db';
+import { deleteReasonForEvent, getEvent, getProfile, getWorkout, upsertFeedback, type Collections } from '@cycling-coach/db';
 import type { SessionFeedback, SessionFeedbackInput, SessionResult } from '@cycling-coach/shared';
 import type { ServiceFailure as Failure } from '../app';
 import type { TrainingData } from './training-data';
@@ -17,13 +17,26 @@ export class FeedbackService {
     private readonly now: () => Date = () => new Date(),
   ) {}
 
-  /** Rate a completed session, or a ride nothing was planned for. */
-  async save(userId: string, input: SessionFeedbackInput): Promise<SessionFeedback | Failure> {
+  /**
+   * Rate a completed session, or a ride nothing was planned for. A missed or skipped session takes a
+   * reason instead: a note with no RPE, which the coach reads as why it didn't happen (DECISIONS #97).
+   * An empty reason clears it.
+   */
+  async save(userId: string, input: SessionFeedbackInput): Promise<SessionFeedback | { cleared: true } | Failure> {
     const rating = { rpe: input.rpe, note: input.note };
     if (input.eventId) {
       const event = await getEvent(this.c, userId, input.eventId);
       if (!event) return { error: 'Session not found.', status: 404 };
+      if (event.status === 'missed' || event.status === 'skipped') {
+        if (input.rpe !== undefined) return { error: 'Missed and skipped sessions take a note, not a rating.', status: 409 };
+        if (!input.note?.trim()) {
+          await deleteReasonForEvent(this.c, userId, event.id);
+          return { cleared: true };
+        }
+        return upsertFeedback(this.c, userId, { eventId: event.id, date: event.date, title: event.title, workoutId: event.workoutId, note: input.note }, this.now());
+      }
       if (event.status !== 'done') return { error: 'Only completed sessions can be rated.', status: 409 };
+      if (input.rpe === undefined) return { error: 'Pick an RPE from 1 to 10.', status: 400 };
       return upsertFeedback(
         this.c,
         userId,
@@ -31,6 +44,7 @@ export class FeedbackService {
         this.now(),
       );
     }
+    if (input.rpe === undefined) return { error: 'Pick an RPE from 1 to 10.', status: 400 };
     if (!this.training) return intervalsOff;
     const ride = await this.training.detail(userId, input.activityId!);
     if (!ride) return { error: 'Ride not found — it may not have synced yet.', status: 404 };

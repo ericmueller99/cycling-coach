@@ -15,6 +15,7 @@ import {
 import { useNavigate } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { FeedbackCard } from '../../components/FeedbackCard';
+import { MissedNoteCard } from '../../components/MissedNoteCard';
 import { CheckIcon, PulseIcon } from '../../components/icons';
 import { Sheet } from '../../components/Sheet';
 import { Button, ErrorNote, SectionLabel, SessionTag, StatTile, Tag } from '../../components/ui';
@@ -167,7 +168,7 @@ export function DetailPanel(props: DetailProps) {
 
 type RacePriority = 'A' | 'B' | 'C';
 
-function PlannedPanel({ event, rides, dayRides, onClose, sheet = false }: DetailProps) {
+function PlannedPanel({ event, rides, dayRides, feedback, onClose, sheet = false }: DetailProps) {
   const navigate = useNavigate();
   const { patch, remove } = useCalendarMutations();
   const workout = useWorkout(event.workoutId ?? '', !!event.workoutId);
@@ -188,6 +189,7 @@ function PlannedPanel({ event, rides, dayRides, onClose, sheet = false }: Detail
     <>
       {event.meta && <div className="text-[13px] text-muted">{event.meta}</div>}
       <SyncRow event={event} />
+      {(event.status === 'missed' || event.status === 'skipped') && <MissedNoteCard key={event.id} eventId={event.id} feedback={feedback} />}
       {rides[0] && <RideSummary activity={rides[0]} />}
       <AddRideFromDay event={event} rides={dayRides} title="Add a ride from this day" />
 

@@ -360,7 +360,10 @@ export function useSessionResult(eventId: string, enabled: boolean) {
   });
 }
 
-/** Save a ride rating (RPE + note). Only the calendar shows it, so only the calendar refetches. */
+/**
+ * Save a ride rating (RPE + note), or a missed session's reason (a note alone; empty clears it, DECISIONS #97).
+ * Only the calendar shows them, so only the calendar refetches.
+ */
 export function useSaveFeedback() {
   const qc = useQueryClient();
   return useMutation({

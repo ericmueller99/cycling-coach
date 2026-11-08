@@ -16,9 +16,28 @@ export function rpeBand(rpe: number): RpeBand {
 
 const NOTE_MAX = 240;
 
+/** The athlete's note on one line, clipped for the coach. */
+function clipNote(note: string | undefined): string | undefined {
+  const flat = note?.replace(/\s+/g, ' ').trim();
+  return flat && flat.length > NOTE_MAX ? `${flat.slice(0, NOTE_MAX - 1)}…` : flat;
+}
+
+/** A rating has an RPE; a feedback doc without one is a missed or skipped session's reason (DECISIONS #97). */
+export function isRating<T extends Pick<SessionFeedback, 'rpe'>>(fb: T): fb is T & { rpe: number } {
+  return fb.rpe !== undefined;
+}
+
+/** A feedback doc with an RPE: a ride's rating. */
+export type Rating = SessionFeedback & { rpe: number };
+
 /** `RPE 7/10 (Hard) · "First two felt easy…"` — the one way the coach sees a rating. */
-export function describeFeedback(fb: Pick<SessionFeedback, 'rpe' | 'note'>): string {
-  const note = fb.note?.replace(/\s+/g, ' ').trim();
-  const clipped = note && note.length > NOTE_MAX ? `${note.slice(0, NOTE_MAX - 1)}…` : note;
+export function describeFeedback(fb: Pick<SessionFeedback, 'note'> & { rpe: number }): string {
+  const clipped = clipNote(fb.note);
   return `RPE ${fb.rpe}/10 (${rpeWord(fb.rpe)})${clipped ? ` · "${clipped}"` : ''}`;
+}
+
+/** `"Sick with a cold"` — why a session didn't happen, in the athlete's words. Empty when there's no note. */
+export function describeReason(fb: Pick<SessionFeedback, 'note'>): string {
+  const clipped = clipNote(fb.note);
+  return clipped ? `"${clipped}"` : '';
 }

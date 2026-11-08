@@ -1,7 +1,7 @@
 import type { ActivityInterval } from '@cycling-coach/shared';
 import { describe, expect, it } from 'vitest';
 import { sessionCompliance } from './compliance';
-import { describeFeedback, rpeBand, rpeWord } from './feedback';
+import { describeFeedback, describeReason, isRating, rpeBand, rpeWord } from './feedback';
 import { STARTER_WORKOUTS } from './starter-library';
 
 const vo2 = STARTER_WORKOUTS.find((w) => w.name === 'VO2 5x4')!.segments;
@@ -60,5 +60,10 @@ describe('RPE', () => {
     expect(describeFeedback({ rpe: 4 })).toBe('RPE 4/10 (Easy)');
     expect(describeFeedback({ rpe: 7, note: 'Last two\n were hard.' })).toBe('RPE 7/10 (Hard) · "Last two were hard."');
     expect(describeFeedback({ rpe: 7, note: 'x'.repeat(300) })).toHaveLength('RPE 7/10 (Hard) · ""'.length + 240);
+    // A missed session's reason (DECISIONS #97): no RPE, the note alone, clipped the same way.
+    expect(describeReason({ note: ' Sick with\n a cold ' })).toBe('"Sick with a cold"');
+    expect(describeReason({ note: 'x'.repeat(300) })).toHaveLength(2 + 240);
+    expect(describeReason({})).toBe('');
+    expect([isRating({ rpe: 4 }), isRating({}), isRating({ rpe: undefined })]).toEqual([true, false, false]);
   });
 });

@@ -13,14 +13,16 @@ export interface FeedbackWrite {
   date: IsoDate;
   title: string;
   workoutId?: string | undefined;
-  rpe: number;
+  /** Absent for a reason (DECISIONS #97). */
+  rpe?: number | undefined;
   note?: string | undefined;
 }
 
 /**
  * Create or edit a rating. A session's rating is found by its event — or by its ride, if the ride
  * was rated before the sync matched it to the session, which folds that rating into the session.
- * An empty note clears it.
+ * An empty note clears it. A write without `rpe` is a missed session's reason, and a rating saved over a
+ * reason replaces its note.
  */
 export async function upsertFeedback(c: Collections, userId: string, f: FeedbackWrite, now: Date): Promise<SessionFeedback> {
   const filter = f.eventId
@@ -33,6 +35,7 @@ export async function upsertFeedback(c: Collections, userId: string, f: Feedback
   const unset: Record<string, ''> = {};
   if (!note) unset['note'] = '';
   if (!f.workoutId) unset['workoutId'] = '';
+  if (f.rpe === undefined) unset['rpe'] = '';
   const doc = await c.sessionFeedback.findOneAndUpdate(
     filter,
     {
@@ -70,4 +73,14 @@ export async function detachFeedbackFromEvent(c: Collections, userId: string, ev
   if (!doc) return;
   if (doc.activityId) await c.sessionFeedback.updateOne({ _id: doc._id }, { $unset: { eventId: '', workoutId: '' }, $set: { updatedAt: now } });
   else await c.sessionFeedback.deleteOne({ _id: doc._id });
+}
+
+/** Drop a session's reason — never a rating (DECISIONS #97). */
+export async function deleteReasonForEvent(c: Collections, userId: string, eventId: string): Promise<void> {
+  await c.sessionFeedback.deleteOne({ userId, eventId, rpe: { $exists: false } });
+}
+
+/** A session with a reason moved to another day: the reason goes with it, so date reads still find it. */
+export async function redateReasonForEvent(c: Collections, userId: string, eventId: string, date: IsoDate, now: Date): Promise<void> {
+  await c.sessionFeedback.updateOne({ userId, eventId, rpe: { $exists: false } }, { $set: { date, updatedAt: now } });
 }
