@@ -1,4 +1,4 @@
-import { collections, ensureIndexes, listActivities, saveActivities, saveProfile, type Collections } from '@cycling-coach/db';
+import { collections, createEvent, createGoal, ensureIndexes, getEvent, listActivities, saveActivities, saveProfile, setEventSync, type Collections } from '@cycling-coach/db';
 import { MongoClient } from 'mongodb';
 import { MongoMemoryServer } from 'mongodb-memory-server-core';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -164,5 +164,33 @@ describe('a full import after disconnecting', () => {
     await c.integrations.updateOne({ userId: U }, { $set: { fullSync } });
     expect(await syncWith(null).fullRun(U)).toBeNull();
     expect((await c.integrations.findOne({ userId: U }))?.fullSync).toMatchObject({ status: 'running', cursor: '2026-01-01', done: 3 });
+  });
+});
+
+describe('an event’s goal follows it from intervals.icu (DECISIONS #100)', () => {
+  const linked = async (date: string) => {
+    await Promise.all([c.calendarEvents.deleteMany({}), c.goals.deleteMany({})]);
+    const e = await createEvent(c, U, { date, kind: 'race', type: 'race', platform: 'garmin', title: 'Made-up Road Race', priority: 'B', tentative: false }, { source: 'manual' }, NOW);
+    await setEventSync(c, U, e.id, { intervals: { eventId: 77, remoteUpdated: '2026-11-01T00:00:00Z' } }, NOW);
+    await createGoal(c, U, { horizon: 'long', title: 'Made-up Road Race', event: true, targetDate: date, eventId: e.id, weight: 'important', done: false, primary: false }, NOW);
+    return e.id;
+  };
+  /** As the client hands it over, already mapped (`mapRemoteEvent`). */
+  const remote = (date: string) => ({ id: 77, date, kind: 'race', platform: 'garmin', priority: 'B', name: 'Made-up Road Race', updated: '2026-11-03T11:59:00Z' });
+
+  it('moves with an event moved there', async () => {
+    const id = await linked('2026-11-15');
+    await syncWith({ ...quiet(), listEvents: vi.fn(async () => [remote('2026-11-22')]) }).run(U);
+    expect((await getEvent(c, U, id))!.date).toBe('2026-11-22');
+    expect((await c.goals.findOne({ userId: U }))!.targetDate).toBe('2026-11-22');
+  });
+
+  it('stays, unlinked, when the event is deleted there', async () => {
+    const id = await linked('2026-11-15');
+    await syncWith(quiet()).run(U);
+    expect(await getEvent(c, U, id)).toBeNull();
+    const goal = await c.goals.findOne({ userId: U });
+    expect(goal).toMatchObject({ title: 'Made-up Road Race', targetDate: '2026-11-15' });
+    expect(goal!.eventId).toBeUndefined();
   });
 });

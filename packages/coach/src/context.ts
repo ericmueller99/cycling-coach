@@ -2,12 +2,19 @@ import {
   describeFeedback,
   describeReason,
   describeMainSet,
+  courseLine,
   describeTargets,
+  eventGoalWeight,
+  eventStats,
+  formatHoursMinutes,
+  formatLongDate,
+  untilText,
   formatLongDay,
   formatShortDate,
   formatWorkoutDuration,
   goalTakesDate,
   paceLabel,
+  planHorizonEnd,
   timeOffOn,
   wattsPerKg,
   workoutMetrics,
@@ -17,10 +24,14 @@ import {
   isRating,
 } from '@cycling-coach/core';
 import {
+  EVENT_AIM_LABEL,
+  EVENT_TYPE_SHORT,
+  EVENT_WEIGHT_LABEL,
   TIME_OFF_LABEL,
   TRAINING_PREFERENCE_LABEL,
   WEEKDAY_LABEL,
   type CalendarEvent,
+  type CourseAnalysis,
   type FitnessDay,
   type Goal,
   type IntegrationStatus,
@@ -124,6 +135,10 @@ export function renderAthleteBlock(ctx: AthleteContext): string {
     if (g.detail) parts.push(g.detail);
     // Open-ended goals have no date (DECISIONS #86), even if an older one still stores one.
     if (g.targetDate && goalTakesDate(g)) parts.push(`event date ${g.targetDate}`);
+    // DECISIONS #100: the event it's for, how much it counts and what they want from it.
+    if (g.eventId) parts.push(`for calendar event ${g.eventId}`);
+    if (g.eventId && !g.primary) parts.push(`weight: ${EVENT_WEIGHT_LABEL[eventGoalWeight(g)].toLowerCase()}`);
+    if (g.aim) parts.push(`aim: ${EVENT_AIM_LABEL[g.aim].toLowerCase()}`);
     // A weight goal has a pace, not a date (DECISIONS #96). Its estimated arrival moves with the trend weight, so it stays out.
     if (g.measure?.kind === 'weight') parts.push(g.pace ? `pace ${paceLabel(g.pace)}` : 'no pace picked yet');
     // A value on the trend weight would resend this block every time the trend moves.
@@ -214,11 +229,17 @@ export function buildSystemSnapshot(ctx: AthleteContext, recap?: string): string
   return [COACH_PERSONA, renderAthleteBlock(ctx), ...(recap ? [recap] : [])];
 }
 
-/** "Zwift workout", "Zwift race 17:30 (B)", "ride" — what and where, for the coach. */
-export function describeKind(e: Pick<CalendarEvent, 'kind' | 'platform' | 'startTime' | 'priority'>): string {
+/**
+ * "Zwift workout", "Zwift race 17:30 (B)", "Gran fondo event 07:00 (A)", "ride" — what and where, for
+ * the coach. A real-world event is named by its type (DECISIONS #98).
+ */
+export function describeKind(e: Pick<CalendarEvent, 'kind' | 'platform' | 'startTime' | 'priority' | 'eventInfo'>): string {
   const where = e.platform === 'garmin' ? 'Garmin' : 'Zwift';
   if (e.kind === 'workout') return `${where} workout`;
-  if (e.kind === 'race') return `${where} race${e.startTime ? ` ${e.startTime}` : ''}${e.priority ? ` (${e.priority})` : ''}`;
+  if (e.kind === 'race') {
+    const what = e.eventInfo ? `${EVENT_TYPE_SHORT[e.eventInfo.type]} event` : e.platform === 'garmin' ? 'outdoor race' : 'Zwift race';
+    return `${what}${e.startTime ? ` ${e.startTime}` : ''}${e.priority ? ` (${e.priority})` : ''}`;
+  }
   return `ride${e.startTime ? ` ${e.startTime}` : ''}`;
 }
 
@@ -253,12 +274,69 @@ export function renderCalendarBlock(events: CalendarEvent[], from: IsoDate, to: 
     const dur = e.durationLabel ?? (e.durationMin ? `${e.durationMin} min` : '');
     const sync = e.kind === 'ride' ? '' : e.intervals ? (e.intervals.error ? 'sync failing' : 'on intervals.icu') : 'not yet synced';
     const flags = [e.tentative ? 'tentative' : '', describeStatus(e), sync, e.source === 'intervals' ? 'added in intervals.icu' : ''].filter(Boolean).join(', ');
-    const tail = [e.meta, e.coachNote ? `note: ${e.coachNote}` : '', describeSessionFeedback(e, felt.get(e.id))].filter(Boolean).join(' · ');
+    const tail = [eventStats(e.eventInfo), e.meta, e.coachNote ? `note: ${e.coachNote}` : '', describeSessionFeedback(e, felt.get(e.id))].filter(Boolean).join(' · ');
     lines.push(
       `- ${e.id} · ${formatLongDay(e.date)} · ${describeKind(e)} · ${e.type} · ${e.title}${dur ? ` · ${dur}` : ''} · ${flags}${tail ? ` · ${tail}` : ''}`,
     );
   }
   return lines.join('\n');
+}
+
+/** An upcoming event as the coach sees it, with its goal and course when it has them (DECISIONS #101). */
+export interface UpcomingEvent {
+  event: CalendarEvent;
+  goal?: Goal | undefined;
+  course?: CourseAnalysis | undefined;
+}
+
+/** How much an event counts, from its goal: "goal: important, aim compete", or "no goal: on the calendar only". */
+function eventCounts(goal: Goal | undefined): string {
+  if (!goal) return 'no goal: on the calendar only';
+  return `goal: ${EVENT_WEIGHT_LABEL[eventGoalWeight(goal)].toLowerCase()}${goal.aim ? `, aim ${EVENT_AIM_LABEL[goal.aim].toLowerCase()}` : ''}`;
+}
+
+/** "e7 · Sat Sep 11 2027 · Gran fondo event 07:00 (A) · Coast Range Gran Fondo · 142 km · 2,350 m · ~5 h 30 · course: … · goal: important" */
+export function describeCoachEvent({ event: e, goal, course }: UpcomingEvent): string {
+  return [
+    e.id,
+    formatLongDate(e.date),
+    describeKind(e),
+    e.title,
+    eventStats(e.eventInfo),
+    e.durationMin ? `~${formatHoursMinutes(e.durationMin)}` : '',
+    course ? `course: ${courseLine(course)}` : '',
+    e.eventInfo?.location ?? '',
+    eventCounts(goal),
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+/**
+ * Every upcoming event the coach keeps in view, however far off (DECISIONS #101), sent when it changes.
+ * Absolute dates only, so the text changes when the events do, not with the day.
+ */
+export function renderEventsBlock(events: readonly UpcomingEvent[]): string {
+  if (!events.length) return '';
+  return [
+    '# Upcoming events (id · date · what · title · distance and climbing · est. time · course · how much it counts). The full current list, however far off. get_event_course has a course in detail.',
+    ...events.map((x) => `- ${describeCoachEvent(x)}`),
+  ].join('\n');
+}
+
+/** "Events ahead: Coast Range Gran Fondo (A, main goal) in 44 weeks; …". Sent every turn: it moves with the day. */
+export function renderEventsAhead(events: readonly UpcomingEvent[], today: IsoDate): string {
+  const ahead = events
+    .filter((x) => x.event.date >= today)
+    .slice(0, 6)
+    .map(({ event: e, goal }) => `${e.title} (${[e.priority, goal ? EVENT_WEIGHT_LABEL[eventGoalWeight(goal)].toLowerCase() : 'no goal'].filter(Boolean).join(', ')}) ${untilText(e.date, today)}`);
+  return ahead.length ? `Events ahead: ${ahead.join('; ')}.` : '';
+}
+
+/** The coach's outlook (DECISIONS #101), sent when it changes. `day` is the athlete's local day it was last written. */
+export function renderOutlookBlock(outlook: { text: string; day: IsoDate; source: 'coach' | 'user' } | null): string {
+  if (!outlook) return '';
+  return `# Your outlook (${outlook.source === 'user' ? 'edited by the athlete' : 'written by you'} on ${formatLongDate(outlook.day)}; keep it current with update_outlook)\n${outlook.text}`;
 }
 
 /** intervals.icu's status, or `stored`: not connected, but the ride tools have rides from elsewhere to read (DECISIONS #90). */
@@ -299,12 +377,26 @@ export interface TurnContextInput {
   timeOffBlock: string;
   /** From `renderTimeOffToday`. */
   timeOffToday: string;
+  /** Upcoming events, from `renderEventsBlock` (DECISIONS #101). */
+  eventsBlock?: string | undefined;
+  /** From `renderEventsAhead`; every turn. */
+  eventsAhead?: string | undefined;
+  /** From `renderOutlookBlock`. */
+  outlookBlock?: string | undefined;
   /** Today's food against the budget, when the food module has data. */
   food?: FoodTurnContext | undefined;
   /** Anything else the deployment knows about the athlete today (DECISIONS #72). */
   extra?: string | undefined;
   /** What the coach has already been shown in this API context. */
-  seen: { calendar?: string | undefined; athlete: string; extra?: string | undefined; shortTerm?: string | undefined; timeOff?: string | undefined };
+  seen: {
+    calendar?: string | undefined;
+    athlete: string;
+    extra?: string | undefined;
+    shortTerm?: string | undefined;
+    timeOff?: string | undefined;
+    events?: string | undefined;
+    outlook?: string | undefined;
+  };
 }
 
 export interface FoodTurnContext {
@@ -355,6 +447,9 @@ function sameCalendar(seen: string | undefined, block: string): boolean {
  */
 export function renderTurnContext(input: TurnContextInput): string {
   const parts = [`Today is ${formatLongDay(input.today)} (${input.today}), ${input.localTime} ${input.timezone}.`];
+  // DECISIONS #98: the coach plans in blocks of two weeks, and the tools refuse anything later.
+  parts.push(`Planning horizon: workouts and rides go on the calendar through ${formatLongDay(planHorizonEnd(input.today))} at the latest. Races and events can be any distance ahead.`);
+  if (input.eventsAhead) parts.push(input.eventsAhead);
   parts.push(TRAINING_LINE[input.training]);
   if (input.fitness) {
     const f = input.fitness;
@@ -380,6 +475,9 @@ export function renderTurnContext(input: TurnContextInput): string {
     parts.push(input.shortTermBlock || "Short-term notes: none current. Earlier ones have lapsed or been deleted, so don't save them again.");
   }
   if (input.timeOffBlock !== (input.seen.timeOff ?? '')) parts.push(input.timeOffBlock || 'Time off: none now. Earlier entries have ended or been removed.');
+  // Strict, like time off: an emptied list or outlook is news (DECISIONS #101).
+  if ((input.eventsBlock ?? '') !== (input.seen.events ?? '')) parts.push(input.eventsBlock || 'Upcoming events: none now. Earlier ones have passed or been removed.');
+  if ((input.outlookBlock ?? '') !== (input.seen.outlook ?? '')) parts.push(input.outlookBlock || 'Your outlook: none now. It was cleared.');
   parts.push(
     sameCalendar(input.seen.calendar, input.calendarBlock)
       ? 'Calendar: unchanged since the previous context message.'

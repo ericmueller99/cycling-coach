@@ -1,8 +1,9 @@
-import { trendChange, wattsPerKg, zwiftCategoryTable } from '@cycling-coach/core';
+import { formatShortDate, trendChange, wattsPerKg, zwiftCategoryTable } from '@cycling-coach/core';
 import type { Goal, Profile } from '@cycling-coach/shared';
 import { Link } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 import { useRestDayBudget } from '../../lib/budget';
+import { untilLabel } from '../../lib/eventInfo';
 import { fmtKcal } from '../../lib/food';
 import { useWeightHistory } from '../../lib/queries';
 import type { AthleteTab } from './AthletePage';
@@ -34,6 +35,8 @@ export function Snapshot({ profile, mainGoal, today }: { profile: Profile; mainG
   const category = z?.category ?? rows?.find((r) => r.state === 'current')?.category;
   const closest = rows?.find((r) => r.state === 'closest');
   const p = mainGoal?.progress;
+  // An event as the main goal has a day, not a measure (DECISIONS #100).
+  const eventDay = mainGoal?.event ? mainGoal.targetDate : undefined;
 
   return (
     <div className="grid grid-cols-5 gap-2 mobile:flex mobile:scrollbar-none mobile:overflow-x-auto mobile:px-4 mobile:pb-2.5">
@@ -64,7 +67,11 @@ export function Snapshot({ profile, mainGoal, today }: { profile: Profile; mainG
       <SnapTile tab="body" label="Rest-day budget" value={rest ? fmtKcal(rest.total) : '—'}>
         {rest ? 'kcal + rides' : 'set your RMR'}
       </SnapTile>
-      <SnapTile tab="goals" label={mainGoal ? `Main goal · ${mainGoal.title}` : 'Main goal'} value={p ? p.current : '—'}>
+      <SnapTile
+        tab="goals"
+        label={mainGoal ? `Main goal · ${mainGoal.title}` : 'Main goal'}
+        value={p ? p.current : eventDay ? `${formatShortDate(eventDay)}, ${eventDay.slice(0, 4)}` : '—'}
+      >
         {p ? (
           <span className="flex items-center gap-1.5">
             <span className="h-1.5 flex-auto overflow-hidden rounded-[3px] bg-track">
@@ -72,6 +79,8 @@ export function Snapshot({ profile, mainGoal, today }: { profile: Profile; mainG
             </span>
             <span className="font-mono">{p.target}</span>
           </span>
+        ) : eventDay ? (
+          untilLabel(eventDay, today) || 'event'
         ) : mainGoal ? (
           'no data yet'
         ) : (

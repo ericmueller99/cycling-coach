@@ -41,6 +41,16 @@ export function weekStart(iso: IsoDate): IsoDate {
   return addDays(iso, -weekdayIndex(iso));
 }
 
+/**
+ * The last day the coach may put a workout or ride on (DECISIONS #98): it plans in blocks of two
+ * weeks. That's the first Sunday at least 12 days out, so a block of whole weeks fits from any day:
+ * this week and next from a Monday (13 days), the next two weeks from a Saturday (15).
+ */
+export function planHorizonEnd(today: IsoDate): IsoDate {
+  const d = addDays(today, 12);
+  return addDays(d, 6 - weekdayIndex(d));
+}
+
 export function weekDates(iso: IsoDate): IsoDate[] {
   const start = weekStart(iso);
   return Array.from({ length: 7 }, (_, i) => addDays(start, i));

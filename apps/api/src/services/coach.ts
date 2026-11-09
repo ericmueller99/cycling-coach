@@ -10,6 +10,9 @@ import {
   renderRestartRecap,
   renderShortTermBlock,
   renderCalendarBlock,
+  renderEventsAhead,
+  renderEventsBlock,
+  renderOutlookBlock,
   renderTimeOffBlock,
   renderTimeOffToday,
   renderTurnContext,
@@ -34,7 +37,11 @@ import {
   getTimeOff,
   idOf,
   latestChat,
+  getEvent,
+  getOutlook,
+  listCourses,
   listEvents,
+  setOutlook,
   listTimeOff,
   listLog,
   listThreadMealIdeas,
@@ -56,11 +63,12 @@ import {
   type WorkoutDoc,
   listThreads,
 } from '@cycling-coach/db';
-import { activeShortTerm, CACHE_TTL_MS, carriesTail, carrySince, dayTotals, NUDGE_TOKENS, restartReason, slotForTime, todayIn } from '@cycling-coach/core';
+import { activeShortTerm, CACHE_TTL_MS, carriesTail, carrySince, coachEvents, dayTotals, goalForEvent, NUDGE_TOKENS, restartReason, slotForTime, todayIn } from '@cycling-coach/core';
 import type { CoachEvent, CoachTier, FitnessDay, IsoDate, SendMessageInput, SessionFeedback, ThreadSummary, ThreadView, Workout } from '@cycling-coach/shared';
-import type { FoodTurnContext, TrainingStatus } from '@cycling-coach/coach';
+import type { FoodTurnContext, TrainingStatus, UpcomingEvent } from '@cycling-coach/coach';
 import type { ObjectId } from 'mongodb';
-import { coachCalendarWindow, coachTimeOffWindow, loadAthleteContext, localNow } from './athlete';
+import { coachCalendarWindow, coachEventsWindow, coachTimeOffWindow, loadAthleteContext, localNow } from './athlete';
+import { readCourse } from './course';
 import type { CoachFoodService } from './coach-food';
 import type { EnergyService } from './energy';
 import type { FoodService } from './food';
@@ -453,11 +461,20 @@ export async function* sendMessage(
   const timeOffWindow = coachTimeOffWindow(today);
   // A rating on a hidden ride carries its name, so it stays out with the ride.
   const shownFeedback = (list: SessionFeedback[]) => list.filter((f) => !hidden.some((p) => f.activityId?.startsWith(`${p}:`)));
-  const [windowEvents, windowFeedback, timeOff] = await Promise.all([
+  const eventsWindow = coachEventsWindow(today);
+  const [windowEvents, windowFeedback, timeOff, ahead, outlook] = await Promise.all([
     listEvents(c, userId, window.from, window.to),
     listFeedback(c, userId, window).then(shownFeedback),
     listTimeOff(c, userId, timeOffWindow.from, timeOffWindow.to),
+    listEvents(c, userId, eventsWindow.from, eventsWindow.to),
+    getOutlook(c, userId),
   ]);
+  // Events however far off, with their goals and courses (DECISIONS #101).
+  const upcomingRaces = coachEvents(ahead, athlete.goals);
+  const courses = new Map((await listCourses(c, userId, upcomingRaces.filter((e) => e.courseId).map((e) => e.id))).map((x) => [x.eventId, x.analysis]));
+  const upcoming: UpcomingEvent[] = upcomingRaces.map((e) => ({ event: e, goal: goalForEvent(athlete.goals, e.id), course: courses.get(e.id) }));
+  const eventsBlock = renderEventsBlock(upcoming);
+  const outlookBlock = renderOutlookBlock(outlook && { text: outlook.text, source: outlook.source, day: todayIn(profile.timezone, new Date(outlook.updatedAt)) });
   const calendarBlock = renderCalendarBlock(windowEvents, window.from, window.to, windowFeedback);
   const athleteBlock = renderAthleteBlock(athlete);
   const shortTermBlock = renderShortTermBlock(activeShortTerm(athlete.shortTerm, today));
@@ -493,6 +510,9 @@ export async function* sendMessage(
           shortTermBlock,
           timeOffBlock,
           timeOffToday: renderTimeOffToday(timeOff, today),
+          eventsBlock,
+          eventsAhead: renderEventsAhead(upcoming, today),
+          outlookBlock,
           food,
           extra: extra ?? undefined,
           seen: thread.seen,
@@ -508,6 +528,13 @@ export async function* sendMessage(
   const ports: CoachPorts = {
     training: training.status !== 'not_configured' ? deps.training.port(userId, hidden) : null,
     listCalendar: (from, to) => listEvents(c, userId, from, to),
+    getCalendarEvent: (id) => getEvent(c, userId, id),
+    getEventCourse: async (id) => {
+      const event = await getEvent(c, userId, id);
+      if (!event) return null;
+      return { event, course: event.courseId ? await readCourse(c, userId, id) : null, ftp: athlete.profile.ftpZwift, weightKg: athlete.profile.weightKg };
+    },
+    setOutlook: (text) => setOutlook(c, userId, text, 'coach', deps.now()),
     listTimeOff: (from, to) => listTimeOff(c, userId, from, to),
     getTimeOff: (id) => getTimeOff(c, userId, id),
     createProposal: (p) => createCoachProposal(c, userId, tid, p, deps.now()),
@@ -557,7 +584,9 @@ export async function* sendMessage(
       // and "unchanged" on the retry would point at something it never received.
       if (m.kind === 'assistant' && !replied) {
         replied = true;
-        await updateThread(c, tid, { seen: { calendar: calendarBlock, athlete: athleteBlock, shortTerm: shortTermBlock, timeOff: timeOffBlock, ...(extra ? { extra } : {}) } });
+        await updateThread(c, tid, {
+          seen: { calendar: calendarBlock, athlete: athleteBlock, shortTerm: shortTermBlock, timeOff: timeOffBlock, events: eventsBlock, outlook: outlookBlock, ...(extra ? { extra } : {}) },
+        });
       }
       if (m.kind === 'assistant') textBefore = assistantText.length;
     },

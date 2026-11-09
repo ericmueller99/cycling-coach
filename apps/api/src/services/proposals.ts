@@ -1,19 +1,18 @@
 import type { NewProposal } from '@cycling-coach/coach';
 import {
   applyProfileUpdate,
-  createGoal,
   createProposal,
   getEvent,
   getProposalDoc,
   setProposalItemStatus,
   toProposal,
-  updateGoal,
   type Collections,
   type ProposalDoc,
 } from '@cycling-coach/db';
 import type { GoalProposal, Proposal, ProposalChange } from '@cycling-coach/shared';
 import type { ObjectId } from 'mongodb';
 import type { CalendarService } from './calendar';
+import { addGoal, changeGoal } from './goals';
 
 /**
  * Stores a card the coach proposed. Calendar changes keep a snapshot of each event they touch, so the
@@ -83,11 +82,11 @@ async function applyCalendarChange(cal: CalendarService, userId: string, change:
   }
 }
 
+/** Through the goals service, so a goal for an event keeps the event's date (DECISIONS #100). */
 async function applyGoal(c: Collections, userId: string, g: GoalProposal, now: Date) {
   const { goalId, ...fields } = g;
-  if (goalId) return (await updateGoal(c, userId, goalId, fields)) !== null;
-  await createGoal(c, userId, { ...fields, done: false, primary: fields.primary ?? false }, now);
-  return true;
+  const goal = goalId ? await changeGoal(c, userId, goalId, fields) : await addGoal(c, userId, { ...fields, done: false, primary: fields.primary ?? false }, now);
+  return !!goal && !('error' in goal);
 }
 
 async function applyItem(c: Collections, cal: CalendarService, userId: string, doc: ProposalDoc, index: number, now: Date): Promise<boolean> {

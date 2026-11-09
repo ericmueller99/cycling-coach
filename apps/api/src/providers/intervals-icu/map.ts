@@ -1,4 +1,4 @@
-import { workoutMetrics, zwoFileName } from '@cycling-coach/core';
+import { describeEventInfo, workoutMetrics, zwoFileName } from '@cycling-coach/core';
 import type {
   Activity,
   ActivityInterval,
@@ -278,9 +278,14 @@ export function buildWorkoutEvent(event: CalendarEvent, workout: Workout, zwoXml
   };
 }
 
-/** A race on the intervals.icu calendar, with its A/B/C priority. */
+/**
+ * A race on the intervals.icu calendar, with its A/B/C priority. A real-world event leads its notes
+ * with what it is ("Gran fondo · 142 km · 2,350 m · Harbour Falls, BC · <link>"), DECISIONS #98.
+ */
 export function buildRaceEvent(event: CalendarEvent) {
-  const description = [event.coachNote, event.meta].filter(Boolean).join('\n\n');
+  const info = event.eventInfo;
+  const eventLine = info ? [describeEventInfo(info), info.location, info.url].filter(Boolean).join(' · ') : '';
+  const description = [eventLine, event.coachNote, event.meta].filter(Boolean).join('\n\n');
   return {
     category: `RACE_${event.priority ?? 'B'}`,
     start_date_local: startDateLocal(event),

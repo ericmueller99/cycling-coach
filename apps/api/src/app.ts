@@ -1,9 +1,13 @@
 import { buildZwo, zwoFileName } from '@cycling-coach/core';
 import {
   calendarEventInputSchema,
+  courseInputSchema,
+  outlookInputSchema,
+  outlookRevertSchema,
   calendarEventPatchSchema,
   sessionRideInputSchema,
   calendarRangeQuerySchema,
+  calendarDeleteQuerySchema,
   timeOffInputSchema,
   timeOffPatchSchema,
   eventQuerySchema,
@@ -22,6 +26,10 @@ import {
   sessionFeedbackInputSchema,
   type CalendarEvent,
   type CalendarEventInput,
+  type Course,
+  type Outlook,
+  type OutlookRevert,
+  type CourseInput,
   type CalendarPayload,
   type CalendarEventPatch,
   type CoachEvent,
@@ -63,6 +71,7 @@ import {
   type WeightHistoryPayload,
   type Workout,
   type ZwiftStatus,
+  type ZwiftRouteOption,
   type Features,
   type AuthConfig,
   onboardingBodySchema,
@@ -81,6 +90,7 @@ import {
   threadListQuerySchema,
 } from '@cycling-coach/shared';
 import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
@@ -121,9 +131,18 @@ export interface AppServices {
     history(userId: string): Promise<WeightHistoryPayload>;
   };
   goals: {
-    create(userId: string, input: GoalInput): Promise<Goal>;
-    update(userId: string, id: string, input: GoalPatch): Promise<Goal | null>;
+    /** A goal for an event checks the event and takes its date (DECISIONS #100). */
+    create(userId: string, input: GoalInput): Promise<Goal | ServiceFailure>;
+    update(userId: string, id: string, input: GoalPatch): Promise<Goal | ServiceFailure | null>;
     remove(userId: string, id: string): Promise<boolean>;
+  };
+  /** The coach's outlook (DECISIONS #101): read, edited or cleared by the athlete, with Undo for the coach's rewrites. */
+  outlook: {
+    get(userId: string): Promise<Outlook | null>;
+    set(userId: string, text: string): Promise<Outlook>;
+    clear(userId: string): Promise<boolean>;
+    /** `changed` when it no longer says what the chip's Undo expects. */
+    revert(userId: string, input: OutlookRevert): Promise<Outlook | null | 'changed'>;
   };
   memories: {
     create(userId: string, input: MemoryInput): Promise<Memory | { error: string }>;
@@ -144,12 +163,19 @@ export interface AppServices {
     create(userId: string, input: CalendarEventInput): Promise<CalendarEvent>;
     /** `syncError` is set when the change couldn't be pushed to intervals.icu (it's retried). */
     patch(userId: string, id: string, patch: CalendarEventPatch): Promise<{ event: CalendarEvent; syncError?: string } | null>;
-    /** `error` when intervals.icu refused the delete — the session is kept so it can't reappear. */
-    remove(userId: string, id: string): Promise<{ ok: true } | { error: string } | null>;
+    /**
+     * `error` when intervals.icu refused the delete — the session is kept so it can't reappear. An event's
+     * goal stays, unlinked, unless `removeGoal` (DECISIONS #100).
+     */
+    remove(userId: string, id: string, opts?: { removeGoal?: boolean }): Promise<{ ok: true } | { error: string } | null>;
     /** Retry a failed push to intervals.icu. */
     resync(userId: string, id: string): Promise<CalendarEvent | null>;
     /** Unpair a session from its matched ride for good (local only). */
     unlinkRide(userId: string, id: string): Promise<CalendarEvent | { error: string } | null>;
+    /** An event's course (DECISIONS #99): the analysis, never the track. */
+    course(userId: string, id: string): Promise<Course | null>;
+    putCourse(userId: string, id: string, input: CourseInput): Promise<Course | ServiceFailure | null>;
+    removeCourse(userId: string, id: string): Promise<boolean>;
     /** Group a same-day ride into a session, or take one out (DECISIONS #32; local only). */
     addRide(userId: string, id: string, activityId: string): Promise<CalendarEvent | ServiceFailure | null>;
     removeRide(userId: string, id: string, activityId: string): Promise<CalendarEvent | ServiceFailure | null>;
@@ -226,6 +252,8 @@ export interface AppServices {
     status(userId: string): Promise<ZwiftStatus>;
     /** Pull zFTP, zMAP, weight and FTP from Zwift now; failures come back as `lastError`. */
     sync(userId: string): Promise<ZwiftStatus>;
+    /** Routes a race can follow (DECISIONS #102); null without the Zwift feature. */
+    routes(userId: string): Promise<ZwiftRouteOption[] | null>;
   };
 }
 
@@ -348,16 +376,26 @@ export function createApp(deps: AppDeps) {
       await services.profile.savePowerBests(c.get('user')!.id, c.req.valid('json').bests);
       return c.json({ ok: true });
     })
-    .post('/goals', json(goalInputSchema), async (c) =>
-      c.json(await services.goals.create(c.get('user')!.id, c.req.valid('json')), 201),
-    )
+    .post('/goals', json(goalInputSchema), async (c) => {
+      const goal = await services.goals.create(c.get('user')!.id, c.req.valid('json'));
+      return isFailure(goal) ? c.json({ error: goal.error }, goal.status) : c.json(goal, 201);
+    })
     .patch('/goals/:id', json(goalPatchSchema), async (c) => {
       const goal = await services.goals.update(c.get('user')!.id, c.req.param('id'), c.req.valid('json'));
-      return goal ? c.json(goal) : c.json({ error: 'Not found' }, 404);
+      if (!goal) return c.json({ error: 'Not found' }, 404);
+      return isFailure(goal) ? c.json({ error: goal.error }, goal.status) : c.json(goal);
     })
     .delete('/goals/:id', async (c) =>
       (await services.goals.remove(c.get('user')!.id, c.req.param('id'))) ? c.json({ ok: true }) : c.json({ error: 'Not found' }, 404),
     )
+    // ── Coach's outlook ─────────────────────────────────────────────────────
+    .get('/outlook', async (c) => c.json(await services.outlook.get(c.get('user')!.id)))
+    .put('/outlook', json(outlookInputSchema), async (c) => c.json(await services.outlook.set(c.get('user')!.id, c.req.valid('json').text)))
+    .delete('/outlook', async (c) => c.json({ ok: await services.outlook.clear(c.get('user')!.id) }))
+    .post('/outlook/revert', json(outlookRevertSchema), async (c) => {
+      const r = await services.outlook.revert(c.get('user')!.id, c.req.valid('json'));
+      return r === 'changed' ? c.json({ error: 'The outlook has changed since.' }, 409) : c.json(r);
+    })
     .post('/memories', json(memoryInputSchema), async (c) => {
       const m = await services.memories.create(c.get('user')!.id, c.req.valid('json'));
       return 'error' in m ? c.json({ error: m.error }, 400) : c.json(m, 201);
@@ -414,8 +452,8 @@ export function createApp(deps: AppDeps) {
       const result = await services.calendar.patch(c.get('user')!.id, c.req.param('id'), c.req.valid('json'));
       return result ? c.json(result) : c.json({ error: 'Not found' }, 404);
     })
-    .delete('/calendar/:id', async (c) => {
-      const result = await services.calendar.remove(c.get('user')!.id, c.req.param('id'));
+    .delete('/calendar/:id', query(calendarDeleteQuerySchema), async (c) => {
+      const result = await services.calendar.remove(c.get('user')!.id, c.req.param('id'), { removeGoal: c.req.valid('query').goal === 'remove' });
       if (!result) return c.json({ error: 'Not found' }, 404);
       return 'error' in result ? c.json({ error: result.error }, 409) : c.json({ ok: true });
     })
@@ -438,6 +476,22 @@ export function createApp(deps: AppDeps) {
       if (!e) return c.json({ error: 'Not found' }, 404);
       return isFailure(e) ? c.json({ error: e.error }, e.status) : c.json(e);
     })
+    // Null when the event has none (or isn't there): a course just removed isn't an error.
+    .get('/calendar/:id/course', async (c) => c.json(await services.calendar.course(c.get('user')!.id, c.req.param('id'))))
+    .put(
+      '/calendar/:id/course',
+      // A resampled course is at most 12,000 points: a few hundred KB of JSON.
+      bodyLimit({ maxSize: 3 * 1024 * 1024, onError: (c) => c.json({ error: 'That course is too large.' }, 413) }),
+      json(courseInputSchema),
+      async (c) => {
+        const r = await services.calendar.putCourse(c.get('user')!.id, c.req.param('id'), c.req.valid('json'));
+        if (!r) return c.json({ error: 'Not found' }, 404);
+        return isFailure(r) ? c.json({ error: r.error }, r.status) : c.json(r);
+      },
+    )
+    .delete('/calendar/:id/course', async (c) =>
+      (await services.calendar.removeCourse(c.get('user')!.id, c.req.param('id'))) ? c.json({ ok: true }) : c.json({ error: 'Not found' }, 404),
+    )
     .get('/calendar/:id/result', async (c) => {
       const r = await services.calendar.result(c.get('user')!.id, c.req.param('id'));
       return isFailure(r) ? c.json({ error: r.error }, r.status) : c.json(r);
@@ -588,7 +642,11 @@ export function createApp(deps: AppDeps) {
 
     // ── Zwift ───────────────────────────────────────────────────────────────
     .get('/integrations/zwift', async (c) => c.json<ZwiftStatus>(await services.zwift.status(c.get('user')!.id)))
-    .post('/integrations/zwift/sync', async (c) => c.json<ZwiftStatus>(await services.zwift.sync(c.get('user')!.id)));
+    .post('/integrations/zwift/sync', async (c) => c.json<ZwiftStatus>(await services.zwift.sync(c.get('user')!.id)))
+    .get('/zwift/routes', async (c) => {
+      const routes = await services.zwift.routes(c.get('user')!.id);
+      return routes ? c.json(routes) : c.json({ error: 'Not found' }, 404);
+    });
 
   /**
    * Routes must be CHAINED to appear in `AppType`; a bare `app.get(...)` statement works at

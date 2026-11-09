@@ -28,6 +28,7 @@ import { COMPLETED, feedbackForEvent, indexFeedback } from '../../lib/feedback';
 import { SESSION_STYLE, TENTATIVE, TIME_OFF_STYLE, durationText } from '../../lib/session';
 import { ActivityPanel, AddPanel, DetailPanel, type Selection } from './panels';
 import { ridesMeta, sessionRides } from './shared';
+import { EventFormPanel } from './event';
 import { TimeOffCard, TimeOffPanel } from './time-off';
 
 /** A day's eaten vs budget on the week strip; the overage in red. */
@@ -39,6 +40,7 @@ function FoodBar({ eaten, budget }: { eaten: number | undefined; budget: number 
 const RIDE_COLOR = '#A3AAB6';
 
 const dayId = (date: string) => `agenda-${date}`;
+const ADD_LABEL = { add: 'Session', 'event-add': 'Event', 'time-off-add': 'Time off' } as const;
 
 /**
  * The phone calendar: exactly one week, paged by the chevrons, a
@@ -268,12 +270,20 @@ export function WeekAgenda({ today, week }: { today: string; week: string }) {
       {selected?.type === 'add' && (
         <AddPanel sheet date={selected.date} onClose={() => setSelected(null)} onAdded={(id) => setSelected({ type: 'event', id })} />
       )}
+      {selected?.type === 'event-add' && (
+        <EventFormPanel
+          sheet
+          date={selected.date}
+          onClose={() => setSelected(null)}
+          onView={(e) => (dates.includes(e.date) ? setSelected({ type: 'event', id: e.id }) : goWeek(weekStart(e.date)))}
+        />
+      )}
       {selected?.type === 'time-off-add' && <TimeOffPanel sheet date={selected.date} today={today} onClose={() => setSelected(null)} />}
       {selected?.type === 'time-off' && <TimeOffPanel sheet key={selected.entry.id} entry={selected.entry} today={today} onClose={() => setSelected(null)} />}
       {adding && (
         <Sheet title="Add" onClose={() => setAdding(false)}>
           <div className="flex flex-col gap-2">
-            {(['add', 'time-off-add'] as const).map((type) => (
+            {(['add', 'event-add', 'time-off-add'] as const).map((type) => (
               <button
                 key={type}
                 type="button"
@@ -283,7 +293,7 @@ export function WeekAgenda({ today, week }: { today: string; week: string }) {
                 }}
                 className="min-h-[48px] rounded-xl border border-line-strong bg-surface font-medium text-ink"
               >
-                {type === 'add' ? 'Session' : 'Time off'}
+                {ADD_LABEL[type]}
               </button>
             ))}
           </div>

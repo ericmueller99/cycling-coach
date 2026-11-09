@@ -299,3 +299,51 @@ describe('the athlete block stays the same when only the trend weight moves', ()
     expect(renderAthleteBlock({ ...athlete(84.3), goals: [ftp] } as unknown as Parameters<typeof renderAthleteBlock>[0])).toContain('FTP now 345 W, target 360');
   });
 });
+
+describe('real-world events and two-week blocks (DECISIONS #98)', () => {
+  const fondo = {
+    id: 'e7',
+    date: '2027-09-11',
+    kind: 'race',
+    type: 'race',
+    title: 'Coast Range Gran Fondo',
+    platform: 'garmin',
+    startTime: '07:00',
+    priority: 'A',
+    eventInfo: { type: 'gran_fondo', distanceKm: 142, ascentM: 2350 },
+    tentative: false,
+    status: 'planned',
+    source: 'manual',
+  } as const;
+
+  it('names an event by its type, with its distance and climbing', () => {
+    expect(renderCalendarBlock([fondo], '2027-09-04', '2027-09-25')).toContain('· Gran fondo event 07:00 (A) · race · Coast Range Gran Fondo · ');
+    expect(renderCalendarBlock([fondo], '2027-09-04', '2027-09-25')).toContain('· 142 km · 2,350 m');
+    const imported = { ...fondo, eventInfo: undefined };
+    expect(renderCalendarBlock([imported], '2027-09-04', '2027-09-25')).toContain('· outdoor race 07:00 (A) ·');
+  });
+
+  it('tells the coach how far ahead it may plan, every turn', () => {
+    const text = renderTurnContext({ today: '2026-11-07', localTime: '9:14 PM', timezone: 'UTC', training: 'connected', athleteBlock: 'a', shortTermBlock: '', timeOffBlock: '', timeOffToday: '', calendarBlock: '', seen: { athlete: 'a' } });
+    expect(text).toContain('workouts and rides go on the calendar through Sun Nov 22 at the latest');
+  });
+});
+
+describe('event goals (DECISIONS #100)', () => {
+  const athlete = (goals: unknown[]) =>
+    renderAthleteBlock({ profile: { weightKg: 72, weightSource: 'manual', timezone: 'UTC' }, powerBests: [], goals, memories: [], shortTerm: [], workouts: [] } as never);
+  const fondo = { id: 'g2', horizon: 'long', title: 'Coast Range Gran Fondo', detail: 'Stay with the front group', event: true, targetDate: '2027-09-11', eventId: 'e7', weight: 'important', aim: 'compete', done: false, primary: false };
+
+  it('says which event a goal is for, how much it counts and what they want from it', () => {
+    expect(athlete([fondo])).toContain(
+      '- [long term] Coast Range Gran Fondo — Stay with the front group — event date 2027-09-11 — for calendar event e7 — weight: important — aim: compete',
+    );
+    expect(athlete([{ ...fondo, weight: 'in_mind', aim: undefined }])).toContain('weight: keep in mind');
+  });
+
+  it('lets the main goal speak for itself', () => {
+    const text = athlete([{ ...fondo, primary: true }]);
+    expect(text).toContain('[long term, main goal] Coast Range Gran Fondo');
+    expect(text).not.toContain('weight:');
+  });
+});

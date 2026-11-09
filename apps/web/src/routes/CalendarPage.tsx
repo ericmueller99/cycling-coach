@@ -6,7 +6,9 @@ import {
   formatMonthTitle,
   formatShortDate,
   groupByDay,
+  isEventSession,
   monthOf,
+  planHorizonEnd,
   sessionState,
   timeOffOn,
   weekStart,
@@ -18,11 +20,12 @@ import type { CalendarActivity, CalendarEvent, DayFoodSummary, IsoDate, SessionF
 import { slotForTime } from '@cycling-coach/core';
 import { useNavigate } from '@tanstack/react-router';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, DoneIcon, PlusIcon } from '../components/icons';
+import { ChevronDown, ClockIcon, DoneIcon, FlagIcon, ForkKnifeIcon, PlusIcon, PulseIcon } from '../components/icons';
 import { KcalBar, OVER } from '../components/KcalBar';
 import { RpePill } from '../components/RpePill';
 import { Button, ErrorNote, PageHeader, Spinner } from '../components/ui';
 import { calendarChunkStart, errorMessage, useCalendarRange, useDashboard, useTimeOff } from '../lib/queries';
+import { eventChipMeta } from '../lib/eventInfo';
 import { COMPLETED, feedbackForEvent, indexFeedback, type FeedbackIndex } from '../lib/feedback';
 import { approx, fmtKcal, includesEstimates, nowTime } from '../lib/food';
 import { useDaysRange, useFoodLibrary } from '../lib/foodQueries';
@@ -30,8 +33,10 @@ import { SESSION_STYLE, TENTATIVE, durationText, hoursLabel, kindLabel } from '.
 import { useIsMobile } from '../lib/useIsMobile';
 import { useStoredState } from '../lib/useStoredState';
 import { DayPanel } from './calendar/DayPanel';
+import { EventFormPanel } from './calendar/event';
 import { MobileDay } from './calendar/MobileDay';
-import { ActivityPanel, AddPanel, DetailPanel, syncState, type Selection } from './calendar/panels';
+import { ActivityPanel, AddPanel, DetailPanel, type Selection } from './calendar/panels';
+import { syncState } from './calendar/sync';
 import { ridesMeta, sessionRides } from './calendar/shared';
 import { TimeOffChip, TimeOffPanel } from './calendar/time-off';
 import { WeekAgenda } from './calendar/WeekAgenda';
@@ -67,7 +72,11 @@ function EventChip({
           : event.tentative
             ? { bg: 'transparent', border: TENTATIVE.border, style: 'dashed', fg: s.fg }
             : { bg: s.bg, border: 'transparent', style: 'solid', fg: s.fg };
-  const plannedMeta = [event.kind !== 'ride' || event.startTime ? kindLabel(event) : '', durationText(event)].filter(Boolean).join(' · ');
+  // A real-world event says what the day is (distance, climbing, start), not how long it runs (DECISIONS #98).
+  const isEvent = isEventSession(event);
+  const plannedMeta = isEvent
+    ? eventChipMeta(event) || kindLabel(event)
+    : [event.kind !== 'ride' || event.startTime ? kindLabel(event) : '', durationText(event)].filter(Boolean).join(' · ');
   const meta =
     state === 'completed' ? (rides.length ? ridesMeta(rides) : plannedMeta) : state === 'missed' ? `Missed · ${plannedMeta}` : state === 'skipped' ? 'Skipped' : plannedMeta;
   return (
@@ -82,6 +91,7 @@ function EventChip({
     >
       <span className="flex items-center gap-1 text-xs font-semibold" style={{ color: look.fg }}>
         {state === 'completed' && <DoneIcon size={13} className="shrink-0" aria-label="Completed" />}
+        {isEvent && state !== 'completed' && <FlagIcon size={12} className="shrink-0" aria-label="Event" />}
         <span className={`truncate ${state === 'skipped' ? 'line-through' : ''}`}>{event.title}</span>
       </span>
       <span className="flex items-center gap-1 truncate text-[11px] text-muted">
@@ -208,8 +218,8 @@ function LayerToggles({ layers, set }: { layers: Layers; set: (l: Layers) => voi
   );
 }
 
-/** "+ Add ▾": a session, food or time off, for the selected day (else today). */
-function AddMenu({ onSession, onFood, onTimeOff }: { onSession: () => void; onFood: () => void; onTimeOff: () => void }) {
+/** "+ Add ▾": a session, an event, food or time off, for the selected day (else today). */
+function AddMenu({ onSession, onEvent, onFood, onTimeOff }: { onSession: () => void; onEvent: () => void; onFood: () => void; onTimeOff: () => void }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -218,23 +228,34 @@ function AddMenu({ onSession, onFood, onTimeOff }: { onSession: () => void; onFo
     window.addEventListener('pointerdown', close);
     return () => window.removeEventListener('pointerdown', close);
   }, [open]);
-  const item = 'flex min-h-10 w-full items-center border-0 bg-transparent px-3 text-left text-ink hover:bg-surface-2';
+  const items = [
+    { label: 'Session', hint: 'Zwift race, workout or other ride', icon: <PulseIcon size={18} />, on: onSession },
+    { label: 'Event', hint: "A fondo, race or ride you've entered", icon: <FlagIcon size={18} className="text-accent-ink" />, on: onEvent },
+    { label: 'Food', hint: 'Log a meal or snack', icon: <ForkKnifeIcon size={18} />, on: onFood },
+    { label: 'Time off', hint: 'Vacation or sick days', icon: <ClockIcon size={18} />, on: onTimeOff },
+  ];
   return (
     <div ref={ref} className="relative">
       <Button aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         <PlusIcon /> Add <ChevronDown />
       </Button>
       {open && (
-        <div role="menu" className="absolute top-full right-0 z-40 mt-1 w-44 overflow-hidden rounded-[10px] border border-line bg-surface py-1 shadow-[0_8px_24px_rgba(0,0,0,.1)]">
-          <button type="button" role="menuitem" className={item} onClick={() => (setOpen(false), onSession())}>
-            Session
-          </button>
-          <button type="button" role="menuitem" className={item} onClick={() => (setOpen(false), onFood())}>
-            Food
-          </button>
-          <button type="button" role="menuitem" className={item} onClick={() => (setOpen(false), onTimeOff())}>
-            Time off
-          </button>
+        <div role="menu" className="absolute top-full right-0 z-40 mt-1 w-64 overflow-hidden rounded-[10px] border border-line bg-surface py-1 shadow-[0_8px_24px_rgba(0,0,0,.1)]">
+          {items.map((i) => (
+            <button
+              key={i.label}
+              type="button"
+              role="menuitem"
+              className="flex min-h-12 w-full items-center gap-3 border-0 bg-transparent px-3 py-1.5 text-left text-ink hover:bg-surface-2"
+              onClick={() => (setOpen(false), i.on())}
+            >
+              <span className="flex-none text-muted">{i.icon}</span>
+              <span className="flex min-w-0 flex-col">
+                <span className="font-medium">{i.label}</span>
+                <span className="text-xs text-muted">{i.hint}</span>
+              </span>
+            </button>
+          ))}
         </div>
       )}
     </div>
@@ -421,7 +442,9 @@ function ScrollingCalendar({ today, initialWeek }: { today: string; initialWeek:
 
   const selectedEvent = selected?.type === 'event' ? events.find((e) => e.id === selected.id) : undefined;
   const selectedActivity = selected?.type === 'activity' ? activities.find((a) => a.id === selected.id) : undefined;
-  const focusDate = selected?.type === 'day' || selected?.type === 'add' || selected?.type === 'time-off-add' ? selected.date : today;
+  const focusDate = selected?.type === 'day' || selected?.type === 'add' || selected?.type === 'event-add' || selected?.type === 'time-off-add' ? selected.date : today;
+  // The coach plans in blocks of two weeks; the calendar says so where its reach ends (DECISIONS #98).
+  const horizonWeek = addDays(planHorizonEnd(today), 1);
 
   return (
     <div className="flex h-dvh min-h-0 flex-col">
@@ -438,7 +461,12 @@ function ScrollingCalendar({ today, initialWeek }: { today: string; initialWeek:
         <Button variant="ghost" onClick={() => jumpTo(weekStart(today), 'center')}>
           Today
         </Button>
-        <AddMenu onSession={() => setSelected({ type: 'add', date: focusDate })} onFood={() => addFood(focusDate)} onTimeOff={() => setSelected({ type: 'time-off-add', date: focusDate })} />
+        <AddMenu
+          onSession={() => setSelected({ type: 'add', date: focusDate })}
+          onEvent={() => setSelected({ type: 'event-add', date: focusDate })}
+          onFood={() => addFood(focusDate)}
+          onTimeOff={() => setSelected({ type: 'time-off-add', date: focusDate })}
+        />
         <Button variant="primary" onClick={() => void navigate({ to: '/', search: { new: true, prompt: 'Plan next week' } })}>
           Ask coach to plan
         </Button>
@@ -467,6 +495,9 @@ function ScrollingCalendar({ today, initialWeek }: { today: string; initialWeek:
                       <span className="text-sm font-bold text-ink">{formatMonthTitle(m.year, m.month)}</span>
                       <span className="h-px grow bg-line" />
                     </div>
+                  )}
+                  {week[0] === horizonWeek && (
+                    <div className="col-span-full px-1 pt-2 text-[13px] text-muted">Your coach plans two weeks at a time, so sessions show up here closer to the day.</div>
                   )}
                   <WeekRow
                     week={week}
@@ -525,6 +556,17 @@ function ScrollingCalendar({ today, initialWeek }: { today: string; initialWeek:
           />
         )}
         {selected?.type === 'add' && <AddPanel date={selected.date} onClose={() => setSelected(null)} onAdded={(id) => setSelected({ type: 'event', id })} />}
+        {selected?.type === 'event-add' && (
+          <EventFormPanel
+            key={selected.date}
+            date={selected.date}
+            onClose={() => setSelected(null)}
+            onView={(e) => {
+              jumpTo(weekStart(e.date), 'center');
+              setSelected({ type: 'event', id: e.id });
+            }}
+          />
+        )}
         {selected?.type === 'time-off-add' && <TimeOffPanel key={selected.date} date={selected.date} today={today} onClose={() => setSelected(null)} />}
         {selected?.type === 'time-off' && <TimeOffPanel key={selected.entry.id} entry={selected.entry} today={today} onClose={() => setSelected(null)} />}
       </div>

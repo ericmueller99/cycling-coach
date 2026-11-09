@@ -14,6 +14,8 @@ export interface MatchableEvent {
   ignoredActivityIds?: readonly string[] | undefined;
   /** Rides the user grouped into this session — taken, so never matched to another one. */
   extraActivityIds?: readonly string[] | undefined;
+  /** A real-world event's distance, so its ride can be told by length rather than name (DECISIONS #98). */
+  distanceKm?: number | undefined;
 }
 
 export interface MatchableActivity {
@@ -25,13 +27,26 @@ export interface MatchableActivity {
   movingSec: number;
   /** intervals.icu paired this ride with one of its planned events. */
   pairedEventId?: number | undefined;
+  distanceKm?: number | undefined;
 }
 
 const RACE = /\b(race|racing|ladder|zrl|crit|criterium|time trial|tt)\b/i;
 const STRUCTURED = /\b(workout|interval|intervals|vo2|threshold|sweet ?spot|over-?unders?|\d+x\d+)\b/i;
+/** How far a ride's distance may be from an event's and still be the event: a missed turn, a neutral roll-out. */
+const EVENT_DISTANCE_SLACK = 0.25;
+
+/**
+ * Whether a ride looks like this race. Zwift names its race rides; an outdoor ride is "Morning Ride",
+ * so a real-world event with a known distance is told by length instead (DECISIONS #98).
+ */
+function looksLikeRace(e: MatchableEvent, a: MatchableActivity): boolean {
+  if (RACE.test(a.name)) return true;
+  if (!e.distanceKm || !a.distanceKm) return false;
+  return Math.abs(a.distanceKm - e.distanceKm) / e.distanceKm <= EVENT_DISTANCE_SLACK;
+}
 
 function score(e: MatchableEvent, a: MatchableActivity): number {
-  const isRace = RACE.test(a.name);
+  const isRace = e.type === 'race' ? looksLikeRace(e, a) : RACE.test(a.name);
   let s = 0;
   switch (e.type) {
     case 'race':
@@ -61,8 +76,8 @@ function score(e: MatchableEvent, a: MatchableActivity): number {
  * so a race session waits out its day for a ride named like a race, and only then takes the pairing.
  */
 function holdsOutForRace(e: MatchableEvent, paired: MatchableActivity, rides: readonly MatchableActivity[], today: string): boolean {
-  if (e.type !== 'race' || RACE.test(paired.name)) return false;
-  return e.date >= today || rides.some((r) => r.startLocal.slice(0, 10) === e.date && RACE.test(r.name));
+  if (e.type !== 'race' || looksLikeRace(e, paired)) return false;
+  return e.date >= today || rides.some((r) => r.startLocal.slice(0, 10) === e.date && looksLikeRace(e, r));
 }
 
 /**

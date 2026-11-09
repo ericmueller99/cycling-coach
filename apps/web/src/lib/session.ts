@@ -1,5 +1,5 @@
 import { formatRange, formatShortDate } from '@cycling-coach/core';
-import type { SessionType, TimeOff, TimeOffKind, Workout } from '@cycling-coach/shared';
+import { EVENT_TYPE_SHORT, type EventInfo, type SessionType, type TimeOff, type TimeOffKind, type Workout } from '@cycling-coach/shared';
 
 /** Session-type colours. */
 export const SESSION_STYLE: Record<SessionType, { label: string; fg: string; bg: string; dot: string }> = {
@@ -28,16 +28,20 @@ export function durationText(e: { durationLabel?: string | undefined; durationMi
   return e.durationMin >= 90 ? `${Math.round((e.durationMin / 60) * 10) / 10} h` : `${e.durationMin}m`;
 }
 
-/** "Zwift workout", "Zwift race · 17:30 · B", "Ride · 09:00" — what and where. */
+/**
+ * "Zwift workout", "Zwift race · 17:30 · B", "Gran fondo · 07:00 · A", "Ride · 09:00" — what and
+ * where. A real-world event goes by its type; an outdoor race without details is an "Outdoor race".
+ */
 export function kindLabel(e: {
   kind: 'workout' | 'race' | 'ride';
   platform?: 'zwift' | 'garmin' | undefined;
   startTime?: string | undefined;
   priority?: 'A' | 'B' | 'C' | undefined;
+  eventInfo?: EventInfo | undefined;
 }) {
   const where = e.platform === 'garmin' ? 'Garmin' : 'Zwift';
-  const parts =
-    e.kind === 'workout' ? [`${where} workout`, e.startTime] : e.kind === 'race' ? [`${where} race`, e.startTime, e.priority] : ['Ride', e.startTime];
+  const race = e.eventInfo ? EVENT_TYPE_SHORT[e.eventInfo.type] : e.platform === 'garmin' ? 'Outdoor race' : 'Zwift race';
+  const parts = e.kind === 'workout' ? [`${where} workout`, e.startTime] : e.kind === 'race' ? [race, e.startTime, e.priority] : ['Ride', e.startTime];
   return parts.filter(Boolean).join(' · ');
 }
 

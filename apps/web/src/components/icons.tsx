@@ -177,6 +177,13 @@ export const FlagIcon = ({ size = 18, ...p }: P) => (
     <path d="M5 4h12l-2.5 4L17 12H5" />
   </svg>
 );
+/** A course (GPX) to add: a profile with an arrow up. */
+export const CourseIcon = ({ size = 18, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <path d="M3 18l5-7 4 4 3-5 6 8z" />
+    <path d="M12 3v6M9.5 5.5L12 3l2.5 2.5" />
+  </svg>
+);
 export const ExternalIcon = ({ size = 17, ...p }: P) => (
   <svg {...base(size)} {...p}>
     <path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />

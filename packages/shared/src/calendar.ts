@@ -24,6 +24,75 @@ export type Platform = z.infer<typeof platformSchema>;
 export const racePriorities = ['A', 'B', 'C'] as const;
 
 /**
+ * What a real-world event is (DECISIONS #98). An event is a `race` session ridden outdoors
+ * (`platform: 'garmin'`) that carries `eventInfo`; a Zwift race has none.
+ */
+export const eventTypes = [
+  'gran_fondo',
+  'sportive',
+  'road_race',
+  'criterium',
+  'time_trial',
+  'hill_climb',
+  'stage_race',
+  'gravel',
+  'cyclocross',
+  'mtb',
+  'ultra',
+  'track',
+  'triathlon',
+  'other',
+] as const;
+export const eventTypeSchema = z.enum(eventTypes);
+export type EventType = z.infer<typeof eventTypeSchema>;
+
+/** The picker's words, in the picker's order. */
+export const EVENT_TYPE_LABEL: Record<EventType, string> = {
+  gran_fondo: 'Gran fondo / medio fondo',
+  sportive: 'Sportive / century / charity ride',
+  road_race: 'Road race',
+  criterium: 'Criterium',
+  time_trial: 'Time trial',
+  hill_climb: 'Hill climb',
+  stage_race: 'Stage race / multi-day tour',
+  gravel: 'Gravel race',
+  cyclocross: 'Cyclocross',
+  mtb: 'Mountain bike (XC / marathon)',
+  ultra: 'Ultra / brevet / bikepacking',
+  track: 'Track',
+  triathlon: 'Triathlon / duathlon (bike leg)',
+  other: 'Other',
+};
+
+/** Tags, chips and the coach's calendar lines. */
+export const EVENT_TYPE_SHORT: Record<EventType, string> = {
+  gran_fondo: 'Gran fondo',
+  sportive: 'Sportive',
+  road_race: 'Road race',
+  criterium: 'Crit',
+  time_trial: 'Time trial',
+  hill_climb: 'Hill climb',
+  stage_race: 'Stage race',
+  gravel: 'Gravel',
+  cyclocross: 'Cyclocross',
+  mtb: 'MTB',
+  ultra: 'Ultra',
+  track: 'Track',
+  triathlon: 'Triathlon',
+  other: 'Event',
+};
+
+/** A real-world event's details. A patch replaces the whole object. */
+export const eventInfoSchema = z.object({
+  type: eventTypeSchema,
+  distanceKm: z.number().min(0).max(2000).optional(),
+  ascentM: z.number().int().min(0).max(30000).optional(),
+  location: z.string().max(120).optional(),
+  url: z.string().max(300).optional(),
+});
+export type EventInfo = z.infer<typeof eventInfoSchema>;
+
+/**
  * The fields, without cross-field rules (Zod can't extend a refined object) and WITHOUT defaults:
  * Zod still applies a default inside `.partial()`, so a patch built from defaulted fields would
  * quietly turn `{date}` into `{date, kind: 'ride', …}` — which demoted moved workouts to rides.
@@ -56,15 +125,30 @@ const calendarEventFields = z.object({
   /** The Zwift event (and pen) this session came from (Events page). */
   zwiftEventId: z.number().int().optional(),
   zwiftPenId: z.number().int().optional(),
+  /**
+   * The Zwift route a race follows, by Zwift's own id (GameDictionary `signature`, a pen's `routeId`),
+   * and how many laps (DECISIONS #102). Only accounts with the Zwift feature see or read them, and the
+   * coach's tools never offer them.
+   */
+  zwiftRouteId: z.number().int().optional(),
+  zwiftLaps: z.number().int().min(1).max(50).optional(),
+  /** A real-world event's details (DECISIONS #98). Races only. */
+  eventInfo: eventInfoSchema.optional(),
 });
 
-export const calendarEventInputSchema = calendarEventFields
-  .extend({ kind: sessionKindSchema.default('ride'), tentative: z.boolean().default(false) })
-  .superRefine((e, ctx) => {
-    if (e.kind === 'workout' && !e.workoutId) {
-      ctx.addIssue({ code: 'custom', path: ['workoutId'], message: 'A workout session needs a library workoutId (create_workout first).' });
-    }
-  });
+/** Creation adds the defaults and the cross-field rules. */
+const creationDefaults = { kind: sessionKindSchema.default('ride'), tentative: z.boolean().default(false) };
+
+function creationRules(e: { kind: string; workoutId?: string | undefined; eventInfo?: unknown }, ctx: z.RefinementCtx) {
+  if (e.kind === 'workout' && !e.workoutId) {
+    ctx.addIssue({ code: 'custom', path: ['workoutId'], message: 'A workout session needs a library workoutId (create_workout first).' });
+  }
+  if (e.eventInfo && e.kind !== 'race') {
+    ctx.addIssue({ code: 'custom', path: ['eventInfo'], message: 'Only a race carries event details (kind "race").' });
+  }
+}
+
+export const calendarEventInputSchema = calendarEventFields.extend(creationDefaults).superRefine(creationRules);
 export type CalendarEventInput = z.infer<typeof calendarEventInputSchema>;
 
 /** The intervals.icu event a session is mirrored to. */
@@ -97,11 +181,13 @@ export const calendarEventSchema = calendarEventFields.extend({
   intervals: intervalsLinkSchema.optional(),
   /** Set when a push failed before any intervals.icu event existed. */
   syncError: z.string().optional(),
+  /** The event has a course (DECISIONS #99). Server-set only, never from a patch or the coach. */
+  courseId: z.string().optional(),
 });
 export type CalendarEvent = z.infer<typeof calendarEventSchema>;
 
 /** Optional fields an edit can clear (an empty start time, deleted notes, a stale range label). */
-export const clearableEventFields = ['startTime', 'coachNote', 'meta', 'durationMin', 'durationLabel'] as const;
+export const clearableEventFields = ['startTime', 'coachNote', 'meta', 'durationMin', 'durationLabel', 'eventInfo', 'zwiftRouteId', 'zwiftLaps'] as const;
 export type ClearableEventField = (typeof clearableEventFields)[number];
 
 export const calendarEventPatchSchema = calendarEventFields.partial().extend({
@@ -111,7 +197,18 @@ export const calendarEventPatchSchema = calendarEventFields.partial().extend({
 });
 export type CalendarEventPatch = z.infer<typeof calendarEventPatchSchema>;
 
+/**
+ * What the coach's tools take: the same, without the Zwift route fields (DECISIONS #102). The coach
+ * can't set them, and they stay out of the cached tool schemas for every account.
+ */
+const coachEventFields = calendarEventFields.omit({ zwiftRouteId: true, zwiftLaps: true });
+export const coachEventInputSchema = coachEventFields.extend(creationDefaults).superRefine(creationRules);
+export const coachEventPatchSchema = coachEventFields.partial();
+
 export const calendarRangeQuerySchema = z.object({ from: isoDateSchema, to: isoDateSchema });
+
+/** Deleting an event: `goal=remove` takes its goal too; otherwise the goal stays, unlinked (DECISIONS #100). */
+export const calendarDeleteQuerySchema = z.object({ goal: z.literal('remove').optional() });
 
 /** Kinds that live on the intervals.icu calendar too. */
 export const syncedKinds: readonly SessionKind[] = ['workout', 'race'];

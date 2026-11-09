@@ -39,6 +39,9 @@ const unused = () => {
 const ports: CoachPorts = {
   training: null,
   listCalendar: unused,
+  getCalendarEvent: unused,
+  getEventCourse: unused,
+  setOutlook: unused,
   listTimeOff: unused,
   getTimeOff: unused,
   createProposal: async (p) => ({ ...p, id: 'smoke', threadId: 'smoke', itemStatus: p.items.map(() => 'pending' as const) }) as never,

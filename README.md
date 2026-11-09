@@ -13,8 +13,8 @@ your own database.
 
 ## Hosted version
 
-If you'd rather not run it yourself, a paid hosted version is available at
-[bikecoach.ai](https://bikecoach.ai), with a 14-day free trial.
+[bikecoach.ai](https://bikecoach.ai) runs a hosted copy for a small group of invited riders. It isn't
+sold as a service; to use BikeCoach, run your own copy (below).
 
 ## Run it with Docker
 

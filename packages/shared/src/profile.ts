@@ -126,6 +126,27 @@ export const weightPaceSchema = z
   });
 export type WeightPace = z.infer<typeof weightPaceSchema>;
 
+/**
+ * How much an event goal counts (DECISIONS #100), as the athlete answered "How much weight should the
+ * coach give this event?". Main goal is the goal's `primary` flag, so it isn't stored here; a main
+ * event goal keeps `important`, which it falls back to if another goal becomes main.
+ */
+export const eventWeights = ['important', 'in_mind'] as const;
+export type EventWeight = (typeof eventWeights)[number];
+/** The three answers, main goal included. */
+export type EventWeightChoice = 'main' | EventWeight;
+export const EVENT_WEIGHT_LABEL: Record<EventWeightChoice, string> = { main: 'Main goal', important: 'Important', in_mind: 'Keep in mind' };
+export const EVENT_WEIGHT_BLURB: Record<EventWeightChoice, string> = {
+  main: 'Plans build toward it.',
+  important: 'Real room for it beside your main goal, more as it gets closer.',
+  in_mind: 'Worked in where it fits, without changing your focus.',
+};
+
+/** What the athlete wants from an event. Optional; the goal's `detail` is the note beside it. */
+export const eventAims = ['finish', 'time', 'compete'] as const;
+export type EventAim = (typeof eventAims)[number];
+export const EVENT_AIM_LABEL: Record<EventAim, string> = { finish: 'Finish', time: 'Target time', compete: 'Compete' };
+
 /** Goal fields without defaults — see calendar.ts: Zod applies defaults inside .partial(). */
 const goalFields = z.object({
   horizon: z.enum(['long', 'short']),
@@ -142,6 +163,10 @@ const goalFields = z.object({
   target: z.number().optional(),
   /** A weight goal's pace, which sets the calorie budget (DECISIONS #96). */
   pace: weightPaceSchema.optional(),
+  /** The calendar event (a race session) it's for. Its date follows the event's (DECISIONS #100). */
+  eventId: z.string().optional(),
+  weight: z.enum(eventWeights).optional(),
+  aim: z.enum(eventAims).optional(),
   done: z.boolean(),
   /** The one shown as "Main goal" in the coach's right rail. */
   primary: z.boolean(),
@@ -150,7 +175,7 @@ export const goalInputSchema = goalFields.extend({ done: z.boolean().default(fal
 export type GoalInput = z.infer<typeof goalInputSchema>;
 /** A partial update; `unset` clears optional fields (JSON has no way to send `undefined`). */
 export const goalPatchSchema = goalFields.partial().extend({
-  unset: z.array(z.enum(['detail', 'targetLabel', 'targetDate', 'event', 'measure', 'target', 'pace'])).optional(),
+  unset: z.array(z.enum(['detail', 'targetLabel', 'targetDate', 'event', 'measure', 'target', 'pace', 'eventId', 'weight', 'aim'])).optional(),
 });
 export type GoalPatch = z.infer<typeof goalPatchSchema>;
 export interface GoalProgress {

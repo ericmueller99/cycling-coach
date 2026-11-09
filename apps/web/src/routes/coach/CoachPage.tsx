@@ -16,7 +16,7 @@ import { settleMarkdown } from '../../lib/textPacer';
 import { abortTurn, clearDoneTurn, patchTurn, runningThreadId, setWatching, startTurn, useLiveTurn, type LiveTurn, type TurnError as TurnErrorInfo, type TurnOrigin } from '../../lib/coachTurn';
 import { useAwayReturn } from '../../lib/useAwayReturn';
 import { useIsMobile } from '../../lib/useIsMobile';
-import { MemoryChip, ProposalBlock, RequestChangesContext, TextBlock, ToolChip, WorkoutBlock } from './blocks';
+import { MemoryChip, OutlookChip, ProposalBlock, RequestChangesContext, TextBlock, ToolChip, WorkoutBlock } from './blocks';
 import { dayLabel } from '../food/dayLabel';
 import { useFoodFlows } from '../food/flows';
 import { CoachFoodContext, FoodLogOfferBlock, MealIdeasBlock, RecipeRefBlock, type CoachFoodActions } from './foodBlocks';
@@ -84,6 +84,8 @@ function AssistantBlocks({ blocks, threadId, cards, live = false }: { blocks: Ui
             return <RecipeRefBlock key={b.draftId} id={b.draftId} initial={recipeDrafts.get(b.draftId)} />;
           case 'food_log_offer':
             return <FoodLogOfferBlock key={i} phrase={b.phrase} />;
+          case 'outlook':
+            return <OutlookChip key={i} block={b} />;
         }
       })}
     </>

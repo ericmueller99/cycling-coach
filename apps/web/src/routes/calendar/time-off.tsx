@@ -5,8 +5,7 @@ import { Sheet } from '../../components/Sheet';
 import { Button, ErrorNote, SectionLabel } from '../../components/ui';
 import { errorMessage, useSessionsBetween, useTimeOffMutations } from '../../lib/queries';
 import { TIME_OFF_STYLE, timeOffDates } from '../../lib/session';
-import { FIELD } from './panels';
-import { PANEL } from './shared';
+import { FIELD, PANEL } from './shared';
 
 /** How far a chip reaches past the padding of its cell, so a run of days reads as one bar. */
 const CELL_PADDING = 6;

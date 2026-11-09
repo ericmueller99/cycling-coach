@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import { calendarEventInputSchema, calendarEventPatchSchema, calendarEventSchema } from './calendar';
+import { calendarEventSchema, coachEventInputSchema, coachEventPatchSchema } from './calendar';
 import { isoDateSchema, type IsoDate } from './common';
-import { goalMeasureSchema, trainingPreferenceSchema, weightPaceSchema } from './profile';
+import { eventAims, eventWeights, goalMeasureSchema, trainingPreferenceSchema, weightPaceSchema } from './profile';
 import { timeOffChangeSchema } from './time-off';
 
 /**
@@ -10,20 +10,19 @@ import { timeOffChangeSchema } from './time-off';
  */
 
 /** One row of a Plan card. Same shape as a calendar event, so "Add" is a straight copy. */
-export const planItemSchema = calendarEventInputSchema;
+export const planItemSchema = coachEventInputSchema;
 export type PlanItem = z.infer<typeof planItemSchema>;
 
 export const proposalItemStatuses = ['pending', 'applied', 'dismissed'] as const;
 export type ProposalItemStatus = (typeof proposalItemStatuses)[number];
 
 export const calendarChangeSchema = z.discriminatedUnion('op', [
-  z.object({ op: z.literal('add'), event: calendarEventInputSchema }),
+  z.object({ op: z.literal('add'), event: coachEventInputSchema }),
   z.object({ op: z.literal('move'), eventId: z.string(), toDate: isoDateSchema }),
   z.object({
     op: z.literal('update'),
     eventId: z.string(),
-    // From the unrefined fields: Zod can't .partial() a refined object.
-    patch: calendarEventPatchSchema.omit({ status: true, unset: true }),
+    patch: coachEventPatchSchema,
   }),
   z.object({ op: z.literal('remove'), eventId: z.string() }),
 ]);
@@ -69,6 +68,10 @@ export const goalProposalSchema = z.object({
   target: z.number().optional(),
   /** A weight goal's pace, from the safe list (DECISIONS #96). */
   pace: weightPaceSchema.optional(),
+  /** The calendar event it's for; the goal is dated by the event (DECISIONS #100). */
+  eventId: z.string().optional(),
+  weight: z.enum(eventWeights).optional(),
+  aim: z.enum(eventAims).optional(),
   primary: z.boolean().optional(),
 });
 export type GoalProposal = z.infer<typeof goalProposalSchema>;
@@ -149,7 +152,9 @@ export type UiBlock =
   /** A generated recipe; it opens in the recipe pane and lives in `recipe_drafts`. */
   | { type: 'recipe_ref'; draftId: string }
   /** A Log this button: the athlete's words, opened in the food logger. Nothing is stored but the words. */
-  | { type: 'food_log_offer'; phrase: string };
+  | { type: 'food_log_offer'; phrase: string }
+  /** The coach rewrote its outlook (DECISIONS #101); `previous` is what Undo puts back (none: clear it). */
+  | { type: 'outlook'; text: string; previous?: string | undefined };
 
 export interface UiMessage {
   id: string;

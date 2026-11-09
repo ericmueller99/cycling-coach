@@ -233,6 +233,18 @@ export async function setEventSync(
   return doc ? toEvent(doc) : null;
 }
 
+/** Marks a session as having a course, or not (`null`). Never pushed: intervals.icu doesn't hold courses. */
+export async function setEventCourse(c: Collections, userId: string, id: string, courseId: string | null, now: Date) {
+  const _id = oid(id);
+  if (!_id) return null;
+  const doc = await c.calendarEvents.findOneAndUpdate(
+    { _id, userId },
+    courseId ? { $set: { courseId, updatedAt: now } } : { $unset: { courseId: '' }, $set: { updatedAt: now } },
+    { returnDocument: 'after' },
+  );
+  return doc ? toEvent(doc) : null;
+}
+
 export async function findEventByIntervalsId(c: Collections, userId: string, eventId: number) {
   const doc = await c.calendarEvents.findOne({ userId, 'intervals.eventId': eventId });
   return doc ? toEvent(doc) : null;

@@ -3,7 +3,7 @@ import type { Proposal, ThreadSummary, UiMessage } from './coach';
 import type { MealIdeas, RecipeDraft } from './coach-food';
 import type { IsoDate } from './common';
 import type { SessionFeedback } from './feedback';
-import type { Goal, Memory, PowerBest, Profile } from './profile';
+import type { EventWeightChoice, Goal, Memory, PowerBest, Profile } from './profile';
 import type { CalendarActivity, FitnessDay, IntegrationStatus } from './training';
 import type { Workout } from './workout';
 
@@ -55,6 +55,8 @@ export interface DashboardPayload {
   week: { date: IsoDate; events: CalendarEvent[] }[];
   /** The next planned race after today, within four weeks (the mobile Today strip). */
   nextRace?: { date: IsoDate; title: string } | undefined;
+  /** The next few real-world events and how the coach treats each: its goal's weight, or none (DECISIONS #101). */
+  upcomingEvents?: { id: string; title: string; date: IsoDate; weight: EventWeightChoice | null }[] | undefined;
   snapshot: {
     /** Unset until the athlete knows it (a ramp test is booked; DECISIONS #62). */
     ftpZwift?: number | undefined;

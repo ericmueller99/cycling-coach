@@ -19,6 +19,9 @@ import {
   createEvent,
   createWorkout,
   deleteActivities,
+  deleteCourse,
+  redateGoalForEvent,
+  unlinkGoalFromEvent,
   deleteEvent,
   getEvent,
   getProfile,
@@ -294,6 +297,8 @@ export class IntervalsSync {
       now,
     );
     await setEventSync(this.c, userId, local.id, { intervals: { ...local.intervals!, remoteUpdated: r.updated, syncedAt: now.toISOString() } }, now);
+    // Moved in intervals.icu: its goal's date follows (DECISIONS #100).
+    if (r.date !== local.date) await redateGoalForEvent(this.c, userId, local.id, r.date);
   }
 
 
@@ -372,6 +377,9 @@ export class IntervalsSync {
             break;
           case 'remove-local':
             await deleteEvent(this.c, userId, action.local.id);
+            // Its course goes with it (DECISIONS #99); its goal stays, unlinked (#100).
+            await deleteCourse(this.c, userId, action.local.id);
+            await unlinkGoalFromEvent(this.c, userId, action.local.id);
             report.removed++;
             break;
         }

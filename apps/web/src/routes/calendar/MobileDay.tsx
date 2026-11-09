@@ -1,10 +1,11 @@
 import { addDays, dayOfMonth, formatLongDay, formatRange, sessionState, sumNutrients, timeOffOn, weekDates, weekStart, WEEKDAY_LABELS } from '@cycling-coach/core';
 import type { IsoDate } from '@cycling-coach/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { useRef, type TouchEvent } from 'react';
+import { useRef, useState, type TouchEvent } from 'react';
 import { AppBar, IconButton } from '../../components/AppBar';
 import { ChevronLeft, ChevronRight, PlusIcon } from '../../components/icons';
 import { KcalBar } from '../../components/KcalBar';
+import { Sheet } from '../../components/Sheet';
 import { ErrorNote, Spinner } from '../../components/ui';
 import { fmtTime } from '../../lib/food';
 import { useDaysRange } from '../../lib/foodQueries';
@@ -33,6 +34,7 @@ export function MobileDay({ today, date }: { today: IsoDate; date: IsoDate }) {
   const navigate = useNavigate();
   const d = useDay(date, today, true);
   const a = useDayActions(date, today, d);
+  const [adding, setAdding] = useState(false);
   const week = weekStart(date);
   const dates = weekDates(date);
   const food = useDaysRange(calendarChunkStart(today, week), 4);
@@ -194,17 +196,10 @@ export function MobileDay({ today, date }: { today: IsoDate; date: IsoDate }) {
       <div className="fixed inset-x-4 bottom-[calc(76px+env(safe-area-inset-bottom))] z-30 flex gap-2">
         <button
           type="button"
-          onClick={() => a.setPanel({ type: 'add', date })}
+          onClick={() => setAdding(true)}
           className="flex h-[52px] flex-1 items-center justify-center gap-2 rounded-[26px] border border-line-strong bg-surface font-semibold text-ink shadow-[0_4px_12px_rgba(0,0,0,.08)]"
         >
-          <PlusIcon size={18} /> Session
-        </button>
-        <button
-          type="button"
-          onClick={() => a.setPanel({ type: 'time-off-add', date })}
-          className="flex h-[52px] flex-1 items-center justify-center gap-2 rounded-[26px] border border-line-strong bg-surface font-semibold whitespace-nowrap text-ink shadow-[0_4px_12px_rgba(0,0,0,.08)]"
-        >
-          <PlusIcon size={18} /> Time off
+          <PlusIcon size={18} /> Add
         </button>
         <button
           type="button"
@@ -215,6 +210,32 @@ export function MobileDay({ today, date }: { today: IsoDate; date: IsoDate }) {
         </button>
       </div>
       {a.elements}
+      {adding && (
+        <Sheet title="Add" onClose={() => setAdding(false)}>
+          <div className="flex flex-col gap-2">
+            {(
+              [
+                ['add', 'Session', 'Zwift race, workout or other ride'],
+                ['event-add', 'Event', "A fondo, race or ride you've entered"],
+                ['time-off-add', 'Time off', 'Vacation or sick days'],
+              ] as const
+            ).map(([type, label, hint]) => (
+              <button
+                key={type}
+                type="button"
+                onClick={() => {
+                  setAdding(false);
+                  a.setPanel({ type, date });
+                }}
+                className="flex min-h-[56px] flex-col items-start justify-center rounded-xl border border-line-strong bg-surface px-4 text-left text-ink"
+              >
+                <span className="font-medium">{label}</span>
+                <span className="text-xs text-muted">{hint}</span>
+              </button>
+            ))}
+          </div>
+        </Sheet>
+      )}
     </div>
   );
 }

@@ -121,6 +121,9 @@ export function DayPanel({
         <Button className="flex-auto" onClick={() => onSelect({ type: 'add', date })}>
           + Session
         </Button>
+        <Button className="flex-auto" onClick={() => onSelect({ type: 'event-add', date })}>
+          + Event
+        </Button>
         <Button className="flex-auto" onClick={() => onSelect({ type: 'time-off-add', date })}>
           + Time off
         </Button>

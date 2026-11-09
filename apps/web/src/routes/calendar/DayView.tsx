@@ -1,5 +1,6 @@
 import { addDays, entryRef, slotForTime } from '@cycling-coach/core';
 import type { FoodLogEntry, IsoDate, MealItem } from '@cycling-coach/shared';
+import { useNavigate } from '@tanstack/react-router';
 import { useState, type ReactNode } from 'react';
 import { MealEditor } from '../food/MealEditor';
 import { dayLabel } from '../food/dayLabel';
@@ -7,6 +8,7 @@ import { useFoodFlows } from '../food/flows';
 import { feedbackForEvent } from '../../lib/feedback';
 import { nowTime } from '../../lib/food';
 import type { useDay } from './day';
+import { EventFormPanel } from './event';
 import { ActivityPanel, AddPanel, DetailPanel, type Selection } from './panels';
 import { sessionRides } from './shared';
 import { TimeOffPanel } from './time-off';
@@ -19,6 +21,7 @@ export function useDayActions(date: IsoDate, today: IsoDate, d: ReturnType<typeo
   const lib = d.lib.data;
   const slot = lib ? slotForTime(lib.settings.slots, date === today ? nowTime() : '12:00') : 'Breakfast';
   const flows = useFoodFlows({ lib, date, dateLabel: dayLabel(date, today), defaultSlot: slot });
+  const navigate = useNavigate();
   const [panel, setPanel] = useState<Selection>(null);
   const [saveMeal, setSaveMeal] = useState<{ slot: string; items: MealItem[] } | null>(null);
   const saveAsMeal = (slotName: string, entries: FoodLogEntry[]) =>
@@ -60,6 +63,14 @@ export function useDayActions(date: IsoDate, today: IsoDate, d: ReturnType<typeo
         />
       )}
       {panel?.type === 'add' && <AddPanel sheet date={panel.date} onClose={close} onAdded={(id) => setPanel({ type: 'event', id })} />}
+      {panel?.type === 'event-add' && (
+        <EventFormPanel
+          sheet
+          date={panel.date}
+          onClose={close}
+          onView={(e) => (e.date === date ? setPanel({ type: 'event', id: e.id }) : void navigate({ to: '/calendar/$date', params: { date: e.date } }))}
+        />
+      )}
       {panel?.type === 'time-off-add' && <TimeOffPanel sheet date={panel.date} today={today} onClose={close} />}
       {panel?.type === 'time-off' && <TimeOffPanel sheet key={panel.entry.id} entry={panel.entry} today={today} onClose={close} />}
     </>

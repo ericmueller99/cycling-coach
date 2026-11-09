@@ -1,12 +1,16 @@
-import { buildZwo, canAddRide, canDeleteSession, todayIn } from '@cycling-coach/core';
+import { analyzeCourse, buildZwo, canAddRide, canDeleteSession, COURSE_ANALYSIS_VERSION, todayIn } from '@cycling-coach/core';
 import {
   addRideToEvent,
   createEvent,
   createTimeOff,
+  deleteCourse,
+  deleteGoalForEvent,
   deleteEvent,
   deleteTimeOff,
   deleteReasonForEvent,
   redateReasonForEvent,
+  redateGoalForEvent,
+  unlinkGoalFromEvent,
   detachFeedbackFromEvent,
   findEventByActivity,
   getEvent,
@@ -16,6 +20,8 @@ import {
   getWorkout,
   patchEvent,
   patchTimeOff,
+  putCourse,
+  setEventCourse,
   removeRideFromEvent,
   setEventSync,
   unlinkActivity,
@@ -26,6 +32,9 @@ import {
   type CalendarEvent,
   type CalendarEventInput,
   type CalendarEventPatch,
+  type Course,
+  type CourseInput,
+  type EventInfo,
   type Platform,
   type SessionKind,
   type SessionType,
@@ -37,15 +46,18 @@ import type { ServiceFailure } from '../app';
 import type { IntegrationResolver } from '../integrations';
 import { IntervalsError } from '../providers/intervals-icu';
 import { buildRaceEvent, buildWorkoutEvent } from '../providers/intervals-icu/map';
+import { readCourse } from './course';
+import type { ZwiftRouteCourses } from './zwift-route-course';
 
 const isSynced = (e: Pick<CalendarEvent, 'kind'>) => e.kind === 'workout' || e.kind === 'race';
 
-/** Fields that only matter here; changing just these never needs a push. */
-const LOCAL_ONLY = new Set(['status', 'activityId', 'extraActivityIds', 'tentative']);
+/** Fields that only matter here; changing (or clearing) just these never needs a push. */
+const LOCAL_ONLY = new Set(['status', 'activityId', 'extraActivityIds', 'tentative', 'zwiftRouteId', 'zwiftLaps']);
 
 /**
  * Normalise what a session means: races are always race-coloured, and workouts/races default to
- * Zwift. The schema allows these to be omitted; the calendar shouldn't.
+ * Zwift. The schema allows these to be omitted; the calendar shouldn't. Event details belong to
+ * races alone (DECISIONS #98): a patch can't put them on anything else.
  */
 function normalise<
   T extends {
@@ -53,12 +65,14 @@ function normalise<
     type?: SessionType | undefined;
     platform?: Platform | undefined;
     priority?: 'A' | 'B' | 'C' | undefined;
+    eventInfo?: EventInfo | undefined;
   },
 >(input: T): T {
   const out = { ...input };
   if (out.kind === 'race') out.type = 'race';
   if ((out.kind === 'workout' || out.kind === 'race') && !out.platform) out.platform = 'zwift';
   if (out.kind === 'race' && !out.priority) out.priority = 'B';
+  if (out.kind !== 'race') delete out.eventInfo;
   return out;
 }
 
@@ -68,12 +82,15 @@ function normalise<
  * instead of resetting an A race to B or a Garmin race to Zwift.
  */
 export function normalisePatch(before: CalendarEvent, patch: CalendarEventPatch): CalendarEventPatch {
-  return normalise({
+  const out = normalise({
     ...patch,
     kind: patch.kind ?? before.kind,
     platform: patch.platform ?? before.platform,
     priority: patch.priority ?? before.priority,
   });
+  // A race turned into something else leaves its event details behind.
+  if (out.kind !== 'race' && before.eventInfo) out.unset = [...new Set([...(out.unset ?? []), 'eventInfo' as const])];
+  return out;
 }
 
 /**
@@ -94,6 +111,8 @@ export class CalendarService {
     readonly eventNameSuffix?: string,
     /** After a failed push, so a retry doesn't have to wait for a slow poll (DECISIONS #75). */
     private readonly onPushFailed?: (userId: string) => Promise<void>,
+    /** A race that follows a Zwift route gets its course from the route (DECISIONS #102). */
+    private readonly routeCourses?: Pick<ZwiftRouteCourses, 'course'>,
   ) {}
 
   async create(
@@ -116,13 +135,16 @@ export class CalendarService {
     const didntHappen = (s: CalendarEvent['status']) => s === 'missed' || s === 'skipped';
     if (didntHappen(before.status) && !didntHappen(event.status)) await deleteReasonForEvent(this.c, userId, id);
     else if (event.date !== before.date) await redateReasonForEvent(this.c, userId, id, event.date, this.now());
+    // An event's goal is dated by the event (DECISIONS #100).
+    if (event.date !== before.date) await redateGoalForEvent(this.c, userId, id, event.date);
 
     // Turned into a plain ride: it no longer belongs on intervals.icu.
     if (!isSynced(event) && event.intervals) {
       const removed = await this.unlink(userId, event);
       return 'error' in removed ? { event, syncError: removed.error } : { event: removed };
     }
-    const relevant = Object.keys(patch).some((k) => !LOCAL_ONLY.has(k));
+    const changed = [...Object.keys(patch).filter((k) => k !== 'unset'), ...(patch.unset ?? [])];
+    const relevant = changed.some((k) => !LOCAL_ONLY.has(k));
     if (isSynced(event) && relevant) {
       event = await this.push(userId, event);
       const error = event.intervals?.error ?? event.syncError;
@@ -136,7 +158,7 @@ export class CalendarService {
    * would let the next sync re-import it from intervals.icu as if it were new. Completed sessions
    * can't be deleted at all (DECISIONS #24).
    */
-  async remove(userId: string, id: string): Promise<{ ok: true } | { error: string } | null> {
+  async remove(userId: string, id: string, opts: { removeGoal?: boolean } = {}): Promise<{ ok: true } | { error: string } | null> {
     const event = await getEvent(this.c, userId, id);
     if (!event) return null;
     if (!canDeleteSession(event)) return { error: "Completed sessions can't be deleted." };
@@ -147,7 +169,48 @@ export class CalendarService {
     await deleteEvent(this.c, userId, id);
     // Only a session that wasn't ridden gets here, so a reason is all the feedback it could have.
     await deleteReasonForEvent(this.c, userId, id);
+    await deleteCourse(this.c, userId, id);
+    // Its goal goes too if the athlete said so; otherwise it stays, no longer following an event.
+    if (opts.removeGoal) await deleteGoalForEvent(this.c, userId, id);
+    else await unlinkGoalFromEvent(this.c, userId, id);
     return { ok: true };
+  }
+
+  /**
+   * An event's course (DECISIONS #99), analysed again when the analysis has changed since it was stored.
+   * Null when there is none.
+   */
+  async course(userId: string, id: string): Promise<Course | null> {
+    const event = await getEvent(this.c, userId, id);
+    if (!event) return null;
+    // A race on a Zwift route shows the route, for accounts with the Zwift feature (DECISIONS #102).
+    if (event.zwiftRouteId !== undefined && this.routeCourses) {
+      const fromRoute = await this.routeCourses.course(userId, event);
+      if (fromRoute) return fromRoute;
+    }
+    return readCourse(this.c, userId, id);
+  }
+
+  /**
+   * Adds or replaces a race's course. The track comes from the browser; the analysis is ours. Nothing is
+   * pushed: intervals.icu doesn't hold courses.
+   */
+  async putCourse(userId: string, id: string, input: CourseInput): Promise<Course | ServiceFailure | null> {
+    const event = await getEvent(this.c, userId, id);
+    if (!event) return null;
+    if (event.kind !== 'race') return { error: 'Only an event has a course.', status: 400 };
+    if (event.zwiftRouteId !== undefined) return { error: 'This race follows a Zwift route.', status: 400 };
+    const stored = await putCourse(this.c, userId, id, input, analyzeCourse(input.points), COURSE_ANALYSIS_VERSION, this.now());
+    if (event.courseId !== stored.id) await setEventCourse(this.c, userId, id, stored.id, this.now());
+    return stored.course;
+  }
+
+  async removeCourse(userId: string, id: string): Promise<boolean> {
+    const event = await getEvent(this.c, userId, id);
+    if (!event) return false;
+    await deleteCourse(this.c, userId, id);
+    if (event.courseId) await setEventCourse(this.c, userId, id, null, this.now());
+    return true;
   }
 
   /**

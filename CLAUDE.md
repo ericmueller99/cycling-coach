@@ -104,7 +104,7 @@ Fixtures use made-up ids, names and domains. Never commit `.env`, keys or a real
 The defaults are `DEFAULT_ROUTER` in `packages/coach/src/router.ts`, not env (DECISIONS #69). `createCore`'s `router` option replaces them.
 
 Opus 5.5 and Sonnet 5.5: forced `tool_choice` (`any`/`tool`) returns 400 — use `auto` + prompt + strict tools.
-Minimum cacheable prefix 512 tokens. Tools and persona alone are about 16.4K tokens, in front of every
+Minimum cacheable prefix 512 tokens. Tools and persona alone are about 21K tokens (coach:smoke, Nov 7), in front of every
 call, so keep that prefix byte-stable: `pnpm --filter @cycling-coach/api coach:smoke` checks it.
 Caches are per model. Effort is pinned per route, because changing it invalidates the messages cache.
 

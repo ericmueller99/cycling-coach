@@ -16,6 +16,8 @@ import type {
   Profile,
   Proposal,
   SessionFeedbackInput,
+  CourseInput,
+  OutlookRevert,
   TimeOffInput,
   TimeOffPatch,
 } from '@cycling-coach/shared';
@@ -38,6 +40,7 @@ export const keys = {
   thread: (id: string) => ['threads', id] as const,
   calendar: (from: string, to: string) => ['calendar', from, to] as const,
   timeOff: ['timeOff'] as const,
+  outlook: ['outlook'] as const,
   intervals: ['intervals'] as const,
   zwift: ['zwift'] as const,
   usage: ['usage'] as const,
@@ -321,8 +324,12 @@ export function useCalendarMutations() {
         unwrap(await api.api.calendar[':id'].$patch({ param: { id }, json: patch })),
       onSuccess: invalidate,
     }),
+    /** An event's goal stays, unlinked, unless `removeGoal` (DECISIONS #100). */
     remove: useMutation({
-      mutationFn: async (id: string) => unwrap(await api.api.calendar[':id'].$delete({ param: { id } })),
+      mutationFn: async (arg: string | { id: string; removeGoal: boolean }) => {
+        const { id, removeGoal } = typeof arg === 'string' ? { id: arg, removeGoal: false } : arg;
+        return unwrap(await api.api.calendar[':id'].$delete({ param: { id }, query: removeGoal ? { goal: 'remove' } : {} }));
+      },
       onSuccess: invalidate,
     }),
     /** Retry a push to intervals.icu that failed. */
@@ -345,6 +352,63 @@ export function useCalendarMutations() {
     removeRide: useMutation({
       mutationFn: async ({ id, activityId }: { id: string; activityId: string }) =>
         unwrap(await api.api.calendar[':id'].rides[':activityId'].$delete({ param: { id, activityId } })),
+      onSuccess: invalidate,
+    }),
+  };
+}
+
+/** The coach's outlook (DECISIONS #101): null until the coach writes one. */
+export function useOutlook() {
+  return useQuery({ queryKey: keys.outlook, queryFn: async () => unwrap(await api.api.outlook.$get()) });
+}
+
+/** The athlete's own edits (free: no AI), and Undo on a chip from the coach. */
+export function useOutlookMutations() {
+  const qc = useQueryClient();
+  const refresh = () => qc.invalidateQueries({ queryKey: keys.outlook });
+  return {
+    save: useMutation({ mutationFn: async (text: string) => unwrap(await api.api.outlook.$put({ json: { text } })), onSuccess: refresh }),
+    clear: useMutation({ mutationFn: async () => unwrap(await api.api.outlook.$delete()), onSuccess: refresh }),
+    revert: useMutation({ mutationFn: async (input: OutlookRevert) => unwrap(await api.api.outlook.revert.$post({ json: input })), onSuccess: refresh }),
+  };
+}
+
+/** An event's course (DECISIONS #99): its analysis, never the track. */
+export function useCourse(eventId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['calendar', 'course', eventId],
+    queryFn: async () => unwrap(await api.api.calendar[':id'].course.$get({ param: { id: eventId } })),
+    enabled,
+    retry: false,
+  });
+}
+
+/** The account may use the logged-in Zwift features (DECISIONS #54), Zwift race routes among them (#102). */
+export function useZwiftFeature(): boolean {
+  return useMe().data?.features.zwiftAccount ?? false;
+}
+
+/** Routes a Zwift race can follow (DECISIONS #102). Only fetched for accounts with the Zwift feature. */
+export function useZwiftRoutes(enabled: boolean) {
+  return useQuery({
+    queryKey: ['zwift', 'routes'],
+    queryFn: async () => unwrap(await api.api.zwift.routes.$get()),
+    enabled,
+    staleTime: 60 * 60 * 1000,
+    retry: false,
+  });
+}
+
+/** Add, replace or remove an event's course. The browser reads the GPX; only the resampled track is sent. */
+export function useCourseMutations() {
+  const invalidate = useInvalidateTraining();
+  return {
+    put: useMutation({
+      mutationFn: async ({ id, input }: { id: string; input: CourseInput }) => unwrap(await api.api.calendar[':id'].course.$put({ param: { id }, json: input })),
+      onSuccess: invalidate,
+    }),
+    remove: useMutation({
+      mutationFn: async (id: string) => unwrap(await api.api.calendar[':id'].course.$delete({ param: { id } })),
       onSuccess: invalidate,
     }),
   };
@@ -396,11 +460,12 @@ export function useProposalMutations(threadId: string) {
 
 export function useProfileMutations() {
   const qc = useQueryClient();
+  // Returns the profile's refetch, which the mutation waits for: a saved goal shows as saved, not the old one for a moment.
   const invalidate = () => {
-    void qc.invalidateQueries({ queryKey: keys.profile });
     void qc.invalidateQueries({ queryKey: keys.dashboard });
     // A weight goal or weight change moves the calorie budget.
     void qc.invalidateQueries({ queryKey: ['energy', 'budget'] });
+    return qc.invalidateQueries({ queryKey: keys.profile });
   };
   return {
     saveProfile: useMutation({

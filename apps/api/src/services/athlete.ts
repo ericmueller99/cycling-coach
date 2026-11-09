@@ -1,5 +1,5 @@
 import type { AthleteContext } from '@cycling-coach/coach';
-import { addDays, goalProgress, isShortTerm, todayIn, wattsPerKg, weekDates } from '@cycling-coach/core';
+import { addDays, coachEvents, eventGoalWeight, goalForEvent, goalProgress, isEventSession, isShortTerm, todayIn, wattsPerKg, weekDates } from '@cycling-coach/core';
 import {
   getProfile,
   getUserName,
@@ -85,6 +85,12 @@ export async function buildDashboard(
     ctx.powerBests.find((b) => b.durationSec === 300 && b.period === '90d' && b.watts) ??
     ctx.powerBests.filter((b) => b.durationSec === 300 && b.watts).sort((a, b) => (b.watts ?? 0) - (a.watts ?? 0))[0];
   const mainGoal = ctx.goals.find((g) => g.primary) ?? ctx.goals.find((g) => g.horizon === 'long');
+  // The rail's Coming up: the next few real-world events and how the coach treats each (DECISIONS #101).
+  const ahead = coachEvents(await listEvents(c, userId, today, addDays(today, 730)), ctx.goals).filter(isEventSession).slice(0, 3);
+  const upcomingEvents = ahead.map((e) => {
+    const goal = goalForEvent(ctx.goals, e.id);
+    return { id: e.id, title: e.title, date: e.date, weight: goal ? eventGoalWeight(goal) : null };
+  });
   return {
     today,
     timezone: profile.timezone,
@@ -102,6 +108,7 @@ export async function buildDashboard(
       ...(fitness ? { fitness } : {}),
     },
     ...(mainGoal ? { mainGoal } : {}),
+    ...(upcomingEvents.length ? { upcomingEvents } : {}),
     intervals,
   };
 }
@@ -109,6 +116,11 @@ export async function buildDashboard(
 /** The window of calendar the coach sees each turn: last week (what happened) + next two. */
 export function coachCalendarWindow(today: IsoDate): { from: IsoDate; to: IsoDate } {
   return { from: addDays(today, -7), to: addDays(today, 14) };
+}
+
+/** Events reach furthest: a fondo next September shapes training now (DECISIONS #101). */
+export function coachEventsWindow(today: IsoDate): { from: IsoDate; to: IsoDate } {
+  return { from: today, to: addDays(today, 730) };
 }
 
 /** Time off reaches much further ahead than sessions: a plan weeks out has to know about a vacation. */

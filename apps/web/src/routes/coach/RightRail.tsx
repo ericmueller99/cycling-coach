@@ -1,11 +1,12 @@
-import { dayOfMonth, formatDayLabel, formatLongDay, isShortTerm, WEEKDAY_LABELS } from '@cycling-coach/core';
-import type { CalendarEvent, DashboardPayload, IsoDate } from '@cycling-coach/shared';
+import { dayOfMonth, formatDayLabel, formatLongDay, isShortTerm, weekStart, WEEKDAY_LABELS } from '@cycling-coach/core';
+import { EVENT_WEIGHT_LABEL, type CalendarEvent, type DashboardPayload, type IsoDate } from '@cycling-coach/shared';
 import { Link } from '@tanstack/react-router';
 import { useState, type ReactNode } from 'react';
-import { ChevronDown, ChevronRight, TrashIcon } from '../../components/icons';
+import { ChevronDown, ChevronRight, FlagIcon, TrashIcon } from '../../components/icons';
 import { Button, Card, ProgressBar, SectionLabel, SessionTag, StatTile } from '../../components/ui';
 import { ZwiftWeightAlert } from '../../components/ZwiftWeightAlert';
 import { useExtensions } from '../../extensions';
+import { comingUpWhen, eventWhen } from '../../lib/eventInfo';
 import { SESSION_STYLE, durationText } from '../../lib/session';
 import { useCalendarMutations, useDashboard, useProfile, useProfileMutations } from '../../lib/queries';
 import { ConnectNudge } from './ConnectNudge';
@@ -175,6 +176,28 @@ function WeightTile({ snapshot }: { snapshot: DashboardPayload['snapshot'] }) {
  * Power from the 90-day bests only, because the heading says so: `best5minW` falls back to other
  * periods. Whatever else a deployment knows about health comes in through `snapshotHealth` (#85).
  */
+/**
+ * The next few real-world events and how the coach treats each (DECISIONS #101): the goal's weight, or
+ * "Not trained for" when there's no goal.
+ */
+function ComingUp({ events, today }: { events: NonNullable<DashboardPayload['upcomingEvents']>; today: IsoDate }) {
+  return (
+    <Card className="flex flex-col gap-2.5 p-4">
+      <SectionLabel>Coming up</SectionLabel>
+      {events.map((e) => (
+        <Link key={e.id} to="/calendar" search={{ week: weekStart(e.date) }} className="flex items-start gap-2.5 py-1 text-ink no-underline hover:text-ink">
+          <FlagIcon size={15} className="mt-0.5 shrink-0 text-[#B42318]" />
+          <span className="flex min-w-0 flex-auto flex-col">
+            <span className="truncate text-sm font-semibold">{e.title}</span>
+            <span className="font-mono text-xs text-muted">{comingUpWhen(e.date, today)}</span>
+          </span>
+          <span className="text-xs whitespace-nowrap text-muted">{e.weight ? EVENT_WEIGHT_LABEL[e.weight] : 'Not trained for'}</span>
+        </Link>
+      ))}
+    </Card>
+  );
+}
+
 function Snapshot({ snapshot }: { snapshot: DashboardPayload['snapshot'] }) {
   const { snapshotHealth: Health } = useExtensions();
   const bests = useProfile().data?.powerBests;
@@ -272,6 +295,7 @@ export function RightRail({ onAsk, onOpenMemory }: { onAsk: (prompt: string) => 
         </div>
       </Card>
 
+      {data.upcomingEvents && data.upcomingEvents.length > 0 && <ComingUp events={data.upcomingEvents} today={data.today} />}
       <Snapshot snapshot={data.snapshot} />
 
       {goal && (
@@ -283,6 +307,8 @@ export function RightRail({ onAsk, onOpenMemory }: { onAsk: (prompt: string) => 
             </Link>
           </div>
           <div className="font-semibold">{goal.title}</div>
+          {/* An event goal says when (DECISIONS #100). */}
+          {goal.event && goal.targetDate && <div className="font-mono text-xs text-muted">{eventWhen({ date: goal.targetDate }, data.today)}</div>}
           {goal.progress ? (
             <>
               <ProgressBar value={goal.progress.fraction} />

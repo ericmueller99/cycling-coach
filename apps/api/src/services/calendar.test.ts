@@ -51,4 +51,22 @@ describe('normalisePatch', () => {
     const bare: CalendarEvent = { ...race, platform: undefined, priority: undefined } as unknown as CalendarEvent;
     expect(normalisePatch(bare, { title: 'x' })).toMatchObject({ type: 'race', platform: 'zwift', priority: 'B' });
   });
+
+  describe('event details (DECISIONS #98)', () => {
+    const fondo: CalendarEvent = { ...race, eventInfo: { type: 'gran_fondo', distanceKm: 142, ascentM: 2350 } };
+
+    it('keeps them through a move, and takes a whole new set', () => {
+      expect(normalisePatch(fondo, { date: '2027-09-12' })).not.toHaveProperty('eventInfo');
+      expect(normalisePatch(fondo, { eventInfo: { type: 'gravel' } })).toMatchObject({ eventInfo: { type: 'gravel' } });
+    });
+
+    it('never puts them on anything but a race', () => {
+      const workout = { ...race, kind: 'workout', type: 'intervals', eventInfo: undefined } as CalendarEvent;
+      expect(normalisePatch(workout, { eventInfo: { type: 'gravel' } })).not.toHaveProperty('eventInfo');
+    });
+
+    it('clears them when a race stops being one', () => {
+      expect(normalisePatch(fondo, { kind: 'ride', type: 'endurance' }).unset).toEqual(['eventInfo']);
+    });
+  });
 });

@@ -12,10 +12,11 @@ import {
   type PreviewField,
   type SessionPreview,
 } from '@cycling-coach/core';
-import { TIME_OFF_LABEL, TRAINING_PREFERENCE_LABEL, type CalendarChange, type Proposal, type ProposalItemStatus, type TimeOffChange, type ToolChipBlock, type UiBlock, type Workout } from '@cycling-coach/shared';
+import { EVENT_AIM_LABEL, EVENT_WEIGHT_LABEL, TIME_OFF_LABEL, TRAINING_PREFERENCE_LABEL, type CalendarChange, type Proposal, type ProposalItemStatus, type TimeOffChange, type ToolChipBlock, type UiBlock, type Workout } from '@cycling-coach/shared';
 import { createContext, memo, useContext, useState } from 'react';
+import { Link } from '@tanstack/react-router';
 import ReactMarkdown from 'react-markdown';
-import { CalendarAddIcon, CheckIcon, ChevronDown, MemoryIcon, PlusIcon, PulseIcon, XIcon } from '../../components/icons';
+import { CalendarAddIcon, CheckIcon, ChevronDown, LogoIcon, MemoryIcon, PlusIcon, PulseIcon, WarningIcon, XIcon } from '../../components/icons';
 import { Button, Card, ErrorNote, SessionTag } from '../../components/ui';
 import { ScheduleControl } from '../../components/ScheduleControl';
 import { ZoneChart } from '../../components/ZoneChart';
@@ -25,6 +26,7 @@ import { durationText, kindLabel, SESSION_STYLE, TIME_OFF_STYLE, timeOffDates } 
 import {
   errorMessage,
   useDashboard,
+  useOutlookMutations,
   useProfileMutations,
   useProposal,
   useProposalMutations,
@@ -487,6 +489,13 @@ function GoalCard({ proposal, threadId }: { proposal: Extract<Proposal, { kind: 
         {goalDateLabel(g) ? ` · ${goalDateLabel(g)}` : ''}
       </div>
       <div className="font-semibold">{g.title}</div>
+      {/* A goal for an event on the calendar: how much it counts (DECISIONS #100). */}
+      {g.eventId && (
+        <div className="text-[13px] text-muted">
+          For an event on your calendar · {EVENT_WEIGHT_LABEL[g.primary ? 'main' : (g.weight ?? 'important')]}
+          {g.aim ? ` · Aim: ${EVENT_AIM_LABEL[g.aim]}` : ''}
+        </div>
+      )}
       {g.detail && <div className="text-[13px] text-muted">{g.detail}</div>}
       {g.measure && g.target !== undefined && (
         <div className="font-mono text-[13px]">
@@ -604,6 +613,67 @@ export function MemoryChip({ block }: { block: Extract<UiBlock, { type: 'memory'
           Undo
         </button>
       )}
+    </div>
+  );
+}
+
+/**
+ * The coach rewrote its outlook (DECISIONS #101). Undo puts back what it said before, unless it has
+ * changed since (the athlete edited it), which the chip says instead of overwriting.
+ */
+export function OutlookChip({ block }: { block: Extract<UiBlock, { type: 'outlook' }> }) {
+  const { revert } = useOutlookMutations();
+  const [state, setState] = useState<'shown' | 'undone' | 'refused'>('shown');
+  const [open, setOpen] = useState(false);
+  const long = block.text.length > 140;
+  const toOutlook = (
+    <Link to="/athlete/$tab" params={{ tab: 'goals' }} className="text-[13px] font-semibold whitespace-nowrap">
+      View outlook
+    </Link>
+  );
+  if (state === 'undone') {
+    return (
+      <div role="status" className="flex items-center gap-2.5 self-start rounded-xl border border-line bg-surface-2 px-3 py-2.5 text-sm text-muted">
+        <LogoIcon size={16} className="shrink-0" />
+        <span>
+          <strong className="font-semibold text-ink">Undone.</strong> The outlook is back to what it said before.
+        </span>
+      </div>
+    );
+  }
+  if (state === 'refused') {
+    return (
+      <div role="status" className="flex items-center gap-2.5 self-start rounded-xl border border-[#F3D58A] bg-[#FFF8E6] px-3 py-2.5 text-sm text-[#7A4B00]">
+        <WarningIcon size={16} className="shrink-0" />
+        <span className="flex-auto">Couldn’t undo: the outlook has changed since.</span>
+        {toOutlook}
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-start gap-2.5 rounded-xl border border-accent-line bg-accent-tint px-3 py-2.5 text-sm">
+      <LogoIcon size={16} className="mt-0.5 shrink-0 text-accent-ink" />
+      <div className="flex min-w-0 flex-auto flex-col gap-0.5">
+        <div className={open || !long ? '' : 'line-clamp-2'}>
+          <strong className="font-semibold">Updated the outlook:</strong> {block.text}
+        </div>
+        <div className="flex gap-3">
+          {long && (
+            <button type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)} className="min-h-7 border-0 bg-transparent p-0 text-[13px] font-semibold text-accent-ink">
+              {open ? 'Show less' : 'Show all'}
+            </button>
+          )}
+          {toOutlook}
+        </div>
+      </div>
+      <button
+        type="button"
+        disabled={revert.isPending}
+        onClick={() => revert.mutate({ from: block.text, to: block.previous ?? null }, { onSuccess: () => setState('undone'), onError: () => setState('refused') })}
+        className="min-h-8 flex-none rounded-lg border border-[#C9DB94] bg-surface px-3 text-[13px] font-semibold text-ink"
+      >
+        Undo
+      </button>
     </div>
   );
 }

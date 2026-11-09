@@ -1,7 +1,9 @@
-import { isRating } from '@cycling-coach/core';
-import type { SessionFeedback } from '@cycling-coach/shared';
+import { formatLongDay, isRating } from '@cycling-coach/core';
+import type { CalendarEvent, SessionFeedback } from '@cycling-coach/shared';
+import { useNavigate } from '@tanstack/react-router';
 import { useId, useState } from 'react';
 import { errorMessage, useSaveFeedback } from '../lib/queries';
+import { useIsMobile } from '../lib/useIsMobile';
 import { Button, ErrorNote } from './ui';
 
 /**
@@ -82,5 +84,27 @@ export function MissedNoteCard({ eventId, feedback: stored }: { eventId: string;
         <div className="rounded-lg bg-surface-2 px-2.5 py-2 text-[13px] whitespace-pre-wrap text-[#4B5563]">“{note}”</div>
       )}
     </section>
+  );
+}
+
+/** What "Ask coach to adjust" opens a chat with: the session, its day and its id. */
+export const adjustPrompt = (e: Pick<CalendarEvent, 'id' | 'title' | 'date' | 'status'>) =>
+  `I ${e.status === 'skipped' ? 'skipped' : 'missed'} ${e.title} on ${formatLongDay(e.date)} (event ${e.id}). Can you adjust my plan around it?`;
+
+/**
+ * Under "What happened?": ask the coach to rework the block around a session that didn't happen
+ * (DECISIONS #101). A new chat with the message filled in; nothing is sent until the athlete sends it.
+ */
+export function AskToAdjust({ event }: { event: Pick<CalendarEvent, 'id' | 'title' | 'date' | 'status'> }) {
+  const navigate = useNavigate();
+  const mobile = useIsMobile();
+  const prompt = adjustPrompt(event);
+  return (
+    <div className="flex flex-col items-start gap-0.5">
+      <button type="button" onClick={() => void navigate({ to: '/', search: { new: true, prompt } })} className="min-h-10 border-0 bg-transparent p-0 text-sm font-semibold text-accent-ink">
+        Ask coach to adjust my plan
+      </button>
+      <span className="text-xs text-muted">{mobile ? 'Opens a new chat with the message filled in.' : `Opens a new chat with: “${prompt}”`}</span>
+    </div>
   );
 }

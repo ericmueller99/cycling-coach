@@ -1,5 +1,22 @@
 import type Anthropic from '@anthropic-ai/sdk';
-import { daysBetween, describeFeedback, formatLongDay, formatRange, formatStepDuration, isRating, sessionsInSpan, type Rating } from '@cycling-coach/core';
+import {
+  climbTimeRange,
+  courseSummary,
+  daysBetween,
+  describeFeedback,
+  elevationPerKm,
+  eventStats,
+  formatLongDate,
+  formatLongDay,
+  formatMeters,
+  formatRange,
+  formatStepDuration,
+  formatTimeRange,
+  isRating,
+  planHorizonEnd,
+  sessionsInSpan,
+  type Rating,
+} from '@cycling-coach/core';
 import {
   calendarChangeSchema,
   eventFiltersSchema,
@@ -17,6 +34,10 @@ import {
   type Activity,
   type ActivityDetail,
   type CalendarEvent,
+  type Course,
+  EVENT_TYPE_SHORT,
+  OUTLOOK_MAX,
+  type Outlook,
   type EventQuery,
   type EventQueryResult,
   type FitnessDay,
@@ -58,6 +79,12 @@ export interface CoachPorts {
   /** Null when intervals.icu isn't configured. */
   training: TrainingDataPort | null;
   listCalendar(from: IsoDate, to: IsoDate): Promise<CalendarEvent[]>;
+  /** One session by id, for checking what a change card would move. */
+  getCalendarEvent(id: string): Promise<CalendarEvent | null>;
+  /** An event, its course and what this athlete's climb times need (DECISIONS #101). Null when there's no such event. */
+  getEventCourse(eventId: string): Promise<{ event: CalendarEvent; course: Course | null; ftp?: number | undefined; weightKg: number } | null>;
+  /** Rewrites the coach's outlook; `previous` is what it said before, for Undo. */
+  setOutlook(text: string): Promise<{ outlook: Outlook; previous: Outlook | null }>;
   listTimeOff(from: IsoDate, to: IsoDate): Promise<TimeOff[]>;
   getTimeOff(id: string): Promise<TimeOff | null>;
   createProposal(p: NewProposal): Promise<Proposal>;
@@ -308,6 +335,60 @@ const mealIngredientsSchema = z
   .max(40)
   .describe('Every ingredient with an amount for the whole recipe. Prefer grams for solids and ml for liquids. Cooking fat counts — give it an amount.');
 
+/**
+ * A course for the model (DECISIONS #101): what code measured, every climb with this athlete's time for
+ * it, and the heights every km when asked. Never the track itself.
+ */
+export function describeCourse(
+  event: Pick<CalendarEvent, 'title' | 'date' | 'eventInfo'>,
+  course: Course,
+  athlete: { ftp?: number | undefined; weightKg: number },
+  perKm: boolean,
+): string {
+  const a = course.analysis;
+  const head = [event.title, formatLongDate(event.date), event.eventInfo ? EVENT_TYPE_SHORT[event.eventInfo.type] : '', `${a.distanceKm} km`].filter(Boolean).join(' · ');
+  if (a.ascentM === null) return `${head}. The course file has no elevation, so there's no climbing to read.`;
+  const lines = [
+    `${head} · ${formatMeters(a.ascentM)} up, ${formatMeters(a.descentM ?? 0)} down · ${a.terrain} · highest ${formatMeters(a.maxM ?? 0)}, lowest ${formatMeters(a.minM ?? 0)} · last 20 km +${formatMeters(a.finishGainM ?? 0)}.`,
+  ];
+  if (!a.climbs.length) lines.push('No climbs of 500 m or more at 3% or steeper.');
+  else {
+    const times = athlete.ftp ? ` · their time at FTP ${athlete.ftp} W to 90% of it` : '';
+    lines.push(`Climbs (n · starts at · length · average · steepest 200 m · gain${times}):`);
+    for (const c of a.climbs) {
+      const t = athlete.ftp ? ` · ${formatTimeRange(climbTimeRange(c, athlete.ftp, athlete.weightKg))}` : '';
+      lines.push(`${c.n} · km ${c.startKm} · ${c.lengthKm} km · ${c.avgPct}% · max ${c.maxPct}% · +${formatMeters(c.gainM)}${t}${c.longest ? ' (longest)' : ''}`);
+    }
+    lines.push(
+      athlete.ftp
+        ? `Climb times are estimates from FTP ${athlete.ftp} W and ${athlete.weightKg} kg at a steady effort (a plain power model); say so if you quote them.`
+        : 'No FTP yet, so no climb times.',
+    );
+  }
+  if (perKm) lines.push(`Elevation every km from the start (m): ${elevationPerKm(a).join(' ')}`);
+  return lines.join('\n');
+}
+
+/**
+ * The coach plans in blocks of two weeks (DECISIONS #98): a workout or ride it proposes can't be dated
+ * past `planHorizonEnd`. Races, real-world events and Zwift events the athlete picked are exempt,
+ * since those are dates in their life, not training the coach scheduled.
+ */
+function pastHorizon(s: { kind?: string | undefined; date: IsoDate; zwiftEventId?: number | undefined }, horizon: IsoDate): boolean {
+  return s.kind !== 'race' && s.zwiftEventId === undefined && s.date > horizon;
+}
+
+/** What the coach is told when it went past the horizon: drop those, and say why. */
+function horizonRefusal(dates: IsoDate[], horizon: IsoDate): string {
+  const days = [...new Set(dates)].sort().map(formatLongDay).join(', ');
+  return (
+    `Nothing was shown to the athlete: sessions on ${days} are past ${formatLongDay(horizon)}. You plan workouts and rides in blocks of two weeks, ` +
+    `through ${formatLongDay(horizon)} at the latest, so the plan can adapt to how training and life actually go. Propose only the sessions up to then. ` +
+    `If they asked for longer, or for a plan to an event further out, tell them you plan in blocks of two weeks to stay adaptive, keep the event in view, ` +
+    `and plan the next block when it's due — as how you coach, without mentioning this message or any tool. Races and events themselves can go any distance ahead.`
+  );
+}
+
 export const COACH_TOOLS = [
   defineTool({
     name: 'get_recent_activities',
@@ -456,10 +537,48 @@ export const COACH_TOOLS = [
         ...timeOff.map((t) => `Time off: ${describeTimeOff(t)}`),
         ...events.map((e) => {
           const said = describeSessionFeedback(e, felt.get(e.id));
-          return `${e.id} · ${e.date} · ${describeKind(e)} · ${e.type} · ${e.title}${e.durationMin ? ` · ${e.durationMin} min` : ''} · ${describeStatus(e)}${e.tentative ? ' (tentative)' : ''}${e.source === 'intervals' ? ' · added in intervals.icu' : ''}${said ? ` · ${said}` : ''}`;
+          const stats = eventStats(e.eventInfo);
+          return `${e.id} · ${e.date} · ${describeKind(e)} · ${e.type} · ${e.title}${stats ? ` · ${stats}` : ''}${e.durationMin ? ` · ${e.durationMin} min` : ''} · ${describeStatus(e)}${e.tentative ? ' (tentative)' : ''}${e.source === 'intervals' ? ' · added in intervals.icu' : ''}${said ? ` · ${said}` : ''}`;
         }),
       ];
       return { content: lines.length ? lines.join('\n') : 'Nothing scheduled in that range.' };
+    },
+  }),
+
+  defineTool({
+    name: 'get_event_course',
+    description:
+      "Read an event's course, from the GPX the athlete added: distance, climbing, each climb (where it starts, length, average and steepest grade, gain) with this athlete's time for it, and the last 20 km. Use it to judge what an event demands, which efforts decide it and which durations matter for this athlete, before advising how to get ready. The id is the event's, from the upcoming events in the context message or the calendar. per_km adds the height every km.",
+    schema: z.object({
+      event_id: z.string().describe('The event id from the context message or the calendar.'),
+      per_km: z.boolean().describe('true to add the height every km; false for the climbs alone.'),
+    }),
+    source: 'app',
+    runningLabel: 'Reading the course…',
+    async run({ event_id, per_km }, { ports }) {
+      const found = await ports.getEventCourse(event_id);
+      if (!found) return { content: `No event with id ${event_id}. Use an id from the upcoming events or the calendar.`, isError: true };
+      const { event, course } = found;
+      if (!course) {
+        const what = [event.eventInfo ? EVENT_TYPE_SHORT[event.eventInfo.type] : '', eventStats(event.eventInfo)].filter(Boolean).join(' · ');
+        return { content: `${event.title} has no course yet${what ? ` (what's known: ${what})` : ''}. The athlete can add the GPX on the event.` };
+      }
+      const a = course.analysis;
+      return {
+        content: describeCourse(event, course, found, per_km),
+        ui: {
+          type: 'tool',
+          toolUseId: '',
+          name: 'get_event_course',
+          status: 'ok',
+          summary: `Read the course · ${event.title} · ${courseSummary(a).split(' · ').slice(0, 2).join(' · ')}`,
+          source: 'app',
+          rows: a.climbs.map(
+            (c) =>
+              `${c.n} · km ${c.startKm} · ${c.lengthKm} km at ${c.avgPct}% · max ${c.maxPct}% · +${formatMeters(c.gainM)}${found.ftp ? ` · ${formatTimeRange(climbTimeRange(c, found.ftp, found.weightKg))}` : ''}`,
+          ),
+        },
+      };
     },
   }),
 
@@ -502,7 +621,7 @@ export const COACH_TOOLS = [
     name: 'propose_plan',
     tier: 'build',
     description:
-      "Show the athlete a plan card of dated sessions they can add to their calendar one by one or all at once. Nothing is written until they confirm. Use for any multi-day plan or a recommended session for a specific day. Each item has a kind: 'workout' = a structured workout from their library (workoutId required — call create_workout first for a new one; platform 'zwift'); 'race' = a scheduled race, usually a Zwift race (type 'race', startTime HH:mm when known, priority A/B/C, default B); 'ride' = any other planned ride (Z2, group ride, eFondo, recovery spin) named for what it is. Workouts and races sync to their intervals.icu calendar and from there to Zwift once they add them; rides stay in this app.",
+      "Show the athlete a plan card of dated sessions they can add to their calendar one by one or all at once. Nothing is written until they confirm. Use for any multi-day plan or a recommended session for a specific day. Plans come in blocks of two weeks: workouts and rides go no later than the planning horizon in the context message. Each item has a kind: 'workout' = a structured workout from their library (workoutId required — call create_workout first for a new one; platform 'zwift'); 'race' = a scheduled race: a Zwift race (type 'race', startTime HH:mm when known, priority A/B/C, default B), or a real-world event ridden outdoors (platform 'garmin', with eventInfo: type, distanceKm, ascentM, location, url as known) — races and events can be any distance ahead; 'ride' = any other planned ride (Z2, group ride, eFondo, recovery spin) named for what it is. Workouts and races sync to their intervals.icu calendar and from there to Zwift once they add them; rides stay in this app.",
     schema: z.object({
       title: z.string().describe('Card heading, e.g. "Proposed plan".'),
       subtitle: z.string().optional().describe('e.g. "Oct 29 – Nov 8 · Zwift FTP 280 W · Z2 155–210 W".'),
@@ -511,7 +630,10 @@ export const COACH_TOOLS = [
     }),
     source: 'app',
     strict: false,
-    async run({ title, subtitle, items, replaces }, { ports, toolUseId }) {
+    async run({ title, subtitle, items, replaces }, { ports, toolUseId, today }) {
+      const horizon = planHorizonEnd(today);
+      const late = items.filter((i) => pastHorizon(i, horizon));
+      if (late.length) return { content: horizonRefusal(late.map((i) => i.date), horizon), isError: true };
       const proposal = await ports.createProposal({
         kind: 'plan',
         toolUseId,
@@ -531,7 +653,7 @@ export const COACH_TOOLS = [
     name: 'propose_calendar_changes',
     tier: 'build',
     description:
-      'Propose changes to sessions already on the calendar (move, update, remove) or single additions. Uses event ids from the calendar context. The athlete confirms before anything changes.',
+      'Propose changes to sessions already on the calendar (move, update, remove) or single additions. Uses event ids from the calendar context. Workouts and rides can only go up to the planning horizon in the context message; races and events can go any distance ahead. The athlete confirms before anything changes.',
     schema: z.object({
       title: z.string().describe('Short heading, e.g. "Swap Thursday and Friday".'),
       changes: z.array(calendarChangeSchema).min(1).max(20),
@@ -539,7 +661,20 @@ export const COACH_TOOLS = [
     }),
     source: 'app',
     strict: false,
-    async run({ title, changes, replaces }, { ports, toolUseId }) {
+    async run({ title, changes, replaces }, { ports, toolUseId, today }) {
+      const horizon = planHorizonEnd(today);
+      const late: IsoDate[] = [];
+      for (const c of changes) {
+        if (c.op === 'add') {
+          if (pastHorizon(c.event, horizon)) late.push(c.event.date);
+        } else if ((c.op === 'move' && c.toDate > horizon) || (c.op === 'update' && c.patch.date && c.patch.date > horizon)) {
+          const was = await ports.getCalendarEvent(c.eventId);
+          const date = c.op === 'move' ? c.toDate : c.patch.date!;
+          const kind = c.op === 'update' ? (c.patch.kind ?? was?.kind) : was?.kind;
+          if (was && pastHorizon({ kind, date, zwiftEventId: was.zwiftEventId }, horizon)) late.push(date);
+        }
+      }
+      if (late.length) return { content: horizonRefusal(late, horizon), isError: true };
       const proposal = await ports.createProposal({
         kind: 'calendar_changes',
         toolUseId,
@@ -629,7 +764,7 @@ export const COACH_TOOLS = [
   defineTool({
     name: 'propose_goal',
     description:
-      "Propose a new goal, or changes to an existing one (pass goalId from the Goals section). Make goals measurable when it fits, by naming a measure and a target — never a current value; the app computes progress live. Measures: {kind:'wkg', weight:'zwift'|'trend'} (FTP ÷ Zwift baseline or trend weight — Zwift categories use 'zwift'), {kind:'ftp'}, {kind:'zwift_wkg', metric:'zftp'|'zmap'} (Zwift's zFTP or zMAP ÷ Zwift weight — what Zwift Racing League categories use; prefer zftp for category goals), {kind:'power_best', durationSec, period:'90d'|'season'|'allTime'}, {kind:'weight'} (trend weight, lower is better), {kind:'fitness'} (CTL), {kind:'manual', current, unit} for anything the app can't see. Goals like an event to finish can have no measure. Only an event has a date (event: true, targetDate is the event's date); every other goal is open-ended, so leave targetDate out. A weight goal ({kind:'weight'}, target in kg) takes a pace instead, which sets the calorie budget: pace {amount, unit:'lb'|'kg', per:'week'|'month'}, with amount one of 0.5, 1, 1.5, 2 (lb/week), 2, 4, 6, 8 (lb/month), 0.25, 0.5, 0.75, 1 (kg/week) or 1, 2, 3, 4 (kg/month), and only the first two of a list when the target is a gain. Use the units the athlete talks in. Shown as a card; nothing changes until the athlete confirms.",
+      "Propose a new goal, or changes to an existing one (pass goalId from the Goals section). For an event on their calendar, pass its eventId from the upcoming events: the goal is dated by the event and follows it, one goal per event, and you give weight ('important' or 'in_mind'; primary true for their main goal) and aim ('finish', 'time' or 'compete') as they said — leave targetDate out. Make goals measurable when it fits, by naming a measure and a target — never a current value; the app computes progress live. Measures: {kind:'wkg', weight:'zwift'|'trend'} (FTP ÷ Zwift baseline or trend weight — Zwift categories use 'zwift'), {kind:'ftp'}, {kind:'zwift_wkg', metric:'zftp'|'zmap'} (Zwift's zFTP or zMAP ÷ Zwift weight — what Zwift Racing League categories use; prefer zftp for category goals), {kind:'power_best', durationSec, period:'90d'|'season'|'allTime'}, {kind:'weight'} (trend weight, lower is better), {kind:'fitness'} (CTL), {kind:'manual', current, unit} for anything the app can't see. Goals like an event to finish can have no measure. Only an event has a date (event: true, targetDate is the event's date); every other goal is open-ended, so leave targetDate out. A weight goal ({kind:'weight'}, target in kg) takes a pace instead, which sets the calorie budget: pace {amount, unit:'lb'|'kg', per:'week'|'month'}, with amount one of 0.5, 1, 1.5, 2 (lb/week), 2, 4, 6, 8 (lb/month), 0.25, 0.5, 0.75, 1 (kg/week) or 1, 2, 3, 4 (kg/month), and only the first two of a list when the target is a gain. Use the units the athlete talks in. Shown as a card; nothing changes until the athlete confirms.",
     schema: goalProposalSchema,
     source: 'app',
     strict: false,
@@ -732,6 +867,23 @@ export const COACH_TOOLS = [
       return {
         content: `Forgot memory ${memory_id}.`,
         ui: { type: 'memory', memoryId: memory.id, action: 'forget', text: memory.text, ...(memory.until ? { until: memory.until } : {}) },
+      };
+    },
+  }),
+
+  defineTool({
+    name: 'update_outlook',
+    description: `Rewrite your outlook: a few sentences on how you're balancing the athlete's goals and events over the coming months, and why — the focus now, what each event needs from training at this distance, and when that's likely to shift. Rewrite it when the balance changes (an event gets closer, a goal is reached or changed, life gets in the way, they tell you how much an event matters) and mention it in your reply. It guides your two-week plans and is never a schedule: no dated list of sessions or phases. Plain prose, at most ${OUTLOOK_MAX} characters. Saved straight away; the athlete sees it, can undo it and can edit it.`,
+    schema: z.object({ text: z.string().describe(`The whole outlook, replacing the old one. At most ${OUTLOOK_MAX} characters.`) }),
+    source: 'app',
+    async run({ text }, { ports }) {
+      const t = text.trim();
+      if (!t) return { content: 'The outlook needs some text.', isError: true };
+      if (t.length > OUTLOOK_MAX) return { content: `That's ${t.length} characters; the outlook holds at most ${OUTLOOK_MAX}. Say it more briefly.`, isError: true };
+      const { outlook, previous } = await ports.setOutlook(t);
+      return {
+        content: 'Outlook saved. The athlete can see it on Athlete › Goals & coach, undo it or edit it.',
+        ui: { type: 'outlook', text: outlook.text, ...(previous ? { previous: previous.text } : {}) },
       };
     },
   }),

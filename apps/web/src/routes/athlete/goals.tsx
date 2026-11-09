@@ -1,11 +1,14 @@
-import { KCAL_PER_KG, paceKgPerWeek } from '@cycling-coach/core';
+import { addDays, formatLongDay, isEventSession, KCAL_PER_KG, paceKgPerWeek, weekStart } from '@cycling-coach/core';
 import { powerBestDurations, WEIGHT_PACES, type Goal, type GoalMeasure, type IsoDate, type PowerBest, type WeightPace } from '@cycling-coach/shared';
+import { Link } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
-import { PencilIcon, TrashIcon } from '../../components/icons';
+import { FlagIcon, PencilIcon, TrashIcon } from '../../components/icons';
 import { Button, Card, ErrorNote, ProgressBar, SectionLabel, Segmented } from '../../components/ui';
 import { fmtKcal } from '../../lib/food';
 import { describeMeasure, goalDateLabel, measureUnit, paceSummary } from '../../lib/goals';
-import { errorMessage, useProfileMutations } from '../../lib/queries';
+import { eventWhen } from '../../lib/eventInfo';
+import { errorMessage, useProfileMutations, useSessionsBetween } from '../../lib/queries';
+import { CoachingFields, coachingFor, coachingSummary, eventGoalPatch } from '../calendar/coaching';
 import { durLabel, PERIODS } from './shared';
 
 type MeasureChoice = 'none' | 'zftp_wkg' | 'zmap_wkg' | 'wkg_zwift' | 'wkg_trend' | 'ftp' | 'power_best' | 'weight' | 'fitness' | 'manual';
@@ -52,8 +55,23 @@ const paceKcal = (p: WeightPace) => Math.round(((Math.round(paceKgPerWeek(p) * 1
  * a date, and a weight goal has a pace from a safe list instead (DECISIONS #96); the rest are
  * open-ended, and a date an older one has is left alone.
  */
-function GoalEditor({ goal, preset, trendKg, onDone }: { goal?: Goal; preset?: MeasureChoice | undefined; trendKg?: number | undefined; onDone: () => void }) {
+function GoalEditor({
+  goal,
+  goals,
+  today,
+  preset,
+  trendKg,
+  onDone,
+}: {
+  goal?: Goal;
+  goals: Goal[];
+  today: IsoDate;
+  preset?: MeasureChoice | undefined;
+  trendKg?: number | undefined;
+  onDone: () => void;
+}) {
   const { createGoal, updateGoal } = useProfileMutations();
+  const [eventId, setEventId] = useState('');
   const [horizon, setHorizon] = useState<Goal['horizon']>(goal?.horizon ?? 'long');
   const [title, setTitle] = useState(goal?.title ?? (preset === 'weight' ? 'Race weight' : ''));
   const [targetDate, setTargetDate] = useState(goal?.targetDate ?? '');
@@ -73,6 +91,9 @@ function GoalEditor({ goal, preset, trendKg, onDone }: { goal?: Goal; preset?: M
   const weight = choice === 'weight';
   const event = isEvent && !weight;
   const dated = event;
+  // An event goal can follow an event on the calendar (DECISIONS #100): upcoming ones without a goal.
+  const upcoming = useSessionsBetween(today, addDays(today, 730), event);
+  const linkable = (upcoming.data?.events ?? []).filter((e) => isEventSession(e) && e.date >= today && !goals.some((g) => g.eventId === e.id));
   const currentKg = goal?.progress?.current ?? trendKg;
   const gaining = weight && target !== '' && currentKg !== undefined && Number(target) > currentKg;
   const options = paceOptions(paceUnit, pacePer, gaining);
@@ -95,6 +116,7 @@ function GoalEditor({ goal, preset, trendKg, onDone }: { goal?: Goal; preset?: M
       ...(detail ? { detail } : {}),
       ...(dated && targetDate ? { targetDate } : {}),
       ...(event ? { event: true } : {}),
+      ...(event && eventId ? { eventId } : {}),
       ...(measure && target !== '' ? { measure, target: Number(target) } : {}),
       ...(weight ? { pace } : {}),
     };
@@ -174,13 +196,37 @@ function GoalEditor({ goal, preset, trendKg, onDone }: { goal?: Goal; preset?: M
             This is an event
           </label>
         )}
-        {dated && (
+        {dated && !eventId && (
           <label className="flex items-center gap-1.5 text-muted">
             Event date
             <input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} className={field} />
           </label>
         )}
       </div>
+      {event && linkable.length > 0 && (
+        <div className="flex flex-col gap-1 text-[13px]">
+          <label className="flex flex-wrap items-center gap-1.5 text-muted">
+            Link to an event on your calendar <span className="text-faint">· optional</span>
+            <select
+              value={eventId}
+              onChange={(e) => {
+                setEventId(e.target.value);
+                const picked = linkable.find((x) => x.id === e.target.value);
+                if (picked) setTargetDate(picked.date);
+              }}
+              className={`${field} text-ink`}
+            >
+              <option value="">Not linked</option>
+              {linkable.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.title} · {formatLongDay(e.date)}, {e.date.slice(0, 4)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className="text-xs text-muted">Lists upcoming events that don’t have a goal yet. Linking one makes the goal follow that event’s date.</span>
+        </div>
+      )}
       {weight && (
         <div className="flex flex-col gap-2 text-[13px]">
           <div className="flex flex-wrap items-center gap-2">
@@ -221,10 +267,100 @@ function GoalEditor({ goal, preset, trendKg, onDone }: { goal?: Goal; preset?: M
   );
 }
 
-function GoalRow({ goal, main, today, trendKg }: { goal: Goal; main: boolean; today: IsoDate; trendKg?: number | undefined }) {
+const CHIP = 'rounded-full border border-accent-line bg-accent-tint px-2.5 py-0.5 text-xs font-semibold text-[#2F4A0D]';
+
+/** A goal linked to an event: the same questions as the event's, and its date stays the event's (DECISIONS #100). */
+function EventGoalEditor({ goal, otherMain, onDone }: { goal: Goal; otherMain: string | undefined; onDone: () => void }) {
+  const { updateGoal, deleteGoal } = useProfileMutations();
+  const [draft, setDraft] = useState(() => coachingFor(goal));
+  const error = updateGoal.error ?? deleteGoal.error;
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border-[1.5px] border-accent-ring bg-surface p-3.5">
+      <h3 className="m-0 text-[15px]">Edit goal</h3>
+      <div className="flex flex-col gap-0.5 rounded-[10px] bg-surface-2 px-3 py-2.5">
+        <span className="flex flex-wrap items-center gap-1.5 text-[13px]">
+          <FlagIcon size={14} className="text-[#B42318]" />
+          For: <strong>{goal.title}</strong>
+          {goal.targetDate && (
+            <>
+              · <span className="font-mono">{`${formatLongDay(goal.targetDate)}, ${goal.targetDate.slice(0, 4)}`}</span>
+            </>
+          )}
+        </span>
+        <span className="text-xs text-muted">The date follows the event. Change it on the event.</span>
+      </div>
+      <CoachingFields id={`ge-${goal.id}`} draft={draft} set={(d) => setDraft((c) => ({ ...c, ...d }))} showQ1={false} otherMain={otherMain} />
+      <div className="flex items-center gap-2">
+        <Button size="sm" variant="ghost" style={{ color: '#B42318' }} disabled={deleteGoal.isPending} onClick={() => deleteGoal.mutate(goal.id, { onSuccess: onDone })}>
+          Delete
+        </Button>
+        <span className="flex-auto" />
+        <Button size="sm" variant="ghost" onClick={onDone}>
+          Cancel
+        </Button>
+        <Button size="sm" variant="primary" disabled={updateGoal.isPending} onClick={() => updateGoal.mutate({ id: goal.id, patch: eventGoalPatch(goal, draft) }, { onSuccess: onDone })}>
+          {updateGoal.isPending ? 'Saving…' : 'Save'}
+        </Button>
+      </div>
+      {error && <ErrorNote>{errorMessage(error)}</ErrorNote>}
+    </div>
+  );
+}
+
+/** An event goal: when, a way to the event, and how much it counts. */
+function EventGoalCard({ goal, main, today, onEdit }: { goal: Goal; main: boolean; today: IsoDate; onEdit: () => void }) {
+  const { updateGoal, deleteGoal } = useProfileMutations();
+  const chips = goal.eventId || goal.weight || goal.aim ? coachingSummary(goal).split(' · ') : [];
+  return (
+    <div className={`flex flex-col gap-2 rounded-xl border px-3.5 py-3 ${main ? 'border-accent-line bg-[#F9FCEF]' : 'border-transparent bg-surface-2'}`}>
+      <div className="flex items-center gap-2">
+        <FlagIcon size={15} className="shrink-0 text-[#B42318]" />
+        <span className="min-w-0 flex-auto font-semibold">{goal.title}</span>
+        {goal.targetDate && <span className="hidden font-mono text-xs whitespace-nowrap text-muted sm:inline">{eventWhen({ date: goal.targetDate }, today)}</span>}
+        {main ? (
+          <span className="rounded-[5px] bg-accent px-[7px] text-[11px] leading-[19px] font-bold whitespace-nowrap text-on-accent">Main goal</span>
+        ) : (
+          goal.horizon === 'long' && (
+            <button type="button" onClick={() => updateGoal.mutate({ id: goal.id, patch: { primary: true } })} className="min-h-7 border-0 bg-transparent px-2 text-xs font-semibold whitespace-nowrap text-accent-ink">
+              Make main
+            </button>
+          )
+        )}
+        <button type="button" aria-label="Edit goal" onClick={onEdit} className="flex h-[30px] w-[30px] items-center justify-center border-0 bg-transparent text-muted">
+          <PencilIcon />
+        </button>
+        {!goal.eventId && (
+          <button type="button" aria-label="Delete goal" onClick={() => deleteGoal.mutate(goal.id)} className="border-0 bg-transparent text-muted">
+            <TrashIcon />
+          </button>
+        )}
+      </div>
+      {goal.targetDate && <span className="font-mono text-xs text-muted sm:hidden">{eventWhen({ date: goal.targetDate }, today)}</span>}
+      {goal.eventId && goal.targetDate && (
+        <Link to="/calendar" search={{ week: weekStart(goal.targetDate) }} className="self-start text-[13px] font-semibold">
+          On your calendar →
+        </Link>
+      )}
+      {chips.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {chips.map((c) => (
+            <span key={c} className={CHIP}>
+              {c}
+            </span>
+          ))}
+        </div>
+      )}
+      {goal.detail && <div className="text-[13px] text-[#3A414D]">“{goal.detail}”</div>}
+    </div>
+  );
+}
+
+function GoalRow({ goal, goals, main, today, trendKg }: { goal: Goal; goals: Goal[]; main: boolean; today: IsoDate; trendKg?: number | undefined }) {
   const { updateGoal, deleteGoal } = useProfileMutations();
   const [editing, setEditing] = useState(false);
-  if (editing) return <GoalEditor goal={goal} trendKg={trendKg} onDone={() => setEditing(false)} />;
+  if (editing && goal.eventId) return <EventGoalEditor goal={goal} otherMain={goals.find((g) => g.primary && g.id !== goal.id)?.title} onDone={() => setEditing(false)} />;
+  if (editing) return <GoalEditor goal={goal} goals={goals} today={today} trendKg={trendKg} onDone={() => setEditing(false)} />;
+  if (goal.event) return <EventGoalCard goal={goal} main={main} today={today} onEdit={() => setEditing(true)} />;
   const pace = paceSummary(goal, today);
   const actions = (
     <>
@@ -331,13 +467,13 @@ export function GoalsSection({
           + Add goal
         </Button>
       </div>
-      {adding && <GoalEditor preset={addWeightGoal ? 'weight' : undefined} trendKg={trendKg} onDone={close} />}
+      {adding && <GoalEditor goals={goals} today={today} preset={addWeightGoal ? 'weight' : undefined} trendKg={trendKg} onDone={close} />}
       <SectionLabel>Long term</SectionLabel>
-      {long.length ? long.map((g) => <GoalRow key={g.id} goal={g} main={g.id === mainId} today={today} trendKg={trendKg} />) : <Empty>No long-term goals yet.</Empty>}
+      {long.length ? long.map((g) => <GoalRow key={g.id} goal={g} goals={goals} main={g.id === mainId} today={today} trendKg={trendKg} />) : <Empty>No long-term goals yet.</Empty>}
       <SectionLabel>Short term</SectionLabel>
-      {short.length ? short.map((g) => <GoalRow key={g.id} goal={g} main={g.id === mainId} today={today} trendKg={trendKg} />) : <Empty>Nothing short-term. Add one for this block, e.g. "Hold 400 W for 5 min".</Empty>}
+      {short.length ? short.map((g) => <GoalRow key={g.id} goal={g} goals={goals} main={g.id === mainId} today={today} trendKg={trendKg} />) : <Empty>Nothing short-term. Add one for this block, e.g. "Hold 400 W for 5 min".</Empty>}
       <div className="text-xs text-muted">
-        Goals can be measured by power at a duration, FTP or W/kg, Zwift W/kg, trend weight, fitness (CTL) or by hand. The main goal leads the coach's context.
+        Goals can be measured by power at a duration, FTP or W/kg, Zwift W/kg, trend weight, fitness (CTL) or by hand. The main goal leads the coach's context. Event goals come from events on your calendar. Answer the coaching questions when you add an event, or use Take it into account on the event.
       </div>
     </Card>
   );

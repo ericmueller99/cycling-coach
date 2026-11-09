@@ -68,6 +68,9 @@ importers:
       zod:
         specifier: ^4.6.7
         version: 4.6.7
+      zwift-data:
+        specifier: ^2.1.2
+        version: 2.1.2
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -2622,6 +2625,9 @@ packages:
   zod@4.6.7:
     resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
 
+  zwift-data@2.1.2:
+    resolution: {integrity: sha512-K084eSqV/OWlu+uc5V1o22lKAzaI9MdLVTEYxtqlrcLnZBvLRcN9sr2JCGy5sPiNZh+iZeYwJru70+m8TZiF5Q==}
+
   zwitch@2.0.4:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
 
@@ -4942,6 +4948,8 @@ snapshots:
   yocto-queue@0.1.0: {}
 
   zod@4.6.7: {}
+
+  zwift-data@2.1.2: {}
 
   zwitch@2.0.4: {}
 

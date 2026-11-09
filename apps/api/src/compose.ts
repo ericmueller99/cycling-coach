@@ -5,7 +5,6 @@ import {
   archiveWorkout,
   collections,
   type Collections,
-  createGoal,
   createMongo,
   deleteGoal,
   getEvent,
@@ -26,7 +25,6 @@ import {
   saveProfile,
   savePowerBest,
   toProposal,
-  updateGoal,
   createEventSearch,
   deleteEventSearch,
   listEventSearches,
@@ -36,6 +34,10 @@ import {
   forgetContexts,
   removeRideReferences,
   rideIdsFrom,
+  clearOutlook,
+  getOutlook,
+  revertOutlook,
+  setOutlook,
 } from '@cycling-coach/db';
 import { addDays, sessionRideIds, todayIn, visibleMemories } from '@cycling-coach/core';
 import type { Activity, IntegrationStatus, ZwiftStatus } from '@cycling-coach/shared';
@@ -48,6 +50,7 @@ import { envCredentials, envFeatures, IntegrationResolver, memoOwner, type Crede
 import { ensureJobs, ensureUserJobs, JOB, JobRunner, registerJobs, type JobDeps } from './jobs';
 import { buildDashboard, withProgress } from './services/athlete';
 import { CalendarService } from './services/calendar';
+import { addGoal, changeGoal } from './services/goals';
 import { EnergyService } from './services/energy';
 import { FeedbackService } from './services/feedback';
 import { FoodService } from './services/food';
@@ -67,7 +70,9 @@ import { TrainingData } from './services/training-data';
 import { weightHistory } from './services/weight';
 import { ZwiftSync } from './services/zwift-sync';
 import { ZwiftPublic } from './providers/zwift';
+import { ZwiftRouteData } from './providers/zwift/route-data';
 import { ZwiftEventsService } from './services/zwift-events';
+import { ZwiftRouteCourses } from './services/zwift-route-course';
 import { applyProposal, dismissProposal } from './services/proposals';
 import { OnboardingService } from './services/onboarding';
 
@@ -239,7 +244,17 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
 
   /** Rides, wellness and curves as synced from intervals.icu (DECISIONS #49) — what every screen reads. */
   const training = new TrainingData(c, integrations, now);
-  const calendar = new CalendarService(c, integrations, authorName, now, opts.eventNameSuffix, (userId) => jobs.kickSoon(JOB.delta, userId, PUSH_RETRY_MS));
+  /** Zwift race routes, for accounts with the Zwift feature (DECISIONS #102). */
+  const routeCourses = new ZwiftRouteCourses(c, new ZwiftRouteData(), features, now);
+  const calendar = new CalendarService(
+    c,
+    integrations,
+    authorName,
+    now,
+    opts.eventNameSuffix,
+    (userId) => jobs.kickSoon(JOB.delta, userId, PUSH_RETRY_MS),
+    routeCourses,
+  );
   const feedback = new FeedbackService(c, training, now);
   const onboarding = new OnboardingService(c, calendar, now);
   const photos = photoStoreFromEnv(env);
@@ -398,11 +413,17 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     },
 
     goals: {
-      create: (userId, input) => createGoal(c, userId, input, now()),
-      update: (userId, id, input) => updateGoal(c, userId, id, input),
+      create: (userId, input) => addGoal(c, userId, input, now()),
+      update: (userId, id, input) => changeGoal(c, userId, id, input),
       remove: (userId, id) => deleteGoal(c, userId, id),
     },
 
+    outlook: {
+      get: (userId) => getOutlook(c, userId),
+      set: async (userId, text) => (await setOutlook(c, userId, text, 'user', now())).outlook,
+      clear: (userId) => clearOutlook(c, userId),
+      revert: (userId, { from, to }) => revertOutlook(c, userId, from, to, now()),
+    },
     memories: {
       create: (userId, input) => memories.create(userId, input, 'user'),
       update: (userId, id, patch) => memories.update(userId, id, patch),
@@ -427,7 +448,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
       },
       create: (userId, input) => calendar.create(userId, input, { source: 'manual' }),
       patch: (userId, id, patch) => calendar.patch(userId, id, patch),
-      remove: (userId, id) => calendar.remove(userId, id),
+      remove: (userId, id, opts) => calendar.remove(userId, id, opts),
       resync: async (userId, id) => {
         const event = await getEvent(c, userId, id);
         return event ? calendar.push(userId, event) : null;
@@ -435,6 +456,9 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
       unlinkRide: (userId, id) => calendar.unlinkRide(userId, id),
       addRide: (userId, id, activityId) => calendar.addRide(userId, id, activityId),
       removeRide: (userId, id, activityId) => calendar.removeRide(userId, id, activityId),
+      course: (userId, id) => calendar.course(userId, id),
+      putCourse: (userId, id, input) => calendar.putCourse(userId, id, input),
+      removeCourse: (userId, id) => calendar.removeCourse(userId, id),
       result: (userId, id) => feedback.result(userId, id),
     },
 
@@ -558,6 +582,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
         await jobs.runNow(JOB.zwiftMetrics, userId, () => zwiftSync.run(userId, now(), { manual: true })).catch(() => {});
         return zwiftSync.status(userId);
       },
+      routes: (userId) => routeCourses.options(userId),
     },
   };
 

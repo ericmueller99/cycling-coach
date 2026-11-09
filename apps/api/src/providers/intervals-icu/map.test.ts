@@ -197,6 +197,27 @@ describe('remote events', () => {
       external_id: 'cycling-coach:r1',
     });
   });
+
+  it('builds a real-world event as an outdoor race that says what it is (DECISIONS #98)', () => {
+    const body = buildRaceEvent({
+      id: 'r2',
+      date: '2027-09-11',
+      kind: 'race',
+      type: 'race',
+      title: 'Coast Range Gran Fondo',
+      platform: 'garmin',
+      startTime: '07:00',
+      priority: 'A',
+      durationMin: 330,
+      coachNote: 'Wave 2',
+      eventInfo: { type: 'gran_fondo', distanceKm: 142, ascentM: 2350, location: 'Harbour Falls, BC', url: 'coastrangefondo.example' },
+      tentative: false,
+      status: 'planned',
+      source: 'manual',
+    });
+    expect(body).toMatchObject({ category: 'RACE_A', type: 'Ride', indoor: false, moving_time: 19800 });
+    expect(body.description).toBe('Gran fondo · 142 km · 2,350 m · Harbour Falls, BC · coastrangefondo.example\n\nWave 2');
+  });
 });
 
 it('keeps weigh-ins and drops days with nothing in them', () => {

@@ -13,6 +13,8 @@ const TOOL_LABELS: Record<string, string> = {
   get_fitness: 'Checking your fitness',
   get_power_curve: 'Reading your power curve',
   get_calendar: 'Checking your calendar',
+  get_event_course: 'Reading the course',
+  update_outlook: 'Updating the outlook',
   get_ride_feedback: 'Reading your ride notes',
   find_events: 'Looking for events',
   create_workout: 'Building the workout',

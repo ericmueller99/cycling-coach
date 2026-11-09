@@ -18,10 +18,18 @@ export async function settleRides(c: Collections, userId: string, from: IsoDate,
   const gone = new Set(shadowed.map((s) => s.id));
   const rides = listed.filter((a) => !gone.has(a.id));
   const events = await listEvents(c, userId, from, today);
-  const matchable = events.map((e) => ({ ...e, intervalsEventId: e.intervals?.eventId }));
+  const matchable = events.map((e) => ({ ...e, intervalsEventId: e.intervals?.eventId, distanceKm: e.eventInfo?.distanceKm }));
   const pairs = matchActivities(
     matchable,
-    rides.map((a) => ({ id: a.id, startLocal: a.startLocal, name: a.name, sportType: a.type, movingSec: a.movingSec, pairedEventId: a.pairedEventId })),
+    rides.map((a) => ({
+      id: a.id,
+      startLocal: a.startLocal,
+      name: a.name,
+      sportType: a.type,
+      movingSec: a.movingSec,
+      pairedEventId: a.pairedEventId,
+      ...(a.distanceM > 0 ? { distanceKm: a.distanceM / 1000 } : {}),
+    })),
     today,
   );
   for (const p of pairs) await patchEvent(c, userId, p.eventId, { status: 'done', activityId: p.activityId }, now);

@@ -81,6 +81,28 @@ describe('matchActivities', () => {
     });
   });
 
+  describe('a real-world event, told by distance (DECISIONS #98)', () => {
+    const fondo = { ...ev('e1', '2026-10-31', 'race', 330), distanceKm: 142, intervalsEventId: 88 };
+    const spin = { ...ride('spin', '2026-10-31T06:20:00', 'Morning Ride', 20, 'Ride'), distanceKm: 8 };
+    const event = { ...ride('gf', '2026-10-31T07:01:00', 'Morning Ride', 318, 'Ride'), distanceKm: 144.6 };
+
+    it('matches the ride of about the right length, though it is named like any ride', () => {
+      expect(matchActivities([fondo], [spin, event], '2026-10-31')).toEqual([{ eventId: 'e1', activityId: 'gf' }]);
+    });
+
+    it('takes a paired ride of the right length on the day, without waiting', () => {
+      expect(matchActivities([fondo], [{ ...event, pairedEventId: 88 }], '2026-10-31')).toEqual([{ eventId: 'e1', activityId: 'gf' }]);
+    });
+
+    it('still holds out when intervals.icu paired the warm-up spin', () => {
+      expect(matchActivities([fondo], [{ ...spin, pairedEventId: 88 }], '2026-10-31')).toEqual([]);
+    });
+
+    it('leaves a ride far off the distance alone', () => {
+      expect(matchActivities([fondo], [{ ...event, distanceKm: 60 }], '2026-10-31')).toEqual([]);
+    });
+  });
+
   it('lets a late upload un-miss a session', () => {
     const events = [{ ...ev('e1', '2026-10-28', 'endurance', 60), status: 'missed' as const }];
     expect(matchActivities(events, [ride('a', '2026-10-28T08:00:00', 'Morning ride', 60, 'Ride')], TODAY)).toEqual([

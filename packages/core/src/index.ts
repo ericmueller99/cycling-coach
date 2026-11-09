@@ -12,6 +12,8 @@ export * from './weight';
 export * from './zwift';
 export * from './agenda';
 export * from './events';
+export * from './event-info';
+export * from './course';
 export * from './feedback';
 export * from './coach-context';
 export * from './compliance';

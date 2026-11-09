@@ -131,6 +131,34 @@ export async function updateGoal(c: Collections, userId: string, id: string, inp
   return doc ? toGoal(doc) : null;
 }
 
+export async function getGoal(c: Collections, userId: string, id: string): Promise<Goal | null> {
+  const _id = oid(id);
+  if (!_id) return null;
+  const doc = await c.goals.findOne({ _id, userId });
+  return doc ? toGoal(doc) : null;
+}
+
+/** The goal for a calendar event, if it has one (DECISIONS #100). */
+export async function findGoalForEvent(c: Collections, userId: string, eventId: string): Promise<Goal | null> {
+  const doc = await c.goals.findOne({ userId, eventId });
+  return doc ? toGoal(doc) : null;
+}
+
+/** An event moved: its goal's date follows. */
+export async function redateGoalForEvent(c: Collections, userId: string, eventId: string, date: IsoDate): Promise<void> {
+  await c.goals.updateMany({ userId, eventId }, { $set: { targetDate: date } });
+}
+
+/** An event is gone: its goal stays, with its last date, but no longer follows anything. */
+export async function unlinkGoalFromEvent(c: Collections, userId: string, eventId: string): Promise<void> {
+  await c.goals.updateMany({ userId, eventId }, { $unset: { eventId: '' } });
+}
+
+/** The athlete deleted an event and asked for its goal to go too. */
+export async function deleteGoalForEvent(c: Collections, userId: string, eventId: string): Promise<void> {
+  await c.goals.deleteMany({ userId, eventId });
+}
+
 export async function deleteGoal(c: Collections, userId: string, id: string) {
   const _id = oid(id);
   if (!_id) return false;

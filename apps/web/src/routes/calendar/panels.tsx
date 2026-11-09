@@ -1,4 +1,4 @@
-import { canDeleteSession, describeMainSet, sessionState, formatLongDay, formatStepDuration, formatWorkoutDuration, workoutMetrics } from '@cycling-coach/core';
+import { canDeleteSession, describeMainSet, isEventSession, sessionState, formatLongDay, formatStepDuration, formatWorkoutDuration, workoutMetrics } from '@cycling-coach/core';
 import {
   sessionTypes,
   type CalendarActivity,
@@ -15,17 +15,21 @@ import {
 import { useNavigate } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { FeedbackCard } from '../../components/FeedbackCard';
-import { MissedNoteCard } from '../../components/MissedNoteCard';
-import { CheckIcon, PulseIcon } from '../../components/icons';
+import { AskToAdjust, MissedNoteCard } from '../../components/MissedNoteCard';
+import { PulseIcon } from '../../components/icons';
 import { Sheet } from '../../components/Sheet';
 import { Button, ErrorNote, SectionLabel, SessionTag, StatTile, Tag } from '../../components/ui';
 import { ZoneChart } from '../../components/ZoneChart';
 import { downloadZwo } from '../../lib/api';
-import { errorMessage, useCalendarMutations, useIntervals, useWorkout, useWorkouts } from '../../lib/queries';
+import { errorMessage, useCalendarMutations, useWorkout, useWorkouts, useZwiftFeature } from '../../lib/queries';
+import { parseLaps } from '../../lib/zwiftRoute';
 import { SESSION_STYLE, durationText, kindLabel, sessionTypeFor } from '../../lib/session';
 import { CompletedPanel } from './completed';
+import { EventPanel } from './event';
 import { AddRideFromDay, AddToSession } from './grouping';
-import { askCoachPrompt, intervalsUrl, PANEL, rideName } from './shared';
+import { askCoachPrompt, FIELD, intervalsUrl, PANEL, rideName } from './shared';
+import { SyncRow } from './sync';
+import { ZwiftRouteCard, ZwiftRoutePicker } from './zwift-route';
 
 /**
  * The calendar's session, ride and add-session panels. Desktop shows them beside the grid; on
@@ -35,16 +39,12 @@ export type Selection =
   | { type: 'event'; id: string }
   | { type: 'activity'; id: string }
   | { type: 'add'; date: string }
+  | { type: 'event-add'; date: string }
   | { type: 'time-off-add'; date: string }
   | { type: 'time-off'; entry: TimeOff }
   | null;
 
 
-export function syncState(e: CalendarEvent): 'synced' | 'failed' | 'pending' | null {
-  if (e.kind === 'ride' && !e.intervals) return null;
-  if (e.intervals?.error || e.syncError) return 'failed';
-  return e.intervals ? 'synced' : 'pending';
-}
 
 export function RideSummary({ activity }: { activity: CalendarActivity }) {
   return (
@@ -125,30 +125,6 @@ export function ActivityPanel({
   );
 }
 
-function SyncRow({ event }: { event: CalendarEvent }) {
-  const intervals = useIntervals();
-  const { resync } = useCalendarMutations();
-  const state = syncState(event);
-  if (!state || intervals.data?.status !== 'connected') return null;
-  const error = event.intervals?.error ?? event.syncError;
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-2 rounded-[10px] border border-line bg-surface p-3 text-[13px]">
-      {state === 'synced' ? (
-        <span className="flex items-center gap-1.5 text-success">
-          <CheckIcon /> On intervals.icu
-          {event.kind === 'workout' && event.platform !== 'garmin' && intervals.data.zwiftConnected ? ' → Zwift' : ''}
-        </span>
-      ) : (
-        <span className="text-danger">{state === 'failed' ? `Not synced: ${error}` : 'Not synced yet'}</span>
-      )}
-      {state !== 'synced' && (
-        <Button size="sm" variant="ghost" disabled={resync.isPending} onClick={() => resync.mutate(event.id)}>
-          {resync.isPending ? 'Syncing…' : 'Retry sync'}
-        </Button>
-      )}
-    </div>
-  );
-}
 
 type DetailProps = {
   event: CalendarEvent;
@@ -163,7 +139,10 @@ type DetailProps = {
 
 /** A session's panel: the completed layout once it's done, the planned one before. */
 export function DetailPanel(props: DetailProps) {
-  return sessionState(props.event) === 'completed' ? <CompletedPanel {...props} /> : <PlannedPanel key={props.event.id} {...props} />;
+  if (sessionState(props.event) === 'completed') return <CompletedPanel {...props} />;
+  // A real-world event has its own panel until it's ridden (DECISIONS #98).
+  if (isEventSession(props.event)) return <EventPanel key={props.event.id} event={props.event} feedback={props.feedback} onClose={props.onClose} sheet={props.sheet} />;
+  return <PlannedPanel key={props.event.id} {...props} />;
 }
 
 type RacePriority = 'A' | 'B' | 'C';
@@ -189,7 +168,13 @@ function PlannedPanel({ event, rides, dayRides, feedback, onClose, sheet = false
     <>
       {event.meta && <div className="text-[13px] text-muted">{event.meta}</div>}
       <SyncRow event={event} />
-      {(event.status === 'missed' || event.status === 'skipped') && <MissedNoteCard key={event.id} eventId={event.id} feedback={feedback} />}
+      <ZwiftRouteCard event={event} />
+      {(event.status === 'missed' || event.status === 'skipped') && (
+        <>
+          <MissedNoteCard key={event.id} eventId={event.id} feedback={feedback} />
+          <AskToAdjust event={event} />
+        </>
+      )}
       {rides[0] && <RideSummary activity={rides[0]} />}
       <AddRideFromDay event={event} rides={dayRides} title="Add a ride from this day" />
 
@@ -392,6 +377,9 @@ interface SessionDraft {
   startTime: string;
   priority: RacePriority;
   notes: string;
+  /** A race's Zwift route and laps (DECISIONS #102); laps as typed. */
+  routeId: number | null;
+  laps: string;
 }
 
 const draftFor = (e: CalendarEvent): SessionDraft => ({
@@ -404,6 +392,8 @@ const draftFor = (e: CalendarEvent): SessionDraft => ({
   startTime: e.startTime ?? '',
   priority: e.priority ?? 'B',
   notes: e.coachNote ?? '',
+  routeId: e.zwiftRouteId ?? null,
+  laps: e.zwiftLaps !== undefined ? String(e.zwiftLaps) : '',
 });
 
 /** Only what an edit changed; emptied fields are cleared (`unset`). */
@@ -441,6 +431,19 @@ function editPatch(e: CalendarEvent, d: SessionDraft): CalendarEventPatch {
       lengthChanged = true;
     }
     if (e.kind === 'race' && d.priority !== (e.priority ?? 'B')) patch.priority = d.priority;
+    if (e.kind === 'race') {
+      // Laps belong to a route: no route, no laps.
+      const routeId = d.routeId ?? undefined;
+      const laps = routeId === undefined ? undefined : parseLaps(d.laps);
+      if (routeId !== e.zwiftRouteId) {
+        if (routeId !== undefined) patch.zwiftRouteId = routeId;
+        else unset.push('zwiftRouteId');
+      }
+      if (laps !== e.zwiftLaps) {
+        if (laps !== undefined) patch.zwiftLaps = laps;
+        else unset.push('zwiftLaps');
+      }
+    }
     if (e.kind === 'ride' && d.type !== e.type) patch.type = d.type;
   }
   if (lengthChanged && e.durationLabel) unset.push('durationLabel');
@@ -448,7 +451,6 @@ function editPatch(e: CalendarEvent, d: SessionDraft): CalendarEventPatch {
   return patch;
 }
 
-export const FIELD = 'min-h-10 rounded-lg border border-line-strong bg-surface px-2';
 
 /**
  * The fields of a session, shared by Add and Edit. Edit has no kind switch (changing what a session
@@ -465,6 +467,7 @@ function SessionFields({
   current?: CalendarEvent | undefined;
 }) {
   const [picking, setPicking] = useState(!current);
+  const zwift = useZwiftFeature();
   const startField = (
     <label className="flex flex-col gap-1 text-xs text-muted">
       Start (optional)
@@ -569,6 +572,13 @@ function SessionFields({
               </select>
             </label>
           )}
+          {draft.kind === 'race' && zwift && (
+            <ZwiftRoutePicker
+              routeId={draft.routeId}
+              laps={draft.laps}
+              onChange={(p) => set({ ...(p.routeId !== undefined ? { routeId: p.routeId } : {}), ...(p.laps !== undefined ? { laps: p.laps } : {}) })}
+            />
+          )}
         </div>
       )}
 
@@ -660,6 +670,8 @@ export function AddPanel({
     startTime: '',
     priority: 'B',
     notes: '',
+    routeId: null,
+    laps: '',
   });
   const set = (p: Partial<SessionDraft>) => setDraft((d) => ({ ...d, ...p }));
   useEffect(() => setDraft((d) => ({ ...d, date: initialDate })), [initialDate]);
@@ -692,6 +704,7 @@ export function AddPanel({
             title: draft.title.trim(),
             durationMin: Number(draft.minutes) || 0,
             ...(kind === 'race' ? { platform: 'zwift' as const, priority: draft.priority } : {}),
+            ...(kind === 'race' && draft.routeId !== null ? { zwiftRouteId: draft.routeId, ...(parseLaps(draft.laps) ? { zwiftLaps: parseLaps(draft.laps) } : {}) } : {}),
           };
     create.mutate(input, { onSuccess: (event) => onAdded(event.id) });
   };

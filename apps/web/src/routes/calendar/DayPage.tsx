@@ -77,6 +77,7 @@ export function DayPage({ date, today }: { date: IsoDate; today: IsoDate }) {
         )}
         <DayWeekSwitch date={date} />
         <Button onClick={() => a.setPanel({ type: 'add', date })}>+ Session</Button>
+        <Button onClick={() => a.setPanel({ type: 'event-add', date })}>+ Event</Button>
         <Button onClick={() => a.setPanel({ type: 'time-off-add', date })}>+ Time off</Button>
         <Button variant="primary" onClick={() => a.flows.logFood()}>
           + Food

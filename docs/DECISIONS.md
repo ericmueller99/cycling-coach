@@ -406,7 +406,8 @@ query our own `zwift_events` collection. Zwift is called in three ways, all read
   6 minutes, or when a cursor repeats or a page adds nothing new. No retries: the first non-2xx or
   timeout ends the run. Afterwards it can't run again for 6 h, failed or not (`lastExtendedAt` in
   `sync_state`, so a restart doesn't reset it); during a run a second click just returns progress.
-- **Routes** (`cdn.zwift.com/gameassets/GameDictionary.xml`): at boot when older than a week.
+- **Routes** (`cdn.zwift.com/gameassets/GameDictionary.xml`): when older than a week, checked by the hourly
+  `zwiftPublic` job before the public sync (not at boot, as first written; corrected in #102).
 
 **One gate for all Zwift traffic.** `providers/zwift/gate.ts` (`RequestGate`) runs every request —
 the zFTP sync, both feeds, the route file, token calls — one at a time, at least 2 s apart. The
@@ -2237,3 +2238,289 @@ no RPE. It's stored only, and no Claude call is made when it's saved. The coach 
 path. *A separate collection*: it would repeat the keying, the calendar response's join and account deletion that
 `session_feedback` already has. *An automatic coach reply on save*: reviews come only when asked for (#30). *Rules for
 each kind of reason in the persona*: the coach should judge like a coach, not follow a script.
+
+## 98. Real-world events are races with event details, and the coach plans in blocks of two weeks (Nov 7)
+
+**Context.** Riders enter fondos, crits and road races, often months ahead. A race session was a Zwift race in
+practice, an outdoor race was labelled "Garmin race", and an event in September next year was invisible to a coach
+whose calendar block reaches 14 days. Nothing stopped the coach from writing a months-long plan either, which is the
+thing riders hate about other platforms: it doesn't adapt to jobs, kids and life, and re-making a 6-month plan costs
+about $0.60–1.00 of Opus output each time.
+
+**Decision.** This is phase 1 of the events plan. Courses (GPX), event goals and the coach's view of far-off events
+come next.
+- **An event is a `race` session ridden outdoors (`platform: 'garmin'`) with `eventInfo`:** type (14 kinds, gran fondo
+  to triathlon bike leg), distance, climbing, location and link. Est. time stays `durationMin`; notes stay `coachNote`.
+  It keeps everything a race already has: A/B/C priority, the push to intervals.icu (`RACE_A/B/C`, outdoor `Ride`), the
+  hard-day handling and the week's hours. `core.isEventSession` also counts an outdoor race with no details yet, such
+  as one made in intervals.icu, so its panel can offer **Add event details**.
+- **Only races carry event details.** The input schema refuses them elsewhere. `normalise` drops them from a patch on
+  anything else, and a race turned into something else has them unset. `eventInfo` is clearable, and a patch replaces
+  the whole object.
+- **intervals.icu gets what it is** at the head of the event's notes: "Gran fondo · 142 km · 2,350 m · place · link".
+  intervals.icu's own distance field isn't sent; it's unverified. Imports are unchanged.
+- **An event's ride is told by distance.** An outdoor ride is "Morning Ride", so a race session with a distance treats a
+  ride within ±25% of it as looking like the race, in the scorer and in #68's hold-out. `settleRides` passes ride
+  distances. Zwift races still go by name.
+- **The coach plans in blocks of two weeks.** `core.planHorizonEnd(today)` is the first Sunday at least 12 days out, so
+  a block of whole weeks fits from any day: this week and next from a Monday (13 days), the next two weeks from a
+  Saturday (15).
+  - Every turn's context says the date.
+  - `propose_plan` and `propose_calendar_changes` (add, move, re-date) refuse a workout or ride past it. The refusal
+    tells the coach to propose only up to then, and to tell the athlete that it plans in blocks of two weeks so the plan
+    can adapt, that the event stays in view, and that it will plan the next block when it's due.
+  - Races, events and Zwift events the athlete picked (`zwiftEventId`) are exempt, and so is anything added by hand.
+  - The persona says the same, and that after missed sessions the coach moves what matters most within the block and
+    drops what doesn't. The calendar shows "Your coach plans two weeks at a time, so sessions show up here closer to
+    the day." as a full-width line before the first week past the horizon.
+- **The UI follows `design/events-2026-11-07`.**
+  - **Add:** "+ Add ▾" gains **Event** ("A fondo, race or ride you've entered"). The form is type, name, date, start,
+    distance, elevation, est. time ("~5 h 30", "5:30", "330 min" all read), location, link, A/B/C with its meaning, and
+    notes. Saving ends on a confirmation with **Ask your coach how to get ready →**. **View event** jumps to the event's
+    week, because it can be months away from the weeks loaded.
+  - **The event's panel:** type, priority and Outdoor tags, three stat tiles, place and link, then **Ask coach about
+    this event** (a new chat with the prompt filled in and the event id), Edit and Delete. Mark done appears from the
+    event's day.
+  - **Chips:** a flag, and "142 km · 2,350 m · 7:00".
+  - **Phones:** the day view's Session and Time off buttons become one **Add** (Session · Event · Time off), because a
+    fourth floating button doesn't fit at 390 px.
+
+**Rejected.**
+- *A new session kind*: an event is a race in every way that matters (matching, hours, hard days, intervals.icu
+  categories). A new kind would need every reader taught about it.
+- *A stored season plan with dated phases*, and *opt-in outlines with up to four weeks of sessions*: neither adapts the
+  way two-week blocks do, and re-planning costs real money.
+- *Capping sessions the athlete adds by hand*: their calendar is theirs.
+- *Telling the coach the cap only in the prompt*: models drift, so the tools enforce it.
+
+**First deploy:** `calendarEventFields` feeds `propose_plan` and `propose_calendar_changes`, and their descriptions
+changed. `TOOLS_HASH` therefore moves, and every open chat restarts once with a recap. The persona edit reaches open chats
+through that restart.
+
+## 99. An event's course: the browser reads the GPX, code measures it, and the coach will judge it (Nov 7)
+
+**Context.** A fondo is decided by its climbs, and how long each one takes this rider decides which power matters. A
+GPX has all of that, but as thousands of points. That's too many tokens to send Claude on every read, and models are
+unreliable at arithmetic over long number lists. Phase 2 of the events plan (#98).
+
+**Decision.**
+- **The browser reads the file.** `core.parseGpx` uses regexes like `zwo.ts`, with no XML library. It reads track
+  points, or route points when there's no track, with their heights and the file's name, and handles namespaced tags.
+  It names what's wrong with a bad file: "This isn't a GPX file.", "No route in this file.", "That file is over 25 MB."
+  `core.resampleTrack` then puts a point every 50 m (wider past 600 km, so at most 12,000 points), as
+  `[km, m | null, lat, lon]`.
+  - Only that track is sent, a few hundred KB at most. The raw file never leaves the device, so self-hosting needs no
+    S3.
+  - Heights count only when at least half the points have one.
+- **The API analyses it itself** (`core.analyzeCourse`) and never takes the browser's analysis. The analysis covers:
+  - distance, climbing and descent (a 200 m moving average, then 2 m hysteresis);
+  - lowest and highest points, terrain (the Zwift events' m/km bands), and the climbing in the last 20 km;
+  - about 300 profile points for the chart;
+  - the climbs.
+  A climb runs from a low point while it gains height. A dip under 30 m (or a tenth of the climb, if less) doesn't end
+  it, but a bigger drop or 1 km without new height does. A flat run-up is trimmed. It counts at 500 m or longer, 3%
+  average and 40 m gained. Each climb records length, gain, average and steepest 200 m; the longest is marked.
+  **These thresholds are starting guesses.** They're tuned on made-up courses so far: a 142 km course with climbs of
+  4.1 km at 5.2%, 11 km at 6.4% and 1.8 km at 7.9% came back as 4.3/5.0%, 11.1/6.3% and 2.1/6.8%, with total climbing
+  within 1.5%.
+- **Stored per event** in `courses` (unique by user and event): the track, the analysis and `analysisVersion`. Reading
+  a course whose version is older analyses it again, so tuning the thresholds needs no migration.
+  - The session gets a server-set `courseId`, which isn't in the patch or tool schemas.
+  - `GET /calendar/:id/course` returns `null` when there's none. A course just removed isn't an error.
+  - `PUT` (3 MB body limit) and `DELETE` go through `CalendarService`. A course is never pushed: intervals.icu doesn't
+    hold courses.
+  - It goes with its event, whether deleted here or by the sync's `remove-local`, and with the account (#95).
+- **Times "for you"** (`core.climbTimeRange`) come from a plain power model: rider plus a 9 kg bike, CdA 0.32,
+  Crr 0.005, 97% drivetrain. Each climb gets a range from FTP down to 90% of it: "≈ 33–36 min for you". With no FTP the
+  times are left out. The Add panel's time estimate uses the Zwift events' model at 75% of FTP for every event type,
+  because the course usually arrives before the type does.
+- **The UI follows `design/events-2026-11-07`.**
+  - **Add event:** a course drop zone first. Then the file, a mini profile and "142 km · 1,418 m · 3 climbs".
+  - **Autofill:** name, distance, elevation and est. time are filled in where empty, or where an earlier file filled
+    them. Each carries a "from GPX" mark, or "from GPX + FTP" for the time, until it's edited.
+  - **Saving** adds the course after the event. If that fails, the event stays and the confirmation says to add the
+    course from the event.
+  - **Edit:** replaces or removes the course on Save.
+  - **The event's panel:** a profile of grey bars, about one per km, with the climbs darker and the longest darkest,
+    numbered markers, highest and lowest points, and a km axis. Then the climb list, "Last 20 km", and either the
+    estimate note or "Set your FTP". Without a course, a drop zone adds one straight away.
+- **The coach doesn't see courses yet.** `get_event_course` and the events block are phase 4.
+
+**Rejected.**
+- *Sending Claude the track*: tokens, and arithmetic the model gets wrong.
+- *Keeping the raw GPX*: it would need S3 for self-hosters, for nothing the resampled track can't redo.
+- *Parsing on the server*: a 25 MB upload against a 3 MB body for the same result.
+- *A chart library*: the workout charts are bars already, and these read at 60 px and in a phone sheet.
+- *Coloured or graded climb shading*: red means race, and gradients get noisy at phone width.
+
+**Not verified:** accuracy on a real GPX. The check is a ride the athlete has done, against RideWithGPS's or Garmin's
+distance and climbing (within about 5%).
+
+## 100. An event goal says how much the coach weighs an event (Nov 7)
+
+**Context.** An event on the calendar says when, but not whether the athlete is training for it. A fondo next September
+might be the season's target, or a day out with friends. Phase 3 of the events plan (#98, #99).
+
+**Decision.**
+- **Two questions on Add event** (`design/events-2026-11-07`), separate from A/B/C priority, which stays how rested to be
+  on the day:
+  - "Should your coach take this event into account when coaching and creating plans and workouts?" Neither answer
+    is preselected. No means no goal: "It stays on your calendar, and your coach plans around the day itself."
+  - "How much weight should the coach give this event?" **Main goal** ("Plans build toward it", and it says which main
+    goal it replaces), **Important** ("Real room for it beside your main goal, more as it gets closer") or **Keep in
+    mind** ("Worked in where it fits, without changing your focus").
+  - An optional aim (Finish · Target time · Compete) and a note.
+- **Answering yes makes a goal for the event.** New goal fields:
+  - `eventId`;
+  - `weight` (`important` | `in_mind`). Main goal is the existing `primary`, and keeps `important` to fall back to;
+  - `aim`.
+  The note is the goal's `detail`. A weight not picked counts as Keep in mind.
+- **The goal is the event's** (`services/goals.ts`, used by the routes and by applied coach proposals):
+  - it must be a race session of the athlete's, with one goal per event (409);
+  - it's always `event: true`, dated by the event whatever a patch says;
+  - a goal whose event went some other way carries on, unlinked, instead of failing.
+- **It follows the event:** moved here (`CalendarService.patch`) or in intervals.icu (the sync's `applyRemote`). On
+  delete:
+  - the panel asks "Also remove its goal" (ticked), and `DELETE /calendar/:id?goal=remove` removes it;
+  - otherwise the goal stays, unlinked, with its last date, as it does when intervals.icu deletes the event.
+- **Where it shows:**
+  - The event panel's coaching card: "Your coach is training you for this" with weight and aim chips, the note, Edit
+    and a link to the goal. Without a goal it reads "Your coach isn't training you for this. It plans around the day
+    itself." and offers **Take it into account**, which asks the same questions.
+  - Athlete › Goals & coach: an event goal card with its date and weeks to go, "On your calendar →", the chips and the
+    note. A linked goal's editor shows "For: … · date" ("The date follows the event") and the same questions. An
+    unlinked event goal can be linked to an upcoming event that has no goal.
+  - The rail's Main goal card and the Athlete header tile show the event's date.
+  - Saving a goal waits for the profile to refetch, so the card never shows the old weight for a moment.
+- **The coach** reads `for calendar event e7 · weight: important · aim: compete` on the goal line in the athlete block.
+  That's a text change only, so open chats get the usual "athlete context changed" note and nothing restarts. How it
+  weighs these is phase 4's persona line, together with the events block.
+
+**Rejected.**
+- *Folding the weight into A/B/C*: an athlete can want an A day they aren't training for, or the reverse.
+- *A weight on every goal*: only events compete with the main goal for the same weeks.
+- *The goal's title following the event's*: the athlete may have named the goal themselves.
+- *Deleting the goal with its event by default when intervals.icu deletes it*: nobody was asked.
+
+## 101. The coach keeps far-off events in view, reads courses, and keeps an outlook (Nov 7)
+
+**Context.** Phase 4 of the events plan (#98–#100). The coach's calendar block reaches 14 days, so a fondo next
+September was invisible when it planned this week. It couldn't read a course. And nothing carried its view of how to
+balance the main goal against an event from one chat to the next.
+
+**Decision.**
+- **What it sees:**
+  - **An events block**, sent when it changes, like time off (#87). It lists every event from today to two years out
+    (`core.coachEvents`: real-world events, any race with a goal, and A races; a Zwift C race without a goal stays in
+    the 14-day calendar). Each line has absolute dates, type, priority, distance and climbing, estimated time, the
+    course in one line (`core.courseLine`), and the goal's weight and aim or "no goal: on the calendar only".
+  - **A line every turn:** "Events ahead: … in 44 weeks". It moves with the day, so it isn't compared.
+- **`get_event_course(event_id, per_km)`:** the course as code measured it (`describeCourse`). That's every climb with
+  this athlete's time for it, at FTP to 90% (#99's power model, labelled an estimate), the last 20 km, and on request
+  the height every km. The chip is "Read the course · … · 142 km · 1,418 m", with the climbs as rows. The track itself
+  never goes to Claude.
+- **The outlook** (`coach_outlook`, one per athlete):
+  - **`update_outlook(text)`** writes it directly, at most 800 characters. It's undoable, like `remember`. The chip,
+    "Updated the outlook: …", has Show all and Undo. Undo is a compare-and-set revert (`POST /outlook/revert`): if the
+    athlete has edited it since, it says "Couldn't undo: the outlook has changed since." and links to it.
+  - **The athlete edits or clears it** on Athlete › Goals & coach, above short-term memory, without the coach and with
+    no AI cost (#85). Their edits stand.
+  - **In the context** it's sent when it changes, with who last wrote it and when. A cleared one says so.
+  - **It's never a schedule and never on the calendar.**
+- **`propose_goal`** takes `eventId`, `weight` and `aim`. Applied proposals already go through the goals service, which
+  dates the goal by the event (#100). The goal card says "For an event on your calendar · Important · Aim: Compete".
+- **The persona, as meanings, not rules:**
+  - Events are weighed by how near they are and by their goal's weight. A main goal leads; Important gets real room,
+    more as it nears; Keep in mind is worked in where it fits. An event with no goal is a day to plan around, not to
+    train for.
+  - The coach judges an event's demands from its type and course against the athlete's strengths.
+  - When asked how to get ready, it reads the course and power curve and plans only the current block.
+  - After an event is added without a goal, it asks once, then uses `propose_goal`.
+  - It keeps the outlook current and says when it changes it.
+  - The two-week blocks from #98 stand.
+- **The app:**
+  - **Ask coach to adjust my plan** under "What happened?" on a missed or skipped session opens a new chat with "I
+    missed … (event id). Can you adjust my plan around it?".
+  - **The rail's Coming up** card shows the next three events with how the coach treats each, from a new
+    `upcomingEvents` on the dashboard.
+- **Cost:** two new tools, `TOOLS_HASH` moves once (open chats restart with a recap), and the cached prefix grows by
+  about 1.1K tokens, to about 21.3K (`coach:smoke`).
+- **Checked live** (Nov 7: five turns, $0.60 in all, Opus $0.45 of it). The setup was a throwaway account with a made-up
+  142 km fondo marked Important and a crit with no goal.
+  - "How do I get ready" read the course, named the 11 km climb at km 96 as decisive, and planned exactly to the
+    horizon. It treated the crit as a C race and that week's hard day, and wrote the outlook.
+  - "I signed up for a gravel race" proposed it as an event, asked once how much it should count, then proposed a
+    linked Keep in mind goal. The goal took the event's date.
+  - Undo on the outlook chip put the earlier text back.
+  - **A first run of "plan every week to September"** answered with a month-by-month plan in prose and said "the tool
+    refuses anything past Sun Nov 22". The persona and the cap's refusal now say not to write the long plan out
+    another way, to keep the longer view to a sentence (it belongs in the outlook), and to talk about two-week blocks
+    as how the coach coaches, not as an app limit. The rerun explained the blocks and refused a week-by-week plan, with
+    no tool talk. It still closed with a short arc, phases by season with no dates or sessions.
+
+**Rejected.**
+- *The events in the athlete block*: every added or moved event would resend the whole block into every open chat.
+- *An events block limited to six months*: a fondo a year out is exactly what this is for.
+- *The outlook through a confirm card*: it schedules nothing, and confirming every rewrite turns it back into a plan
+  the athlete signs off.
+- *Storing the outlook in memory*: memory is what the athlete said (#79). This is the coach's own view.
+- *A coach-written course analysis stored on the event*: the numbers are code's, the judgement is redone each time
+  with current fitness, and the outlook carries the conclusion.
+
+## 102. A Zwift race can follow a Zwift route, with laps, and shows its profile (Nov 7)
+
+**Context.** Riders read a Zwift race by its route: where the KOMs and sprints fall, and how often they come round in a
+ladder race of several laps. The app knew a Zwift event's route and laps (#29) but kept neither on the calendar
+session, and #99's course card only appeared on real-world events.
+
+**Decision.**
+- **The data is the `zwift-data` npm package** (MIT), a dependency of the API. It isn't copied into this repo.
+  - Its route `id` is Zwift's own. It equals GameDictionary's `signature` and a pen's `routeId`: all 353 routes
+    matched on Nov 7.
+  - It gives each route's named segments (KOMs, sprints, timed segments) as km on one lap, from Zwift's public API
+    and manual work.
+  - For 338 routes it has one lap's heights. **Those heights come from Strava segment streams.** So the feature is
+    limited to accounts with the Zwift feature (#54). On hosted that's the per-account `zwift` flag, and it isn't
+    part of a plan. Rule 1 keeps Strava's data away from the coach, so **the coach never reads a route's course**:
+    `get_event_course` reads stored GPX courses only.
+  - `providers/zwift/route-data.ts` is the only file that reads the package. It imports one route's stream file by
+    path when needed, and keeps the last 50. The package's own `streams` entry points would load all 31 MB.
+- **On the session:** `zwiftRouteId` and `zwiftLaps` (1–50) are optional, and an edit can clear them.
+  - They're **left out of the coach's tool schemas** (`coachEventInputSchema`, `coachEventPatchSchema`). The coach
+    can't set them, and the cached prefix stayed byte-identical (`coach:smoke`, Nov 7).
+  - Changing or clearing them alone isn't pushed to intervals.icu: they join `LOCAL_ONLY`.
+  - "Add to calendar" on Zwift Events copies the pen's route, and its laps unless the pen is timed.
+- **The course is derived when read, never stored.** `GET /calendar/:id/course` builds it for a race with a route,
+  for an account with the feature (`ZwiftRouteCourses`). It's cached in memory by route and laps.
+  - **The track:** the lead-in flat at the lap's starting height (there's no lead-in stream), then the lap once per
+    lap, every 50 m (`core.zwiftRouteTrack`).
+  - **The analysis** (`core.analyzeZwiftCourse`):
+    - It runs #99's analysis, then puts **the named climbs in place of the found climbs they overlap**. A named climb
+      is measured from the same smoothed heights and counts whatever its size. Found climbs elsewhere stay, unnamed.
+    - **Climbing is counted on the raw heights.** #99's 200 m smoothing and 2 m hysteresis are for GPS noise, and on
+      Zwift's clean streams they flattened the rollers. Over 290 routes they came out a median 24% under the
+      published climbing, against 3% (90th percentile 9%) raw. Smoothing still drives climb finding and the chart.
+  - **No laps** (a timed race) shows one lap and says so.
+  - **No stream** gives the route's own totals with no profile.
+  - A race with a route takes no GPX: a PUT returns 400.
+- **The race form** (Zwift race only, with the feature): an optional **Zwift route** search over GameDictionary's
+  routes and zwift-data's together (`GET /zwift/routes`, which returns 404 without the feature). Then **Laps
+  (optional)**, with a total of lead-in plus laps.
+- **The race panel** (planned and completed) gets a **route card**:
+  - name, world, laps, distance, climbing and lead-in;
+  - #99's profile, its markers labelled by climb, so the same KOM is the same number every lap (hidden past 12
+    markers), with sprints marked under the bars;
+  - **each climb and sprint listed once**, "×6 · first at km 1.2", with category, length, grade and "for you" times;
+  - links to ZwiftInsider and What's on Zwift.
+  - The colours stay #99's greys: red means race.
+
+**Rejected.**
+- *Storing the route's course in `courses`*: it's a function of route, laps and the package version. Storing it
+  would need regenerating on every laps edit and on each package update.
+- *ZwiftHub's data*: it's built into its app bundle, with no licence, its own route numbers and no segment positions.
+- *Profiles from the athlete's own Zwift rides* (intervals.icu streams): clean, but only routes they've ridden.
+  This is still the fallback if the Strava provenance ever matters.
+- *Letting the coach read route courses*: the heights are Strava's (rule 1). Revisit only with a source that isn't
+  Strava, such as the athlete's own rides.
+- *A limit on laps per route* (zwift-data's `lap` flag): Zwift events set laps on routes it doesn't mark.
+

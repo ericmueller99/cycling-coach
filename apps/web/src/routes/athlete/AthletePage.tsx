@@ -13,6 +13,7 @@ import { EnergySection } from './EnergySection';
 import { FtpCard } from './ftp';
 import { GoalsSection } from './goals';
 import { MemorySection } from './memory';
+import { OutlookCard } from './outlook';
 import { TrainingCard } from './training';
 import { PowerCurveCard } from './powerCurve';
 import { Snapshot } from './Snapshot';
@@ -104,6 +105,7 @@ export function AthletePage({ tab, addWeightGoal }: { tab: AthleteTab; addWeight
         }
         right={
           <>
+            <OutlookCard timezone={data.profile.timezone} />
             <MemorySection memories={data.memories} today={today} />
             <ConnectionsSection />
             <div className="text-xs text-muted">Timezone is on your Account page.</div>

@@ -1,4 +1,4 @@
-import type { Goal, GoalProgress, IsoDate, PowerBest, WeightPace } from '@cycling-coach/shared';
+import type { EventWeightChoice, Goal, GoalProgress, IsoDate, PowerBest, WeightPace } from '@cycling-coach/shared';
 import { addDays } from './dates';
 
 export interface GoalSnapshot {
@@ -20,6 +20,19 @@ export interface GoalSnapshot {
  */
 export function goalTakesDate(goal: Pick<Goal, 'event'>): boolean {
   return goal.event === true;
+}
+
+/**
+ * How much an event goal counts (DECISIONS #100): the main goal, else the weight the athlete picked.
+ * An event goal from before weights existed counts as important.
+ */
+export function eventGoalWeight(goal: Pick<Goal, 'primary' | 'weight'>): EventWeightChoice {
+  return goal.primary ? 'main' : (goal.weight ?? 'important');
+}
+
+/** The goal for a calendar event, if it has one. */
+export function goalForEvent<G extends Pick<Goal, 'eventId'>>(goals: readonly G[], eventId: string): G | undefined {
+  return goals.find((g) => g.eventId === eventId);
 }
 
 export const KG_PER_LB = 0.45359237;

@@ -304,6 +304,9 @@ export function calendarInputFor(e: EventItem, timeZone: string): CalendarEventI
     meta: [where, pen && e.penKind !== 'none' ? `Pen ${pen.name}` : ''].filter(Boolean).join(' · ').slice(0, 160),
     zwiftEventId: e.id,
     ...(pen ? { zwiftPenId: pen.id } : {}),
+    // The race's route and laps (DECISIONS #102), so its panel can show the profile. A timed pen has no laps.
+    ...(race && pen?.routeId !== undefined ? { zwiftRouteId: pen.routeId } : {}),
+    ...(race && pen?.routeId !== undefined && pen.laps && pen.laps > 0 ? { zwiftLaps: Math.min(50, Math.round(pen.laps)) } : {}),
   };
 }
 

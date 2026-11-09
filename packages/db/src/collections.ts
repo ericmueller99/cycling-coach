@@ -9,6 +9,8 @@ import type {
   WellnessDay,
   CalendarEvent,
   CalendarEventInput,
+  CourseAnalysis,
+  CoursePoint,
   GoalInput,
   GoalProposal,
   IntervalsLink,
@@ -103,6 +105,8 @@ export interface CalendarEventDoc extends CalendarEventInput {
   ignoredActivityIds?: string[];
   /** Same-day rides the user grouped into this session, beside the primary `activityId`. */
   extraActivityIds?: string[];
+  /** Its course (DECISIONS #99), in `courses`. Server-set only. */
+  courseId?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -149,7 +153,7 @@ export interface ThreadDoc {
    * The calendar, time off, athlete and short-term note text the coach has already been shown in this context,
    * so per-turn context messages only repeat what changed (packages/coach/src/context.ts).
    */
-  seen: { calendar?: string; athlete: string; extra?: string; shortTerm?: string; timeOff?: string };
+  seen: { calendar?: string; athlete: string; extra?: string; shortTerm?: string; timeOff?: string; events?: string; outlook?: string };
   /** The next turn restarts with nothing older and no recap, and a new chat won't recap this one (DECISIONS #93). */
   forgetContext?: true;
   /** When a call last started on the build model, for the one warm follow-up (`warmFollowUp`). */
@@ -192,6 +196,29 @@ export interface MessageDoc {
   ui?: Exclude<UiBlock, { type: 'text' }>[];
   /** The model that wrote it (assistant messages). */
   model?: string;
+}
+
+/** The coach's outlook (DECISIONS #101): one per athlete. */
+export interface CoachOutlookDoc {
+  _id?: ObjectId;
+  userId: string;
+  text: string;
+  source: 'coach' | 'user';
+  updatedAt: Date;
+}
+
+/** An event's course (DECISIONS #99): the resampled track, and its analysis at `analysisVersion`. One per event. */
+export interface CourseDoc {
+  _id?: ObjectId;
+  userId: string;
+  /** The calendar session it belongs to. */
+  eventId: string;
+  name?: string;
+  fileName?: string;
+  points: CoursePoint[];
+  analysis: CourseAnalysis;
+  analysisVersion: number;
+  createdAt: Date;
 }
 
 export interface TimeOffDoc extends TimeOffInput {
@@ -553,6 +580,8 @@ export function collections(db: Db) {
     workouts: db.collection<WorkoutDoc>('workouts'),
     calendarEvents: db.collection<CalendarEventDoc>('calendar_events'),
     timeOff: db.collection<TimeOffDoc>('time_off'),
+    courses: db.collection<CourseDoc>('courses'),
+    coachOutlook: db.collection<CoachOutlookDoc>('coach_outlook'),
     threads: db.collection<ThreadDoc>('threads'),
     messages: db.collection<MessageDoc>('messages'),
     proposals: db.collection<ProposalDoc>('proposals'),
@@ -595,6 +624,8 @@ export async function ensureIndexes(db: Db): Promise<void> {
     c.workouts.createIndex({ userId: 1, createdAt: -1 }),
     c.calendarEvents.createIndex({ userId: 1, date: 1 }),
     c.timeOff.createIndex({ userId: 1, startDate: 1 }),
+    c.courses.createIndex({ userId: 1, eventId: 1 }, { unique: true }),
+    c.coachOutlook.createIndex({ userId: 1 }, { unique: true }),
     c.calendarEvents.createIndex({ userId: 1, 'intervals.eventId': 1 }, { sparse: true }),
     c.threads.createIndex({ userId: 1, lastMessageAt: -1 }),
     c.messages.createIndex({ threadId: 1, seq: 1 }, { unique: true }),

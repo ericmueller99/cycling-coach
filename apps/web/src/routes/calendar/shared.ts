@@ -1,6 +1,9 @@
 import { combineRides, formatLongDay, sessionRideIds } from '@cycling-coach/core';
 import type { CalendarActivity, CalendarEvent } from '@cycling-coach/shared';
 
+/** The add and edit forms' inputs. */
+export const FIELD = 'min-h-10 rounded-lg border border-line-strong bg-surface px-2';
+
 export const intervalsUrl = (activityId: string) => `https://intervals.icu/activities/${activityId}`;
 
 /**
@@ -13,6 +16,10 @@ export const PANEL =
 
 /** The on-demand review: "Review my <session> on <day> (…): " — the coach sees the rating in its data. */
 export const askCoachPrompt = (title: string, date: string, ref: string) => `Review my ${title} on ${formatLongDay(date)} (${ref}): did it feel right for what it was? `;
+
+/** "Ask coach about this event" (DECISIONS #98): the id lets the coach find it however far off it is. */
+export const askEventPrompt = (title: string, date: string, id: string) =>
+  `Help me get ready for ${title} on ${formatLongDay(date)} (event ${id}): what does it demand, and what should I be working on now? `;
 
 /** A ride's name without Zwift's "Zwift - " prefix. */
 export const rideName = (a: Pick<CalendarActivity, 'name'>) => a.name.replace(/^Zwift - /, '');
