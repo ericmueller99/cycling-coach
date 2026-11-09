@@ -88,12 +88,30 @@ describe('goalProgress', () => {
 });
 
 describe('inferSessionType', () => {
-  it('reads the seed library as intervals', () => {
-    for (const w of STARTER_WORKOUTS) expect(inferSessionType(w.segments)).toBe('intervals');
+  it('reads each starter workout as its kind of session', () => {
+    const types = Object.fromEntries(STARTER_WORKOUTS.map((w) => [w.name, inferSessionType(w.segments)]));
+    expect(types).toEqual({
+      'Endurance 60': 'endurance',
+      'Recovery Spin 30': 'recovery',
+      // Tempo stays under the 88% line, so it's an endurance-type day on the calendar.
+      'Tempo 3x12': 'endurance',
+      'Sweet Spot 3x12': 'intervals',
+      'Sweet Spot 2x20': 'intervals',
+      'Threshold 3x10': 'intervals',
+      'Over-Unders 3x9': 'intervals',
+      'VO2 5x4': 'intervals',
+      'VO2 30/15s 3x13': 'intervals',
+      'Surge and Settle 5x4': 'intervals',
+      'Sprints 8x15s': 'openers',
+      'Openers 45': 'openers',
+      'FTP Ramp Test': 'intervals',
+    });
   });
 
   it('spots endurance, recovery and openers', () => {
     expect(inferSessionType([{ kind: 'steady', durSec: 5400, pct: 70 }])).toBe('endurance');
+    // The warm-up's single 1-min opener doesn't make an easy ride openers.
+    expect(inferSessionType([...STANDARD_WARMUP, { kind: 'steady', durSec: 3600, pct: 68 }, ...STANDARD_COOLDOWN])).toBe('endurance');
     expect(inferSessionType([{ kind: 'steady', durSec: 1800, pct: 50 }])).toBe('recovery');
     expect(
       inferSessionType([...STANDARD_WARMUP, { kind: 'repeat', count: 3, steps: [{ durSec: 30, pct: 130 }, { durSec: 120, pct: 55 }] }, ...STANDARD_COOLDOWN]),

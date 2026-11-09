@@ -12,7 +12,7 @@ import {
   type PreviewField,
   type SessionPreview,
 } from '@cycling-coach/core';
-import { EVENT_AIM_LABEL, EVENT_WEIGHT_LABEL, TIME_OFF_LABEL, TRAINING_PREFERENCE_LABEL, type CalendarChange, type Proposal, type ProposalItemStatus, type TimeOffChange, type ToolChipBlock, type UiBlock, type Workout } from '@cycling-coach/shared';
+import { EVENT_AIM_LABEL, EVENT_WEIGHT_LABEL, TIME_OFF_LABEL, TRAINING_APPROACH_LABEL, TRAINING_PREFERENCE_LABEL, type CalendarChange, type Proposal, type ProposalItemStatus, type TimeOffChange, type ToolChipBlock, type UiBlock, type Workout } from '@cycling-coach/shared';
 import { createContext, memo, useContext, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import ReactMarkdown from 'react-markdown';
@@ -449,11 +449,12 @@ function ProfileUpdateCard({ proposal, threadId }: { proposal: Extract<Proposal,
     u.ftpZwift && `FTP → ${u.ftpZwift} W`,
     u.zwiftWeightKg && `Zwift weight → ${u.zwiftWeightKg} kg`,
     u.trainingPreference && `Training preference → ${TRAINING_PREFERENCE_LABEL[u.trainingPreference]}`,
+    u.trainingApproach && `Training approach → ${TRAINING_APPROACH_LABEL[u.trainingApproach]}`,
     ...(u.powerBests ?? []).map((b) => `${b.durationSec < 60 ? `${b.durationSec} s` : `${b.durationSec / 60} min`} best → ${b.watts} W`),
   ].filter(Boolean);
   return (
     <Card className="flex flex-col gap-2 p-4">
-      <div className="font-semibold">{u.trainingPreference && lines.length === 1 ? 'Change your training preference?' : 'Update your numbers?'}</div>
+      <div className="font-semibold">{lines.length === 1 && u.trainingPreference ? 'Change your training preference?' : lines.length === 1 && u.trainingApproach ? 'Change your training approach?' : 'Update your numbers?'}</div>
       <ul className="m-0 pl-5 text-[13px]">
         {lines.map((l) => (
           <li key={l as string}>{l}</li>

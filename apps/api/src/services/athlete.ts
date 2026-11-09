@@ -113,9 +113,12 @@ export async function buildDashboard(
   };
 }
 
-/** The window of calendar the coach sees each turn: last week (what happened) + next two. */
+/**
+ * The window of calendar the coach sees each turn: the last two weeks (the block just ridden, so the
+ * next one can build on it, DECISIONS #103) + the next two.
+ */
 export function coachCalendarWindow(today: IsoDate): { from: IsoDate; to: IsoDate } {
-  return { from: addDays(today, -7), to: addDays(today, 14) };
+  return { from: addDays(today, -14), to: addDays(today, 14) };
 }
 
 /** Events reach furthest: a fondo next September shapes training now (DECISIONS #101). */

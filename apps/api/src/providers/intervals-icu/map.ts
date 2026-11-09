@@ -8,6 +8,7 @@ import type {
   PowerCurvePeriod,
   PowerPoint,
   WellnessDay,
+  WellnessScale,
   Workout,
 } from '@cycling-coach/shared';
 
@@ -145,10 +146,36 @@ export function mapPowerCurves(raw: unknown): PowerCurve[] {
   return out;
 }
 
+/** One of intervals.icu's 1–4 wellness entries, or nothing (it sends null or 0 for "not entered"). */
+const scale = (v: unknown): WellnessScale | undefined => {
+  const n = num(v);
+  return n !== undefined && Number.isInteger(n) && n >= 1 && n <= 4 ? (n as WellnessScale) : undefined;
+};
+
+/** The recovery fields of a wellness row: device numbers rounded, the athlete's own 1–4 entries as given. */
+function recovery(w: Record<string, unknown>): Partial<WellnessDay> {
+  const out: Partial<WellnessDay> = {};
+  const hrv = pos(w['hrv']);
+  if (hrv !== undefined) out.hrvMs = Math.round(hrv);
+  const rhr = pos(w['restingHR']);
+  if (rhr !== undefined) out.restingHr = Math.round(rhr);
+  const sleep = pos(w['sleepSecs']);
+  if (sleep !== undefined) out.sleepSec = Math.round(sleep);
+  const score = pos(w['sleepScore']);
+  if (score !== undefined) out.sleepScore = Math.round(score);
+  const ready = pos(w['readiness']);
+  if (ready !== undefined) out.readiness = Math.round(ready);
+  for (const k of ['sleepQuality', 'soreness', 'fatigue', 'stress', 'mood', 'motivation'] as const) {
+    const v = scale(w[k]);
+    if (v !== undefined) out[k] = v;
+  }
+  return out;
+}
+
 /**
  * Wellness rows → our stored days (DECISIONS #49): CTL/ATL to one decimal, the scale's weigh-in
- * and steps. intervals.icu reports a missing weigh-in or step count as null or 0; those stay out.
- * A day with none of these is dropped.
+ * and steps, and the recovery fields the coach reads (DECISIONS #103). intervals.icu reports a
+ * missing value as null or 0; those stay out. A day with none of these is dropped.
  */
 export function mapWellnessDays(raw: unknown): WellnessDay[] {
   if (!Array.isArray(raw)) return [];
@@ -168,6 +195,7 @@ export function mapWellnessDays(raw: unknown): WellnessDay[] {
       ...(both && num(w['rampRate']) !== undefined ? { rampRate: round1(num(w['rampRate'])) } : {}),
       ...(pos(w['weight']) !== undefined ? { weightKg: round1(pos(w['weight'])) } : {}),
       ...(steps !== undefined ? { steps: Math.round(steps) } : {}),
+      ...recovery(w),
     };
     if (Object.keys(day).length > 1) out.push(day);
   }

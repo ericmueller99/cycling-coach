@@ -43,6 +43,12 @@ describe('renderAthleteBlock — dates, preference and availability (DECISIONS #
     expect(withGoals([])).not.toContain('Training preference');
   });
 
+  it('shows the training approach only when the athlete has picked one', () => {
+    expect(withGoals([], { trainingApproach: 'polarized' })).toContain('Training approach: Polarized');
+    expect(withGoals([], { trainingApproach: 'auto' })).not.toContain('Training approach');
+    expect(withGoals([])).not.toContain('Training approach');
+  });
+
   it('says how the coach learns availability', () => {
     expect(withGoals([])).toContain('Availability: they tell you as they chat');
     const block = withGoals([], { usualWeek: { days: ['tue', 'thu', 'sat'], hoursPerWeek: 8 } });
@@ -192,6 +198,13 @@ describe('renderTurnContext calendar', () => {
     expect(renderTurnContext({ ...base, calendarBlock: block, seen: { athlete: 'athlete' }, extra: 'Readiness: HRV 52 ms.' })).toContain('Readiness: HRV 52 ms.');
     expect(renderTurnContext({ ...base, calendarBlock: block, seen: { athlete: 'athlete', extra: 'Readiness: HRV 52 ms.' }, extra: 'Readiness: HRV 52 ms.' })).not.toContain('HRV');
     expect(renderTurnContext({ ...base, calendarBlock: block, seen: { athlete: 'athlete', extra: 'Readiness: HRV 52 ms.' }, extra: 'Readiness: HRV 40 ms.' })).toContain('HRV 40 ms');
+  });
+
+  it('adds intervals.icu readiness when it changed (DECISIONS #103)', () => {
+    const block = calendar('2026-10-27', '2026-11-17', '- e1');
+    const line = 'Readiness (intervals.icu wellness): HRV 52 ms.';
+    expect(renderTurnContext({ ...base, calendarBlock: block, seen: { athlete: 'athlete' }, readiness: line })).toContain(line);
+    expect(renderTurnContext({ ...base, calendarBlock: block, seen: { athlete: 'athlete', readiness: line }, readiness: line })).not.toContain('HRV');
   });
 
   it('adds a note from the deployment', () => {

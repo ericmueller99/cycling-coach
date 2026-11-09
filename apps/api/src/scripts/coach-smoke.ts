@@ -46,6 +46,7 @@ const ports: CoachPorts = {
   getTimeOff: unused,
   createProposal: async (p) => ({ ...p, id: 'smoke', threadId: 'smoke', itemStatus: p.items.map(() => 'pending' as const) }) as never,
   createWorkout: unused,
+  workoutLengths: unused,
   remember: unused,
   updateMemory: unused,
   forget: unused,

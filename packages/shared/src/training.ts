@@ -107,9 +107,13 @@ export interface FitnessDay {
   weightKg?: number | undefined;
 }
 
+/** intervals.icu's 1–4 wellness scales. What 1 means depends on the field (see `core.readiness`). */
+export type WellnessScale = 1 | 2 | 3 | 4;
+
 /**
  * One day of intervals.icu wellness as we store it (DECISIONS #49): the fitness model, the scale's
- * weigh-in and steps. Any field can be missing on a given day.
+ * weigh-in and steps, and recovery for the coach (DECISIONS #103): HRV, resting HR, sleep, and the
+ * athlete's own 1–4 entries. Any field can be missing on a given day.
  */
 export interface WellnessDay {
   date: string;
@@ -118,6 +122,19 @@ export interface WellnessDay {
   rampRate?: number | undefined;
   weightKg?: number | undefined;
   steps?: number | undefined;
+  /** rMSSD, from whatever device feeds intervals.icu. */
+  hrvMs?: number | undefined;
+  restingHr?: number | undefined;
+  sleepSec?: number | undefined;
+  sleepScore?: number | undefined;
+  /** A device's readiness or recovery score (0–100). */
+  readiness?: number | undefined;
+  sleepQuality?: WellnessScale | undefined;
+  soreness?: WellnessScale | undefined;
+  fatigue?: WellnessScale | undefined;
+  stress?: WellnessScale | undefined;
+  mood?: WellnessScale | undefined;
+  motivation?: WellnessScale | undefined;
 }
 
 /** Daily step count (watch or phone → intervals.icu wellness). */

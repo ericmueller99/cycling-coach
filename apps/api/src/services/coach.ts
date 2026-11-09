@@ -28,6 +28,8 @@ import {
 import {
   appendMessage,
   contextStartSeq,
+  listWellness,
+  listWorkouts,
   contextTokens,
   createThread,
   createWorkout,
@@ -63,7 +65,23 @@ import {
   type WorkoutDoc,
   listThreads,
 } from '@cycling-coach/db';
-import { activeShortTerm, CACHE_TTL_MS, carriesTail, carrySince, coachEvents, dayTotals, goalForEvent, NUDGE_TOKENS, restartReason, slotForTime, todayIn } from '@cycling-coach/core';
+import {
+  activeShortTerm,
+  addDays,
+  CACHE_TTL_MS,
+  carriesTail,
+  carrySince,
+  coachEvents,
+  dayTotals,
+  goalForEvent,
+  NUDGE_TOKENS,
+  READINESS_DAYS,
+  readinessFromWellness,
+  restartReason,
+  slotForTime,
+  todayIn,
+  workoutMetrics,
+} from '@cycling-coach/core';
 import type { CoachEvent, CoachTier, FitnessDay, IsoDate, SendMessageInput, SessionFeedback, ThreadSummary, ThreadView, Workout } from '@cycling-coach/shared';
 import type { FoodTurnContext, TrainingStatus, UpcomingEvent } from '@cycling-coach/coach';
 import type { ObjectId } from 'mongodb';
@@ -80,6 +98,9 @@ import type { ZwiftEventsService } from './zwift-events';
 
 /** What a deployment wants the coach to know today, or null for nothing. */
 export type CoachContext = (userId: string, today: IsoDate) => Promise<string | null>;
+
+/** True when the deployment gives the coach its own readiness for this athlete, so intervals.icu's isn't sent too. */
+export type SkipIntervalsReadiness = (userId: string) => Promise<boolean>;
 
 /** Whether this athlete has a ride source of the deployment's own connected, with or without rides yet. */
 export type OtherRideSource = (userId: string) => Promise<boolean>;
@@ -104,6 +125,8 @@ export interface CoachDeps {
   spendGuard?: SpendGuard;
   /** Extra text for the turn's context, from the deployment (DECISIONS #72). */
   coachContext?: CoachContext;
+  /** The deployment's own readiness replaces intervals.icu's (DECISIONS #103). */
+  skipIntervalsReadiness?: SkipIntervalsReadiness;
   /** Food log, budget and the meal tools. */
   food: { food: FoodService; energy: EnergyService; coachFood: CoachFoodService };
   now: () => Date;
@@ -251,6 +274,20 @@ async function trainingContext(deps: CoachDeps, userId: string, today: string, h
     return fitness ? { status: 'connected', fitness } : { status: 'connected' };
   } catch {
     return { status: 'error' };
+  }
+}
+
+/**
+ * Today's recovery from intervals.icu wellness, as a line for the context (DECISIONS #103). Null when
+ * there's nothing recent or the deployment sends its own. A failure costs the line, never the turn.
+ */
+async function readinessContext(deps: CoachDeps, userId: string, today: IsoDate): Promise<string | null> {
+  try {
+    if (await deps.skipIntervalsReadiness?.(userId)) return null;
+    return readinessFromWellness(await listWellness(deps.c, userId, addDays(today, -READINESS_DAYS), today), today);
+  } catch (err) {
+    console.warn('readiness context failed', (err as Error).message);
+    return null;
   }
 }
 
@@ -481,10 +518,13 @@ export async function* sendMessage(
   const timeOffBlock = renderTimeOffBlock(timeOff);
   const food = await foodContext(deps, userId, today, profile.timezone, input.food, hidden);
   // Nice to have: a failure costs the coach this line, never the turn.
-  const extra = await deps.coachContext?.(userId, today).catch((err: Error) => {
-    console.warn('coach context failed', err.message);
-    return null;
-  });
+  const [extra, readiness] = await Promise.all([
+    deps.coachContext?.(userId, today).catch((err: Error) => {
+      console.warn('coach context failed', err.message);
+      return null;
+    }),
+    readinessContext(deps, userId, today),
+  ]);
   await appendMessage(c, {
     threadId: tid,
     userId,
@@ -514,6 +554,7 @@ export async function* sendMessage(
           eventsAhead: renderEventsAhead(upcoming, today),
           outlookBlock,
           food,
+          readiness: readiness ?? undefined,
           extra: extra ?? undefined,
           seen: thread.seen,
           ...(decision.coachNote ? { coachNote: decision.coachNote } : {}),
@@ -539,6 +580,12 @@ export async function* sendMessage(
     getTimeOff: (id) => getTimeOff(c, userId, id),
     createProposal: (p) => createCoachProposal(c, userId, tid, p, deps.now()),
     createWorkout: (input) => createWorkout(c, userId, input, 'coach', deps.now()),
+    // Read fresh: a workout made earlier in this turn isn't in the athlete context yet.
+    workoutLengths: async (ids) => {
+      const wanted = new Set(ids);
+      const found = (await listWorkouts(c, userId)).filter((w) => wanted.has(w.id));
+      return new Map(found.map((w) => [w.id, workoutMetrics(w.segments).totalSec]));
+    },
     remember: (input) => memories.create(userId, input, 'coach'),
     updateMemory: (memoryId, patch) => memories.update(userId, memoryId, patch),
     forget: (memoryId) => memories.remove(userId, memoryId),
@@ -585,7 +632,7 @@ export async function* sendMessage(
       if (m.kind === 'assistant' && !replied) {
         replied = true;
         await updateThread(c, tid, {
-          seen: { calendar: calendarBlock, athlete: athleteBlock, shortTerm: shortTermBlock, timeOff: timeOffBlock, events: eventsBlock, outlook: outlookBlock, ...(extra ? { extra } : {}) },
+          seen: { calendar: calendarBlock, athlete: athleteBlock, shortTerm: shortTermBlock, timeOff: timeOffBlock, events: eventsBlock, outlook: outlookBlock, ...(extra ? { extra } : {}), ...(readiness ? { readiness } : {}) },
         });
       }
       if (m.kind === 'assistant') textBefore = assistantText.length;

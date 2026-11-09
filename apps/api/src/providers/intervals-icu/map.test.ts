@@ -1,6 +1,14 @@
-import { STARTER_WORKOUTS, buildZwo } from '@cycling-coach/core';
+import { STANDARD_COOLDOWN, STANDARD_WARMUP, buildZwo } from '@cycling-coach/core';
 import { describe, expect, it } from 'vitest';
 import { buildRaceEvent, buildWorkoutEvent, hiddenActivityIds, mapActivity, mapCurvePoints, mapInterval, mapPowerCurves, mapRemoteEvent, mapWellnessDays, withNameSuffix, withoutNameSuffix } from './map';
+
+/** A plain 6 × 3 min VO2 session (63 min). */
+const VO2_6X3 = {
+  name: 'VO2 6x3',
+  category: 'VO2 max' as const,
+  inZwift: true,
+  segments: [...STANDARD_WARMUP, { kind: 'repeat' as const, count: 6, steps: [{ durSec: 180, pct: 116 }, { durSec: 180, pct: 50 }] }, ...STANDARD_COOLDOWN],
+};
 
 // Shapes as returned by the live API on 2026-10-30 (trimmed).
 const activity = {
@@ -99,8 +107,17 @@ it('maps wellness days for storage, rounding the fitness model', () => {
   ]);
 });
 
+it('keeps the recovery fields, and leaves out what was never entered', () => {
+  expect(
+    mapWellnessDays([
+      { id: '2026-11-08', hrv: 61.4, restingHR: 47, sleepSecs: 26100, sleepScore: 82.0, readiness: 0, soreness: 3, fatigue: 0, mood: null, motivation: 2, sleepQuality: 7 },
+      { id: '2026-11-09', hrv: null, restingHR: 0, soreness: null },
+    ]),
+  ).toEqual([{ date: '2026-11-08', hrvMs: 61, restingHr: 47, sleepSec: 26100, sleepScore: 82, soreness: 3, motivation: 2 }]);
+});
+
 it('builds an indoor workout event carrying our .zwo', () => {
-  const workout = { ...STARTER_WORKOUTS[1]!, id: 'w1', source: 'seed' as const, createdAt: '' };
+  const workout = { ...VO2_6X3, id: 'w1', source: 'seed' as const, createdAt: '' };
   const xml = buildZwo(workout);
   const body = buildWorkoutEvent(
     { id: 'e1', date: '2026-11-05', kind: 'workout', platform: 'zwift', type: 'intervals', title: 'VO2 6x3', tentative: false, status: 'planned', source: 'coach', coachNote: "Only if you didn't race Wednesday" },
@@ -122,7 +139,7 @@ it('builds an indoor workout event carrying our .zwo', () => {
 });
 
 describe('workout name suffix', () => {
-  const workout = { ...STARTER_WORKOUTS[1]!, id: 'w1', source: 'seed' as const, createdAt: '' };
+  const workout = { ...VO2_6X3, id: 'w1', source: 'seed' as const, createdAt: '' };
   const event = { id: 'e1', date: '2026-11-05', kind: 'workout', platform: 'zwift', type: 'intervals', title: 'VO2 6x3', tentative: false, status: 'planned', source: 'coach' } as const;
   const suffix = ' via example.com';
 

@@ -2524,3 +2524,77 @@ session, and #99's course card only appeared on real-world events.
   Strava, such as the athlete's own rides.
 - *A limit on laps per route* (zwift-data's `lap` flag): Zwift events set laps on routes it doesn't mark.
 
+
+## 103. The coach chooses sessions from purpose, not habit (Nov 9)
+
+**Context.** The coach scheduled VO2 work almost every time, whatever the athlete's goals. Nothing hard-coded VO2, but
+everything pointed that way:
+- The starter library was three VO2 workouts, a race-prep session above threshold and a ramp test, and the library is
+  listed in every system prompt.
+- Workouts imported from intervals.icu were filed as "VO2 max" if any step reached 106%, and the standard warm-up's
+  1 min @ 110% is enough to trigger that.
+- The persona gave no method for choosing a kind of session, and VO2 was the only intensity it named.
+- Its fixed warm-up and cool-down (17 + 10 min) left no room for a 30-minute workout.
+- Nothing checked that a plan's `workoutId` existed, or that the item's duration matched the workout.
+- The coach had no recovery data beyond CTL/ATL unless the deployment added it (#72).
+
+**Decision.**
+- **A method in the persona** (`## Choosing sessions`). Before planning or saying what to ride, the coach works
+  through these, using tools for what it doesn't know:
+  - what the goals and event goals demand;
+  - the limiter, from the power bests and curve against that demand (a rough 5-min-to-FTP guide, given as an estimate);
+  - the phase: base, build, specific or taper by the weeks to the event that counts most, or focused blocks of
+    3–6 weeks with no event;
+  - the last 2–4 weeks: progress a stimulus, and don't make every hard day the same kind without saying why;
+  - freshness and readiness;
+  - the training approach;
+  - the time available.
+
+  Then it uses a library workout if one fits. Otherwise it builds one with `create_workout`, basing a version on the
+  closest workout (`basedOnId`) so the library doesn't fill with near-duplicates. Each key session gets a short clause
+  on what it trains. Sessions under about 45 min get a short warm-up (5-min ramp) and cool-down (3–5 min). The
+  persona stays free of a favourite: no kind of session is the default. The ride-ratings rule now says "interval
+  work".
+- **A training approach on the profile** (`trainingApproach`: `auto` | `polarized` | `pyramidal` | `sweet_spot`,
+  optional). It sits beside #86's training preference, which still sets how much hard work fits; the approach sets
+  what kind. Unset and `auto` both leave the mix to the coach, which picks from hours and goals and notes it in the
+  outlook. The athlete sets it on the Athlete page's Training card ("What kind of training?"), and the coach can
+  propose it (`propose_profile_update`; `auto` hands the choice back). It isn't asked in onboarding. The athlete block
+  shows it only when it's set and not `auto`.
+- **A balanced starter library** (`core.STARTER_WORKOUTS`, easy to hard): Endurance 60, Recovery Spin 30, Tempo 3x12,
+  Sweet Spot 3x12 and 2x20, Threshold 3x10, Over-Unders 3x9, VO2 5x4, VO2 30/15s, Surge and Settle, Sprints 8x15s,
+  Openers 45 and the FTP Ramp Test. VO2 6x3 is gone. It seeds new accounts only (`seedStarterLibrary` is unchanged).
+  A **`Tempo`** category joins `workoutCategories`. The Library page's filter chips are now the categories the library
+  actually has.
+- **Imported workouts are filed by their main set** (`core.classifyWorkout`). Only repeat steps and steady blocks of
+  3 min or more count, so a warm-up spike doesn't. The band with the most time wins: ≥ 106% is VO2 max (or Sprint
+  when it's mostly reps of 30 s or less at 150% or more), 95–105% is Threshold, 88–94% is Sweet spot, 76–87% is
+  Tempo, and otherwise Endurance. Recovery and openers come from `inferSessionType`. That now needs **two** kicks of
+  106% or more for openers, so an easy ride with the standard warm-up stays endurance.
+- **Plans point at real workouts, at their length.** `propose_plan`, and `propose_calendar_changes` for additions and
+  updates that set a `workoutId`, check each id against the library through a new `workoutLengths` port. An unknown id
+  is a tool error that tells the coach to `create_workout` first, so it can fix it within the turn. A workout item's
+  `durationMin` is set from the workout, and its `durationLabel` dropped.
+- **The calendar context goes back two weeks** (`coachCalendarWindow`, previously one), so the coach sees the whole
+  block just ridden when it plans the next one.
+- **intervals.icu wellness as readiness.** `WellnessDay` keeps HRV, resting HR, sleep time and score, a device's
+  readiness score, and the athlete's own 1–4 entries (sleep quality, soreness, fatigue, stress, mood, motivation),
+  using intervals.icu's words for them. `core.readinessFromWellness` turns today's or yesterday's values into a line
+  against 7- and 28-day baselines (at least 4 and 14 days, today left out), the same rules as hosted Garmin
+  readiness. It goes in the turn context only when it changes (`seen.readiness`). A failure drops the line, not the
+  turn. `createCore`'s `skipIntervalsReadiness` lets a deployment that sends its own readiness leave this line out.
+  Older stored days pick up the new fields on the next sync that covers them.
+
+**Rejected.**
+- *A fixed intensity split in code* (for example a cap on VO2 sessions a week): the coach's judgment is the point,
+  and the method plus the data makes it a good one. A rule would just be another bias.
+- *Marking on-the-fly workouts as one-offs, hidden from the library:* more schema and UI than the problem needs. The
+  coach reuses or bases a version on an existing workout instead. Revisit if libraries bloat the prompt.
+- *Backfilling the new starter workouts into existing libraries:* existing athletes already have libraries they built.
+- *Asking the approach in onboarding:* one more question at sign-up, and unset already means the coach decides.
+
+**Known limits.**
+- `classifyWorkout` can't tell race prep or a test from structure, so it files them by intensity.
+- Tempo workouts are endurance-type days on the calendar (`inferSessionType` draws its line at 88%).
+- The direction of intervals.icu's 1–4 entries follows its own form (for mood and motivation, 1 is the best). Check it
+  against a live response before relying on those words.

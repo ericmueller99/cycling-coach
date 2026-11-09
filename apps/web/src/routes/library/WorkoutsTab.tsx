@@ -1,5 +1,5 @@
 import { describeMainSet, describeTargets, formatWorkoutDuration, plannedSessionKcal, workoutMetrics } from '@cycling-coach/core';
-import type { Workout } from '@cycling-coach/shared';
+import { workoutCategories, type Workout, type WorkoutCategory } from '@cycling-coach/shared';
 import { useNavigate } from '@tanstack/react-router';
 import { useMemo, useState } from 'react';
 import { MoreIcon } from '../../components/icons';
@@ -11,7 +11,14 @@ import { downloadZwo } from '../../lib/api';
 import { errorMessage, useArchiveWorkout, useWorkouts } from '../../lib/queries';
 import { SearchBox } from './shared';
 
-const FILTERS = ['All', 'VO2 max', 'Race prep', 'Threshold', 'Endurance'] as const;
+type Filter = 'All' | WorkoutCategory;
+
+/** All, then each category the library has, easiest first (DECISIONS #103). */
+const ORDER: readonly WorkoutCategory[] = ['Endurance', 'Recovery', 'Tempo', 'Sweet spot', 'Threshold', 'VO2 max', 'Race prep', 'Sprint', 'Openers', 'Test'];
+const filtersFor = (workouts: readonly Workout[]): Filter[] => {
+  const present = new Set(workouts.map((w) => w.category));
+  return ['All', ...ORDER.filter((c) => present.has(c)), ...workoutCategories.filter((c) => present.has(c) && !ORDER.includes(c))];
+};
 
 export const editPrompt = (w: Workout) => `Let's edit my "${w.name}" workout (id ${w.id}). `;
 export const NEW_WORKOUT_PROMPT = 'Build me a new workout: ';
@@ -127,7 +134,7 @@ function MobileWorkoutCard({ workout, ftp, today }: { workout: Workout; ftp: num
 /** Library › Workouts: the Zwift workouts, filterable, with a fuel line. */
 export function WorkoutsTab({ mobile, today, ftp }: { mobile: boolean; today: string; ftp: number | undefined }) {
   const workouts = useWorkouts();
-  const [filter, setFilter] = useState<(typeof FILTERS)[number]>('All');
+  const [filter, setFilter] = useState<Filter>('All');
   const [query, setQuery] = useState('');
   const visible = useMemo(
     () =>
@@ -136,13 +143,14 @@ export function WorkoutsTab({ mobile, today, ftp }: { mobile: boolean; today: st
       ),
     [workouts.data, filter, query],
   );
+  const filters = useMemo(() => filtersFor(workouts.data ?? []), [workouts.data]);
   if (workouts.isPending) return <Spinner />;
   if (workouts.error) return <ErrorNote>{errorMessage(workouts.error)}</ErrorNote>;
   return (
     <div className="flex flex-col gap-4 mobile:gap-3">
       <SearchBox value={query} onChange={setQuery} placeholder="Search workouts" />
       <div className="flex scrollbar-none gap-2 overflow-x-auto">
-        {FILTERS.map((f) => {
+        {filters.map((f) => {
           const n = f === 'All' ? workouts.data.length : workouts.data.filter((w) => w.category === f).length;
           return (
             <button

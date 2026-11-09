@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { calendarEventSchema, coachEventInputSchema, coachEventPatchSchema } from './calendar';
 import { isoDateSchema, type IsoDate } from './common';
-import { eventAims, eventWeights, goalMeasureSchema, trainingPreferenceSchema, weightPaceSchema } from './profile';
+import { eventAims, eventWeights, goalMeasureSchema, trainingApproachSchema, trainingPreferenceSchema, weightPaceSchema } from './profile';
 import { timeOffChangeSchema } from './time-off';
 
 /**
@@ -40,6 +40,7 @@ export const profileUpdateSchema = z.object({
   /** The monthly Zwift baseline. The real weight syncs from intervals.icu and isn't proposed. */
   zwiftWeightKg: z.number().min(30).max(200).optional(),
   trainingPreference: trainingPreferenceSchema.optional(),
+  trainingApproach: trainingApproachSchema.optional(),
   powerBests: z
     .array(
       z.object({

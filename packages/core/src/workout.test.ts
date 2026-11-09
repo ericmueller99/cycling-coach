@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { STARTER_WORKOUTS } from './starter-library';
+import type { WorkoutInput } from '@cycling-coach/shared';
+import { STANDARD_COOLDOWN, STANDARD_WARMUP, STARTER_WORKOUTS } from './starter-library';
 import { chartBars, describeMainSet, describeTargets, workoutMetrics } from './workout';
 
-const byName = (name: string) => STARTER_WORKOUTS.find((w) => w.name === name)!;
+/** A plain on/off VO2 session, no longer in the starter library. */
+const VO2_6X3: WorkoutInput = {
+  name: 'VO2 6x3',
+  category: 'VO2 max',
+  inZwift: true,
+  segments: [...STANDARD_WARMUP, { kind: 'repeat', count: 6, steps: [{ durSec: 180, pct: 116 }, { durSec: 180, pct: 50 }] }, ...STANDARD_COOLDOWN],
+};
+const byName = (name: string) => [...STARTER_WORKOUTS, VO2_6X3].find((w) => w.name === name)!;
 
 describe('starter library durations', () => {
   it.each([
@@ -10,6 +18,15 @@ describe('starter library durations', () => {
     ['VO2 6x3', 3780], // 63
     ['VO2 30/15s 3x13', 3975], // 66.25 — ~66
     ['Surge and Settle 5x4', 4020], // 67
+    ['Endurance 60', 3600],
+    ['Recovery Spin 30', 1800],
+    ['Tempo 3x12', 4500], // 75
+    ['Sweet Spot 3x12', 4500],
+    ['Sweet Spot 2x20', 4620], // 77
+    ['Threshold 3x10', 4320], // 72
+    ['Over-Unders 3x9', 3840], // 64
+    ['Sprints 8x15s', 4320], // 72
+    ['Openers 45', 2640], // 44
   ])('%s is %i s', (name, sec) => {
     expect(workoutMetrics(byName(name).segments).totalSec).toBe(sec);
   });

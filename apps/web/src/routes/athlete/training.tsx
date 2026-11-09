@@ -1,4 +1,4 @@
-import { TRAINING_PREFERENCE_BLURB, TRAINING_PREFERENCE_LABEL, trainingPreferences, WEEKDAY_LABEL, weekdays, type Profile, type UsualWeek } from '@cycling-coach/shared';
+import { TRAINING_APPROACH_BLURB, TRAINING_APPROACH_LABEL, trainingApproaches, TRAINING_PREFERENCE_BLURB, TRAINING_PREFERENCE_LABEL, trainingPreferences, WEEKDAY_LABEL, weekdays, type Profile, type UsualWeek } from '@cycling-coach/shared';
 import { useEffect, useState } from 'react';
 import { Button, Card, ErrorNote, SectionLabel } from '../../components/ui';
 import { errorMessage, useProfileMutations } from '../../lib/queries';
@@ -6,7 +6,7 @@ import { inputCls } from './shared';
 
 const choiceCls = (on: boolean) => `min-h-11 rounded-[10px] border-2 px-3 py-2 text-left text-ink ${on ? 'border-accent-ring bg-accent-tint' : 'border-line bg-surface'}`;
 
-/** How hard they want to go, and when they can ride. Both are optional (DECISIONS #86). */
+/** How hard they want to go, what kind of training, and when they can ride. All optional (DECISIONS #86, #103). */
 export function TrainingCard({ profile }: { profile: Profile }) {
   const { saveProfile } = useProfileMutations();
   const saved = profile.usualWeek;
@@ -39,6 +39,18 @@ export function TrainingCard({ profile }: { profile: Profile }) {
             <button key={p} type="button" aria-pressed={on} disabled={saveProfile.isPending} onClick={() => saveProfile.mutate({ ...profile, trainingPreference: p })} className={choiceCls(on)}>
               <span className="block font-semibold">{TRAINING_PREFERENCE_LABEL[p]}</span>
               <span className="block text-[13px] text-muted">{TRAINING_PREFERENCE_BLURB[p]}</span>
+            </button>
+          );
+        })}
+      </div>
+      <SectionLabel>What kind of training?</SectionLabel>
+      <div role="group" aria-label="What kind of training?" className="flex flex-col gap-2">
+        {trainingApproaches.map((a) => {
+          const on = (profile.trainingApproach ?? 'auto') === a;
+          return (
+            <button key={a} type="button" aria-pressed={on} disabled={saveProfile.isPending} onClick={() => saveProfile.mutate({ ...profile, trainingApproach: a })} className={choiceCls(on)}>
+              <span className="block font-semibold">{TRAINING_APPROACH_LABEL[a]}</span>
+              <span className="block text-[13px] text-muted">{TRAINING_APPROACH_BLURB[a]}</span>
             </button>
           );
         })}

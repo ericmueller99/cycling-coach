@@ -89,6 +89,8 @@ export interface CoachPorts {
   getTimeOff(id: string): Promise<TimeOff | null>;
   createProposal(p: NewProposal): Promise<Proposal>;
   createWorkout(input: WorkoutInput): Promise<Workout>;
+  /** The length in seconds of each of these that's in the library (not archived). Missing ids are left out. */
+  workoutLengths(ids: string[]): Promise<Map<string, number>>;
   remember(input: MemoryInput): Promise<Memory | { error: string }>;
   updateMemory(memoryId: string, patch: MemoryPatch): Promise<MemoryUpdate | { error: string } | null>;
   forget(memoryId: string): Promise<Memory | null>;
@@ -389,6 +391,38 @@ function horizonRefusal(dates: IsoDate[], horizon: IsoDate): string {
   );
 }
 
+/** A plan item or calendar addition that may point at a library workout. */
+interface WorkoutRef {
+  workoutId?: string | undefined;
+  durationMin?: number | undefined;
+  durationLabel?: string | undefined;
+}
+
+/**
+ * Sessions that point at a workout must point at one that's in the library, and their length is the
+ * workout's (DECISIONS #103): the coach can't promise 30 min and attach a 75-min workout. Returns the
+ * ids that aren't there, or the items with `durationMin` set from their workouts.
+ */
+async function fitToWorkouts<T extends WorkoutRef>(items: T[], ports: CoachPorts): Promise<{ missing: string[] } | { items: T[] }> {
+  const ids = [...new Set(items.flatMap((i) => (i.workoutId ? [i.workoutId] : [])))];
+  if (!ids.length) return { items };
+  const lengths = await ports.workoutLengths(ids);
+  const missing = ids.filter((id) => !lengths.has(id));
+  if (missing.length) return { missing };
+  return {
+    items: items.map((i) => {
+      if (!i.workoutId) return i;
+      const { durationLabel: _label, ...rest } = i;
+      return { ...rest, durationMin: Math.round(lengths.get(i.workoutId)! / 60) } as T;
+    }),
+  };
+}
+
+/** What the coach is told when a session points at a workout that isn't in the library. */
+const missingWorkouts = (ids: string[]) =>
+  `Nothing was shown to the athlete: ${ids.join(', ')} ${ids.length === 1 ? 'is' : 'are'} not in their workout library. ` +
+  'Use ids from the workout library in your context, or call create_workout first and use the id it returns.';
+
 export const COACH_TOOLS = [
   defineTool({
     name: 'get_recent_activities',
@@ -621,7 +655,7 @@ export const COACH_TOOLS = [
     name: 'propose_plan',
     tier: 'build',
     description:
-      "Show the athlete a plan card of dated sessions they can add to their calendar one by one or all at once. Nothing is written until they confirm. Use for any multi-day plan or a recommended session for a specific day. Plans come in blocks of two weeks: workouts and rides go no later than the planning horizon in the context message. Each item has a kind: 'workout' = a structured workout from their library (workoutId required — call create_workout first for a new one; platform 'zwift'); 'race' = a scheduled race: a Zwift race (type 'race', startTime HH:mm when known, priority A/B/C, default B), or a real-world event ridden outdoors (platform 'garmin', with eventInfo: type, distanceKm, ascentM, location, url as known) — races and events can be any distance ahead; 'ride' = any other planned ride (Z2, group ride, eFondo, recovery spin) named for what it is. Workouts and races sync to their intervals.icu calendar and from there to Zwift once they add them; rides stay in this app.",
+      "Show the athlete a plan card of dated sessions they can add to their calendar one by one or all at once. Nothing is written until they confirm. Use for any multi-day plan or a recommended session for a specific day. Plans come in blocks of two weeks: workouts and rides go no later than the planning horizon in the context message. Each item has a kind: 'workout' = a structured workout from their library (workoutId required — call create_workout first for a new one; platform 'zwift'; its duration is the workout's length); 'race' = a scheduled race: a Zwift race (type 'race', startTime HH:mm when known, priority A/B/C, default B), or a real-world event ridden outdoors (platform 'garmin', with eventInfo: type, distanceKm, ascentM, location, url as known) — races and events can be any distance ahead; 'ride' = any other planned ride (Z2, group ride, eFondo, recovery spin) named for what it is. Workouts and races sync to their intervals.icu calendar and from there to Zwift once they add them; rides stay in this app.",
     schema: z.object({
       title: z.string().describe('Card heading, e.g. "Proposed plan".'),
       subtitle: z.string().optional().describe('e.g. "Oct 29 – Nov 8 · Zwift FTP 280 W · Z2 155–210 W".'),
@@ -634,13 +668,15 @@ export const COACH_TOOLS = [
       const horizon = planHorizonEnd(today);
       const late = items.filter((i) => pastHorizon(i, horizon));
       if (late.length) return { content: horizonRefusal(late.map((i) => i.date), horizon), isError: true };
+      const fitted = await fitToWorkouts(items, ports);
+      if ('missing' in fitted) return { content: missingWorkouts(fitted.missing), isError: true };
       const proposal = await ports.createProposal({
         kind: 'plan',
         toolUseId,
         title,
         ...(subtitle ? { subtitle } : {}),
         ...(replaces ? { replaces } : {}),
-        items,
+        items: fitted.items,
       });
       return {
         content: `Plan card shown to the athlete with ${items.length} sessions (proposal ${proposal.id}). Not on the calendar until they add them.`,
@@ -675,12 +711,20 @@ export const COACH_TOOLS = [
         }
       }
       if (late.length) return { content: horizonRefusal(late, horizon), isError: true };
+      // Additions and updates that set a workout: it must exist, and the session takes its length.
+      const refs = changes.flatMap((c) => (c.op === 'add' ? [c.event as WorkoutRef] : c.op === 'update' && c.patch.workoutId ? [c.patch as WorkoutRef] : []));
+      const fitted = await fitToWorkouts(refs, ports);
+      if ('missing' in fitted) return { content: missingWorkouts(fitted.missing), isError: true };
+      let next = 0;
+      const items = changes.map((c) =>
+        c.op === 'add' ? { ...c, event: fitted.items[next++] as typeof c.event } : c.op === 'update' && c.patch.workoutId ? { ...c, patch: fitted.items[next++] as typeof c.patch } : c,
+      );
       const proposal = await ports.createProposal({
         kind: 'calendar_changes',
         toolUseId,
         title,
         ...(replaces ? { replaces } : {}),
-        items: changes,
+        items,
       });
       return {
         content: `Change card shown to the athlete with ${changes.length} change(s) (proposal ${proposal.id}). Nothing has changed yet.`,
@@ -743,7 +787,7 @@ export const COACH_TOOLS = [
   defineTool({
     name: 'propose_profile_update',
     description:
-      'Propose updating the athlete’s FTP, their monthly Zwift weight, their training preference (steady, committed or all_in), or a power best they report (e.g. an outdoor effort intervals.icu doesn’t have). Body weight is synced from intervals.icu and is not proposed. Shown as a confirm card; nothing changes until they accept.',
+      'Propose updating the athlete’s FTP, their monthly Zwift weight, their training preference (steady, committed or all_in), their training approach (auto, polarized, pyramidal or sweet_spot; auto hands the mix back to you), or a power best they report (e.g. an outdoor effort intervals.icu doesn’t have). Body weight is synced from intervals.icu and is not proposed. Shown as a confirm card; nothing changes until they accept.',
     schema: profileUpdateSchema,
     source: 'app',
     strict: false,
@@ -786,7 +830,7 @@ export const COACH_TOOLS = [
     name: 'create_workout',
     tier: 'build',
     description:
-      'Create a structured Zwift workout and save it to the athlete’s library (they can download the .zwo). Segments: steady {durSec, pct}, ramp {durSec, fromPct, toPct}, repeat {count, steps: [{durSec, pct}]}. pct is integer % FTP. Pass basedOnId when revising an existing library workout.',
+      'Create a structured Zwift workout and save it to the athlete’s library (they can download the .zwo). Use it when they ask, and whenever the session you are prescribing has no good fit in the library: the wrong length for the time they have, the wrong difficulty, or a kind of session they don’t have. Fit it to the time and keep its purpose; a session under about 45 min gets a short warm-up and cool-down. Name it for what it is and how long it takes, and give it the category of its main set. Segments: steady {durSec, pct}, ramp {durSec, fromPct, toPct}, repeat {count, steps: [{durSec, pct}]}. pct is integer % FTP. Pass basedOnId when revising a library workout or making a shorter, longer or easier version of one.',
     schema: workoutInputSchema.omit({ inZwift: true }),
     source: 'app',
     strict: false,

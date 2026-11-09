@@ -1,5 +1,6 @@
 import {
   addDays,
+  classifyWorkout,
   diffActivities,
   EMPTY_QUARTERS_TO_STOP,
   deltaWindow,
@@ -12,7 +13,6 @@ import {
   todayIn,
   trendWeight,
   weighInsFrom,
-  workoutMetrics,
 } from '@cycling-coach/core';
 import {
   countActivities,
@@ -52,7 +52,6 @@ import {
   type IsoDate,
   type PowerBest,
   type PowerCurvePeriod,
-  type WorkoutCategory,
   type WorkoutSegment,
 } from '@cycling-coach/shared';
 import type { IntegrationResolver } from '../integrations';
@@ -115,13 +114,6 @@ const sameSegments = (a: readonly WorkoutSegment[], b: readonly WorkoutSegment[]
   JSON.stringify(flatten(a).map(({ durSec, pct, pctEnd }) => [durSec, pct, pctEnd ?? null])) ===
   JSON.stringify(flatten(b).map(({ durSec, pct, pctEnd }) => [durSec, pct, pctEnd ?? null]));
 
-function categoryFor(segments: readonly WorkoutSegment[]): WorkoutCategory {
-  const type = inferSessionType(segments);
-  if (type === 'recovery') return 'Recovery';
-  if (type === 'endurance') return 'Endurance';
-  if (type === 'openers') return 'Openers';
-  return workoutMetrics(segments).maxPct >= 106 ? 'VO2 max' : 'Threshold';
-}
 
 export interface SyncJobs {
   /** Run (or continue) this athlete's full import as the `intervals.full` job. */
@@ -236,7 +228,7 @@ export class IntervalsSync {
       userId,
       {
         name: remote.name.slice(0, 80),
-        category: categoryFor(parsed.segments),
+        category: classifyWorkout(parsed.segments),
         ...(parsed.description || remote.description ? { description: (parsed.description || remote.description)!.slice(0, 2000) } : {}),
         segments: parsed.segments,
         inZwift: remote.platform === 'zwift',

@@ -61,7 +61,7 @@ import { MemoryService } from './services/memory';
 import { OpenFoodFacts } from './providers/openfoodfacts';
 import { photoStoreFromEnv } from './providers/storage/s3';
 import { UsdaClient } from './providers/usda';
-import { getThreadView, listThreadSummaries, sendMessage, startThread, type CoachContext, type CoachDeps, type CoachHiddenProviders, type OtherRideSource } from './services/coach';
+import { getThreadView, listThreadSummaries, sendMessage, startThread, type CoachContext, type CoachDeps, type CoachHiddenProviders, type OtherRideSource, type SkipIntervalsReadiness } from './services/coach';
 import { CoachFoodService } from './services/coach-food';
 import { IntervalsSync, manualRetryAt } from './services/intervals-sync';
 import { clearContexts } from './services/coach-forget';
@@ -104,6 +104,8 @@ export interface CoreOptions {
   router?: (ctx: CoreContext) => RouterSource;
   /** More for the coach to know each turn. Default: nothing (DECISIONS #72). */
   coachContext?: CoachContext;
+  /** True for an athlete whose readiness the deployment sends itself, so intervals.icu's isn't sent too. Default: never (DECISIONS #103). */
+  skipIntervalsReadiness?: SkipIntervalsReadiness;
   /** Whether an athlete has a ride source of this deployment's own connected. Default: none (DECISIONS #90). */
   otherRideSource?: OtherRideSource;
   /** Ride sources the coach mustn't read for an athlete, though they stay on show. Default: none (DECISIONS #92). */
@@ -308,6 +310,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     events: zwiftEvents,
     spendGuard,
     ...(opts.coachContext ? { coachContext: opts.coachContext } : {}),
+    ...(opts.skipIntervalsReadiness ? { skipIntervalsReadiness: opts.skipIntervalsReadiness } : {}),
     ...(opts.otherRideSource ? { otherRideSource: opts.otherRideSource } : {}),
     ...(opts.coachHiddenProviders ? { coachHiddenProviders: opts.coachHiddenProviders } : {}),
     food: { food, energy, coachFood },
@@ -658,7 +661,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
 export type { CredentialSource, FeatureSource, IntegrationResolver } from './integrations';
 export type { AuthExtension } from './auth';
 export type { AiUse, SpendDecision, SpendGuard } from './lib/spend';
-export type { CoachContext, CoachHiddenProviders, OtherRideSource } from './services/coach';
+export type { CoachContext, CoachHiddenProviders, OtherRideSource, SkipIntervalsReadiness } from './services/coach';
 export { JobRunner } from './jobs';
 export { IntervalsError, IntervalsIcu } from './providers/intervals-icu';
 export { serveSpa } from './lib/spa';

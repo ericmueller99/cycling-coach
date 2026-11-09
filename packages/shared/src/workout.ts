@@ -35,7 +35,7 @@ export const workoutSegmentSchema = z.discriminatedUnion('kind', [
 ]);
 export type WorkoutSegment = z.infer<typeof workoutSegmentSchema>;
 
-export const workoutCategories = ['VO2 max', 'Race prep', 'Threshold', 'Sweet spot', 'Endurance', 'Recovery', 'Openers', 'Sprint', 'Test'] as const;
+export const workoutCategories = ['VO2 max', 'Race prep', 'Threshold', 'Sweet spot', 'Tempo', 'Endurance', 'Recovery', 'Openers', 'Sprint', 'Test'] as const;
 export const workoutCategorySchema = z.enum(workoutCategories);
 export type WorkoutCategory = z.infer<typeof workoutCategorySchema>;
 

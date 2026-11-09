@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { STARTER_WORKOUTS } from './starter-library';
+import { STANDARD_COOLDOWN, STANDARD_WARMUP, STARTER_WORKOUTS } from './starter-library';
 import { flatten } from './workout';
 import { buildZwo, parseZwo, zwoFileName } from './zwo';
 
 describe('buildZwo', () => {
-  const xml = buildZwo({ ...STARTER_WORKOUTS[1]!, category: 'VO2 max' });
+  const xml = buildZwo({
+    name: 'VO2 6x3',
+    category: 'VO2 max',
+    segments: [...STANDARD_WARMUP, { kind: 'repeat', count: 6, steps: [{ durSec: 180, pct: 116 }, { durSec: 180, pct: 50 }] }, ...STANDARD_COOLDOWN],
+  });
 
   it('uses Warmup / Cooldown for the opening and closing ramps', () => {
     expect(xml).toContain('<Warmup Duration="600" PowerLow="0.5" PowerHigh="0.75"/>');
@@ -38,7 +42,7 @@ describe('parseZwo(buildZwo(w))', () => {
   );
 
   it('keeps on/off structure for two-step repeats', () => {
-    const parsed = parseZwo(buildZwo(STARTER_WORKOUTS[0]!));
+    const parsed = parseZwo(buildZwo(STARTER_WORKOUTS.find((w) => w.name === 'VO2 5x4')!));
     expect(parsed.segments.filter((s) => s.kind === 'repeat')).toHaveLength(1);
   });
 });

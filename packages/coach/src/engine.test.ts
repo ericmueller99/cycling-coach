@@ -69,6 +69,7 @@ function ports(overrides: Partial<CoachPorts> = {}): CoachPorts {
     createWorkout: async () => {
       throw new Error('unused');
     },
+    workoutLengths: async (ids) => new Map(ids.map((id) => [id, 3600])),
     remember: async ({ text }) => ({ id: 'm1', text, source: 'coach', createdAt: '' }),
     updateMemory: async () => null,
     forget: async () => null,

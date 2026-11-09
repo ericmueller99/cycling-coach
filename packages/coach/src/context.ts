@@ -28,6 +28,7 @@ import {
   EVENT_TYPE_SHORT,
   EVENT_WEIGHT_LABEL,
   TIME_OFF_LABEL,
+  TRAINING_APPROACH_LABEL,
   TRAINING_PREFERENCE_LABEL,
   WEEKDAY_LABEL,
   type CalendarEvent,
@@ -109,6 +110,8 @@ export function renderAthleteBlock(ctx: AthleteContext): string {
   }
   lines.push(`Timezone: ${p.timezone}`);
   if (p.trainingPreference) lines.push(`Training preference: ${TRAINING_PREFERENCE_LABEL[p.trainingPreference]}`);
+  // DECISIONS #103: unset and `auto` both leave the mix to the coach, and the line out.
+  if (p.trainingApproach && p.trainingApproach !== 'auto') lines.push(`Training approach: ${TRAINING_APPROACH_LABEL[p.trainingApproach]}`);
   lines.push(renderAvailability(p));
 
   lines.push('', '# Power bests');
@@ -385,6 +388,8 @@ export interface TurnContextInput {
   outlookBlock?: string | undefined;
   /** Today's food against the budget, when the food module has data. */
   food?: FoodTurnContext | undefined;
+  /** Today's recovery from intervals.icu wellness, from `core.readinessFromWellness` (DECISIONS #103). */
+  readiness?: string | undefined;
   /** Anything else the deployment knows about the athlete today (DECISIONS #72). */
   extra?: string | undefined;
   /** What the coach has already been shown in this API context. */
@@ -392,6 +397,7 @@ export interface TurnContextInput {
     calendar?: string | undefined;
     athlete: string;
     extra?: string | undefined;
+    readiness?: string | undefined;
     shortTerm?: string | undefined;
     timeOff?: string | undefined;
     events?: string | undefined;
@@ -466,6 +472,8 @@ export function renderTurnContext(input: TurnContextInput): string {
         : `Weight: ${w.trendKg} kg (entered by the athlete)${wkg}.`,
     );
   }
+  // Only when it changed, like `extra`: it moves once a day at most.
+  if (input.readiness && input.readiness !== input.seen.readiness) parts.push(input.readiness);
   if (input.timeOffToday) parts.push(input.timeOffToday);
   if (input.food) parts.push(renderFoodLine(input.food));
   // Only when it changed: the coach already has it, and each copy stays in the transcript.

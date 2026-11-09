@@ -1,6 +1,7 @@
 import type { CalendarEvent } from '@cycling-coach/shared';
-import { expect, it } from 'vitest';
-import { canDeleteSession, previewCalendarChange } from './sessions';
+import { describe, expect, it } from 'vitest';
+import { canDeleteSession, classifyWorkout, previewCalendarChange } from './sessions';
+import { STANDARD_COOLDOWN, STANDARD_WARMUP, STARTER_WORKOUTS } from './starter-library';
 
 it('lets only sessions that were never ridden be deleted', () => {
   expect(canDeleteSession({ status: 'planned' })).toBe(true);
@@ -60,4 +61,36 @@ it('leaves a time off row out of the session preview, and never calls it missing
   expect(previewCalendarChange({ op: 'time_off_add', entry }, null)).toEqual(empty);
   expect(previewCalendarChange({ op: 'time_off_update', timeOffId: 't1', entry, was: entry }, null)).toEqual(empty);
   expect(previewCalendarChange({ op: 'time_off_remove', timeOffId: 't1', was: entry }, null)).toEqual(empty);
+});
+
+describe('classifyWorkout', () => {
+  const withWarmup = (...main: Parameters<typeof classifyWorkout>[0]) => [...STANDARD_WARMUP, ...main, ...STANDARD_COOLDOWN];
+
+  it("files sweet spot as sweet spot, not VO2, despite the warm-up's 1 min @ 110%", () => {
+    expect(classifyWorkout(withWarmup({ kind: 'repeat', count: 2, steps: [{ durSec: 1200, pct: 90 }, { durSec: 300, pct: 55 }] }))).toBe('Sweet spot');
+    expect(classifyWorkout(withWarmup({ kind: 'steady', durSec: 1200, pct: 91 }, { kind: 'steady', durSec: 300, pct: 55 }, { kind: 'steady', durSec: 1200, pct: 91 }))).toBe('Sweet spot');
+  });
+
+  it('reads threshold, VO2 and tempo main sets', () => {
+    expect(classifyWorkout(withWarmup({ kind: 'repeat', count: 2, steps: [{ durSec: 900, pct: 100 }, { durSec: 300, pct: 55 }] }))).toBe('Threshold');
+    expect(classifyWorkout(withWarmup({ kind: 'repeat', count: 6, steps: [{ durSec: 180, pct: 116 }, { durSec: 180, pct: 50 }] }))).toBe('VO2 max');
+    expect(classifyWorkout(withWarmup({ kind: 'steady', durSec: 2400, pct: 80 }))).toBe('Tempo');
+  });
+
+  it('keeps an easy ride with a little tempo as endurance', () => {
+    expect(classifyWorkout([{ kind: 'steady', durSec: 3600, pct: 68 }, { kind: 'steady', durSec: 600, pct: 80 }])).toBe('Endurance');
+    expect(classifyWorkout([{ kind: 'steady', durSec: 1800, pct: 50 }])).toBe('Recovery');
+  });
+
+  it('tells sprints from openers', () => {
+    expect(classifyWorkout(withWarmup({ kind: 'repeat', count: 8, steps: [{ durSec: 15, pct: 180 }, { durSec: 285, pct: 60 }] }))).toBe('Sprint');
+    expect(classifyWorkout(withWarmup({ kind: 'repeat', count: 3, steps: [{ durSec: 30, pct: 130 }, { durSec: 120, pct: 55 }] }))).toBe('Openers');
+  });
+
+  it('agrees with every starter workout but the ones only a name can tell (race prep, the test)', () => {
+    for (const w of STARTER_WORKOUTS) {
+      if (w.category === 'Race prep' || w.category === 'Test') continue;
+      expect([w.name, classifyWorkout(w.segments)]).toEqual([w.name, w.category]);
+    }
+  });
 });

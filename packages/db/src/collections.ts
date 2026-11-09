@@ -153,7 +153,7 @@ export interface ThreadDoc {
    * The calendar, time off, athlete and short-term note text the coach has already been shown in this context,
    * so per-turn context messages only repeat what changed (packages/coach/src/context.ts).
    */
-  seen: { calendar?: string; athlete: string; extra?: string; shortTerm?: string; timeOff?: string; events?: string; outlook?: string };
+  seen: { calendar?: string; athlete: string; extra?: string; readiness?: string; shortTerm?: string; timeOff?: string; events?: string; outlook?: string };
   /** The next turn restarts with nothing older and no recap, and a new chat won't recap this one (DECISIONS #93). */
   forgetContext?: true;
   /** When a call last started on the build model, for the one warm follow-up (`warmFollowUp`). */

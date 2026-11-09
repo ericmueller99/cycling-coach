@@ -37,6 +37,26 @@ export const TRAINING_PREFERENCE_BLURB: Record<TrainingPreference, string> = {
   all_in: 'A hard push for a block. More load and more fatigue, and your coach says when to back off.',
 };
 
+/**
+ * How the athlete likes their training distributed, which shapes what kind of sessions the coach
+ * picks (DECISIONS #103). `auto` (or unset) lets the coach choose from their goals and hours.
+ */
+export const trainingApproaches = ['auto', 'polarized', 'pyramidal', 'sweet_spot'] as const;
+export const trainingApproachSchema = z.enum(trainingApproaches);
+export type TrainingApproach = z.infer<typeof trainingApproachSchema>;
+export const TRAINING_APPROACH_LABEL: Record<TrainingApproach, string> = {
+  auto: 'Let the coach decide',
+  polarized: 'Polarized',
+  pyramidal: 'Pyramidal',
+  sweet_spot: 'Sweet spot & threshold',
+};
+export const TRAINING_APPROACH_BLURB: Record<TrainingApproach, string> = {
+  auto: 'Your coach picks the mix from your goals, events and the time you have.',
+  polarized: 'Mostly easy riding, with the hard days really hard. Little in between.',
+  pyramidal: 'Mostly easy, a good share of tempo and sweet spot, and a little very hard work.',
+  sweet_spot: 'For limited time: most of the quality in sweet spot and threshold, VO2 in small doses.',
+};
+
 export const weekdays = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
 export const WEEKDAY_LABEL: Record<(typeof weekdays)[number], string> = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun' };
 /** A week most weeks look like. Optional: without one, the athlete tells the coach as they chat. */
@@ -70,6 +90,8 @@ export const profileSchema = z.object({
   timezone: z.string().min(1).default('UTC'),
   /** Unset until they pick one, and the coach coaches as it always has (DECISIONS #86). */
   trainingPreference: trainingPreferenceSchema.optional(),
+  /** Unset is the same as `auto`: the coach picks the mix (DECISIONS #103). */
+  trainingApproach: trainingApproachSchema.optional(),
   /** Unset means they tell the coach when they can ride as they chat. */
   usualWeek: usualWeekSchema.optional(),
 });
