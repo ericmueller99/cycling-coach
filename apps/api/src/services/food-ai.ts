@@ -88,17 +88,21 @@ export class FoodAiService {
   }
 
   /**
-   * Photos and words → an itemised estimate of a restaurant meal. A proposal like everything here,
-   * and the photos aren't kept: they only reach storage if the rider logs it (`FoodService.logEstimate`).
+   * Photos and words → an itemised estimate of a home-cooked or restaurant meal (DECISIONS #94, #104).
+   * A proposal like everything here, and the photos aren't kept: they only reach storage if the rider
+   * logs it (`FoodService.logEstimate`). A restaurant estimate may search for published nutrition.
    */
   async estimate(userId: string, input: EstimateInput): Promise<EstimateResult | Failure> {
     if (!this.ai) return { error: 'Estimating a meal needs CLAUDE_API_KEY on the server. Log the calories yourself instead.', status: 503 };
     const decision = await this.spendGuard(userId, 'food_estimate');
     if (!decision.allow) return refusal(decision);
     if (input.images.some((img) => Buffer.byteLength(img.data, 'base64') > MAX_IMAGE_BYTES)) return { error: 'That photo is too large — try again (the app shrinks photos before sending).', status: 413 };
-    const result = await this.ai.estimateMeal(input);
+    const timezone = input.search ? await this.timezone(userId) : undefined;
+    const result = await this.ai.estimateMeal(input, { timezone });
     await this.record(userId, 'food_estimate', result.usage);
-    return result.ok ? estimateFromReading(result.value) : { error: result.error, status: 502 };
+    if (!result.ok) return { error: result.error, status: 502 };
+    const { reading, search, sources } = result.value;
+    return estimateFromReading(reading, { kind: input.kind, search, sources });
   }
 
   /** "Anything different?": the items with the change in them. Still a proposal. */
@@ -124,6 +128,7 @@ export class FoodAiService {
       cacheWriteTokens: u.cacheWriteTokens,
       costUsd: u.costUsd,
       ...(u.stopReason ? { stopReason: u.stopReason } : {}),
+      ...(u.webSearches ? { webSearches: u.webSearches } : {}),
       createdAt: this.now(),
     });
   }

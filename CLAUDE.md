@@ -48,10 +48,10 @@ externally: its calendar changes are proposals the user accepts.
 The food module never seeds or bulk-imports into the user's foods. Staples (`cnf_foods`, USDA), Open
 Food Facts and photo readings are only proposals until they save one; logging is always from their own
 foods. Only `providers/cnf|usda|openfoodfacts` talk to those sources and only `providers/storage/s3.ts`
-to S3 (DECISIONS #33). The exceptions are `calories` entries: numbers the user typed, or an Eating out
-estimate they confirmed. An estimate is the one place food logging guesses, so anything from one stays
-marked as a guess, and `core/food/estimate.ts` does every sum. Read an entry's ref through `core.entryRef`
-(DECISIONS #94).
+to S3 (DECISIONS #33). The exceptions are `calories` entries: numbers the user typed, or an estimate
+(home-cooked or restaurant) they confirmed. An estimate is the one place food logging guesses, so anything
+from one stays marked as a guess, and `core/food/estimate.ts` does every sum. Read an entry's ref through
+`core.entryRef` (DECISIONS #94, #104).
 
 ### 1b. Patch schemas never carry defaults
 Zod applies `.default()` inside `.partial()`. Build patch schemas from default-free field sets
@@ -99,7 +99,7 @@ Fixtures use made-up ids, names and domains. Never commit `.env`, keys or a real
 | Thread titles | router `small` | effort `low` |
 | Chat recaps | router `small` | effort `low`; `engine.recap`, text only, no tier (DECISIONS #80) |
 | Food: label photos, "log with words" | `claude-haiku-5-5` (router `small`) | `FoodAi` in `packages/coach/src/food.ts`; structured outputs, Zod-validated; never Opus (DECISIONS #33–34) |
-| Food: Eating out estimates | `claude-sonnet-5-5` (router `estimate`) | effort `medium`; photos and words in, one structured call; `SMALL_MODELS` only, never Opus. "Anything different?" stays on `small` (DECISIONS #94) |
+| Food: estimates (home-cooked or restaurant) | `claude-sonnet-5-5` (router `estimate`) | effort `medium`; photos and words in, one structured call; `SMALL_MODELS` only, never Opus. A restaurant estimate can web-search published nutrition when the rider asks: at most 3 searches at 1¢ each, plus 2 page fetches; `estimate:smoke` checks it live. "Anything different?" stays on `small` (DECISIONS #94, #104) |
 
 The defaults are `DEFAULT_ROUTER` in `packages/coach/src/router.ts`, not env (DECISIONS #69). `createCore`'s `router` option replaces them.
 

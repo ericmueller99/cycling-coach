@@ -512,6 +512,8 @@ export interface AiCallDoc {
   cacheWriteTokens: number;
   costUsd: number;
   stopReason?: string;
+  /** Web searches the call ran, already in `costUsd` (DECISIONS #104). */
+  webSearches?: number;
   /** The route that paid for it: `build` counts as the stronger model, whichever model served it. */
   tier?: 'chat' | 'build';
   /** The effort it ran at. Food calls have none. */

@@ -13,7 +13,8 @@
     "food:import-cnf": "tsx --env-file=../../.env src/scripts/import-cnf.ts",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit",
-    "coach:smoke": "tsx --env-file=../../.env src/scripts/coach-smoke.ts"
+    "coach:smoke": "tsx --env-file=../../.env src/scripts/coach-smoke.ts",
+    "estimate:smoke": "tsx --env-file=../../.env src/scripts/estimate-smoke.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.3.0",

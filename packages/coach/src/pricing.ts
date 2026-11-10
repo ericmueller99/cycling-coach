@@ -68,7 +68,11 @@ interface ApiTokens {
 /** The shape of `message.usage`, loose enough for both the plain and beta SDK types. */
 export interface ApiUsage extends ApiTokens {
   iterations?: readonly (ApiTokens & { model?: string | null })[] | null;
+  server_tool_use?: { web_search_requests?: number | null } | null;
 }
+
+/** Web search is $10 per 1,000 searches on top of the tokens its results add (DECISIONS #104). */
+export const WEB_SEARCH_USD = 0.01;
 
 const tokensOf = (u: ApiTokens): PricedUsage => ({
   inputTokens: u.input_tokens ?? 0,
@@ -83,7 +87,7 @@ const tokensOf = (u: ApiTokens): PricedUsage => ({
  * covers only the attempt that produced the returned message, so a server-side fallback would
  * otherwise drop the attempt that was declined. An iteration with no model ran on `model`.
  */
-export function priceUsage(model: string, usage: ApiUsage): { usage: CoachUsage; costUsd: number } {
+export function priceUsage(model: string, usage: ApiUsage): { usage: CoachUsage; costUsd: number; webSearches: number } {
   const attempts = usage.iterations?.length ? usage.iterations : [usage];
   const total: CoachUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
   let costUsd = 0;
@@ -96,7 +100,8 @@ export function priceUsage(model: string, usage: ApiUsage): { usage: CoachUsage;
     const served = ('model' in attempt ? attempt.model : null) ?? model;
     costUsd += estimateCostUsd(served, tokens);
   }
-  return { usage: total, costUsd };
+  const webSearches = Math.max(0, usage.server_tool_use?.web_search_requests ?? 0);
+  return { usage: total, costUsd: costUsd + webSearches * WEB_SEARCH_USD, webSearches };
 }
 
 /** Roughly how fast a model writes, for a stream stopped before it reported its output tokens. */

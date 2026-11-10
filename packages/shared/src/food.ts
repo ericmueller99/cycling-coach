@@ -7,8 +7,8 @@ import type { WeightPace } from './profile';
  * grows when they add something — a staple from the Canadian Nutrient File / USDA, a label or
  * screenshot read by a small model, an Open Food Facts barcode hit, or by hand. Logging is then
  * from this database with no AI. The two exceptions are a `calories` entry, which is numbers the
- * user typed, and an Eating out estimate, which is the one place food logging guesses and is marked
- * as a guess everywhere it shows (DECISIONS #94).
+ * user typed, and an estimate from the Estimate tab, which is the one place food logging guesses and is marked
+ * as a guess everywhere it shows (DECISIONS #94, #104).
  *
  * Units model: a food stores its nutrients for ONE reference serving, exactly as the source gave
  * them ("per 3/4 cup (175 g)", "per 100 g", "per grande"). `measures` lists everything that equals
@@ -62,7 +62,7 @@ export const readableNutrientKeys = nutrientKeys.filter((k): k is Exclude<Nutrie
 /**
  * Where a food came from — drives the source tag in lists. `label` and `screenshot` were read from
  * a photo by the small model; `cnf` = Canadian Nutrient File; `off` = Open Food Facts (barcode);
- * `estimate` = a restaurant meal the AI estimated, which stays marked as an estimate wherever it goes.
+ * `estimate` = a meal the AI estimated (home-cooked or from a restaurant), which stays marked as an estimate wherever it goes.
  */
 export const foodSources = ['label', 'screenshot', 'cnf', 'usda', 'off', 'manual', 'estimate'] as const;
 export type FoodSource = (typeof foodSources)[number];
@@ -265,7 +265,7 @@ export interface Meal extends MealInput {
 // ── The log ───────────────────────────────────────────────────────────────
 
 export const timeOfDaySchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Expected HH:MM');
-/** `coach` = logged from a recipe the coach built in chat; `estimate` = from Eating out. */
+/** `coach` = logged from a recipe the coach built in chat; `estimate` = from the Estimate tab. */
 export const foodLogVias = ['manual', 'words', 'meal', 'scan', 'coach', 'estimate'] as const;
 
 export const foodLogInputSchema = z.object({
@@ -747,7 +747,18 @@ export const caloriesLogInputSchema = z.object({
 });
 export type CaloriesLogInput = z.infer<typeof caloriesLogInputSchema>;
 
-// ── Eating out: an AI estimate of a restaurant meal ───────────────────────
+// ── Estimate: an AI estimate of a home-cooked or restaurant meal ──────────
+
+/** `home` is a meal with no menu or place, like dinner at a friend's; `restaurant` can name the place and search for it. */
+export const estimateKinds = ['home', 'restaurant'] as const;
+export type EstimateKind = (typeof estimateKinds)[number];
+
+/** Whether a restaurant estimate looked up published nutrition, and what came of it. */
+export const estimateSearchOutcomes = ['off', 'found', 'none', 'failed'] as const;
+export type EstimateSearch = (typeof estimateSearchOutcomes)[number];
+
+/** A published page an item's numbers came from. Only http(s), because it's shown as a link. */
+export const estimateSourceSchema = z.string().trim().max(500).regex(/^https?:\/\/\S+$/i, 'Expected a web link');
 
 export const estimatePhotoKinds = ['plate', 'menu'] as const;
 export type EstimatePhotoKind = (typeof estimatePhotoKinds)[number];
@@ -764,11 +775,20 @@ export type EstimatePhoto = z.infer<typeof estimatePhotoSchema>;
 
 export const estimateInputSchema = z
   .object({
+    kind: z.enum(estimateKinds),
+    /** Restaurant only. */
     place: z.string().trim().max(120).optional(),
+    /** Home only: what it was called ("Lasagna"). */
+    dish: z.string().trim().max(120).optional(),
+    /** What they had, or for home, what's in it. */
     text: z.string().trim().max(2000).optional(),
     images: z.array(estimatePhotoSchema).max(4),
+    /** Look up the place's published nutrition on the web. Restaurant only, and needs a place. */
+    search: z.boolean(),
   })
-  .refine((v) => v.images.length > 0 || (v.text ?? '').length >= 2, { message: 'Add a photo or say what you had.' });
+  .refine((v) => v.images.length > 0 || (v.text ?? '').length >= 2 || (v.dish ?? '').length >= 2, { message: 'Add a photo or say what you had.' })
+  .refine((v) => !v.search || (v.kind === 'restaurant' && !!v.place), { message: 'Name the place to look it up.', path: ['search'] })
+  .refine((v) => v.kind === 'restaurant' || (!v.place && v.images.every((img) => img.kind === 'plate')), { message: 'A home-cooked meal has no place or menu.' });
 export type EstimateInput = z.infer<typeof estimateInputSchema>;
 
 /**
@@ -796,14 +816,15 @@ export const estimateItemReadingSchema = z.object({
   modifiers: z
     .array(readingChoiceSchema)
     .describe('At most 3 changes that matter, off by default: "Dressing on the side" factor 0.6. `factor` scales the whole item. Usually empty.'),
+  source: z.string().describe('The URL of the published nutrition page these numbers came from, exactly as the search gave it. Empty when they came from anything else.'),
 });
 export type EstimateItemReading = z.infer<typeof estimateItemReadingSchema>;
 
 export const estimateReadingSchema = z.object({
   dish: z.string().describe('Two or three words for the meal, with no place in it: "Sirloin dinner". Empty when nothing was found.'),
   found: z
-    .array(z.object({ from: z.enum(['menu', 'plate', 'said']), text: z.string() }))
-    .describe('At most one short line each for what the menu says, what the plate shows and what the rider said.'),
+    .array(z.object({ from: z.enum(['menu', 'plate', 'said', 'web']), text: z.string() }))
+    .describe('At most one short line each for what the menu says, what the plate shows, what the rider said and what the published nutrition says.'),
   items: z.array(estimateItemReadingSchema).describe('One per thing eaten or drunk. Empty when the photos and words show no food.'),
   questions: z
     .array(
@@ -861,11 +882,15 @@ export const estimateItemSchema = z.object({
   mods: z.array(z.number().int().min(0).max(5)).max(6),
   /** What was assumed because the rider skipped a question or wasn't sure; "" when nothing was. */
   assumed: z.string().trim().max(200),
+  /** The published page the numbers came from, when a search found one. */
+  source: estimateSourceSchema.optional(),
 });
 export type EstimateItem = z.infer<typeof estimateItemSchema>;
 
-/** What the Eating out tab shows after estimating. Nothing's been written yet. */
+/** What the Estimate tab shows after estimating. Nothing's been written yet. */
 export interface EstimateResult {
+  kind: EstimateKind;
+  search: EstimateSearch;
   dish: string;
   found: EstimateReading['found'];
   items: EstimateItem[];
@@ -873,6 +898,8 @@ export interface EstimateResult {
 }
 
 export interface EntryEstimate extends EstimateRange {
+  /** Absent on entries logged before home-cooked estimates, which were all restaurant meals. */
+  kind?: EstimateKind | undefined;
   place?: string | undefined;
   /** Shared by the entries of a meal logged as separate items. */
   group?: string | undefined;
@@ -888,6 +915,7 @@ export const estimateLogInputSchema = z.object({
   slot: z.string().trim().min(1).max(30),
   time: timeOfDaySchema.optional(),
   name: z.string().trim().min(1).max(120),
+  kind: z.enum(estimateKinds),
   place: z.string().trim().max(120).optional(),
   items: z.array(estimateItemSchema).min(1).max(20),
   /** `items` logs one entry per item. */
@@ -934,6 +962,7 @@ export const estimateAdjustmentSchema = z.object({
 export type EstimateAdjustment = z.infer<typeof estimateAdjustmentSchema>;
 
 export const estimateAdjustInputSchema = z.object({
+  kind: z.enum(estimateKinds),
   place: z.string().trim().max(120).optional(),
   items: z.array(estimateItemSchema).min(1).max(20),
   message: z.string().trim().min(2).max(500),

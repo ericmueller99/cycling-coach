@@ -8,6 +8,7 @@ import {
   estimateAsFood,
   estimateConfidence,
   estimateFromReading,
+  type EstimateContext,
   estimateItemTotals,
   estimateTotals,
   otherSizeHint,
@@ -29,6 +30,7 @@ const reading = (over: Partial<EstimateItemReading> = {}): EstimateItemReading =
   alcohol: 0,
   sizes: [],
   modifiers: [],
+  source: '',
   ...over,
 });
 
@@ -58,8 +60,8 @@ const question = (over: Partial<EstimateQuestion> = {}): EstimateQuestion => ({
   ...over,
 });
 
-const parse = (over: Partial<EstimateReading> = {}) =>
-  estimateFromReading({ dish: 'Sirloin dinner', found: [], items: [reading()], questions: [], ...over });
+const parse = (over: Partial<EstimateReading> = {}, ctx: Partial<EstimateContext> = {}) =>
+  estimateFromReading({ dish: 'Sirloin dinner', found: [], items: [reading()], questions: [], ...over }, { kind: 'restaurant', search: 'off', ...ctx });
 
 const item = (over: Partial<EstimateItemReading> = {}): EstimateItem => parse({ items: [reading(over)] }).items[0]!;
 
@@ -100,6 +102,26 @@ describe('estimateConfidence', () => {
 });
 
 describe('estimateFromReading', () => {
+  it('keeps a source only when a search returned that page', () => {
+    const url = 'https://www.example-grill.ca/nutrition.pdf';
+    const r = parse({ items: [reading({ source: url }), reading({ name: 'Bread', source: 'https://made-up.example/page' })] }, { search: 'found', sources: [url] });
+    expect(r.items.map((i) => i.source)).toEqual([url, undefined]);
+    expect(r.search).toBe('found');
+  });
+
+  it('says a search found nothing when no item kept a source, and drops its web line', () => {
+    const r = parse({ found: [{ from: 'web', text: 'Published: 610 kcal' }], items: [reading({ source: 'https://made-up.example/page' })] }, { search: 'found', sources: [] });
+    expect(r.search).toBe('none');
+    expect(r.found).toEqual([]);
+    expect(r.items[0]?.source).toBeUndefined();
+  });
+
+  it('carries the kind, and a home meal has no menu line', () => {
+    const r = parse({ found: [{ from: 'menu', text: 'Lasagna' }, { from: 'plate', text: 'A square of lasagna' }] }, { kind: 'home' });
+    expect(r.kind).toBe('home');
+    expect(r.found.map((f) => f.from)).toEqual(['plate']);
+  });
+
   it('keeps a range on an item the model called exact', () => {
     const lager = item({ kcal: 210, low: 210, high: 210 });
     expect(lager.low).toBeLessThan(lager.kcal);

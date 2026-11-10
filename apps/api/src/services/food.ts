@@ -292,7 +292,8 @@ export class FoodService {
   async logEstimate(userId: string, input: EstimateLogInput): Promise<FoodLogEntry[]> {
     const images = await this.keepPhotos(userId, input.images);
     const shared = {
-      ...(input.place ? { place: input.place } : {}),
+      kind: input.kind,
+      ...(input.kind === 'restaurant' && input.place ? { place: input.place } : {}),
       images,
       ...(input.saveAs ? { savedAs: input.saveAs } : {}),
     };

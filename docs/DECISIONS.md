@@ -2598,3 +2598,54 @@ everything pointed that way:
 - Tempo workouts are endurance-type days on the calendar (`inferSessionType` draws its line at 88%).
 - The direction of intervals.icu's 1–4 entries follows its own form (for mood and motivation, 1 is the best). Check it
   against a live response before relying on those words.
+
+## 104. Estimates are home-cooked or restaurant, and a restaurant estimate can look up published nutrition (Nov 10)
+
+**Decision.** Eating out (#94) becomes **Estimate**, with a `Home-cooked | Restaurant` picker. The stored mode is still `out`.
+- **Home-cooked** is a meal with no menu and no place, like dinner at a friend's. The rider gives photos of the plate, **What was it?**
+  and **What's in it?**. Its prompt builds each item from the ingredients and method they describe, judges a home portion, and adds
+  butter or oil only as far as the dish suggests. There's no search, and Save is off by default.
+- **Restaurant** is #94's estimate, plus a **Look up published nutrition** toggle. It's on once a place is named, and the rider can
+  turn it off. With it on, the call carries Anthropic's server-side web search (`web_search_20260209`, or the basic
+  `web_search_20250305` on Haiku): at most 3 searches, with an approximate location of Canada and the athlete's timezone. It also
+  carries web fetch (`web_fetch_20260209`, not on Haiku), to open up to 2 of the pages the search found, at most 12K tokens each,
+  because snippets rarely hold the numbers. Fetch can only open a URL already in the conversation. The prompt tells the model to
+  search because the rider asked, and to look only for this place's own figures: from its site, PDF or menu, or a nutrition site
+  that lists them for that item. A page about the dish in general doesn't count. When it finds the numbers, it uses them and names
+  whose they are. Otherwise it goes by what it knows, as before.
+- **The kind is on the request, the result and the entry** (`estimate.kind`; absent means restaurant). The prompt is fixed per kind
+  and search setting, so each of the three variants caches on its own. "Anything different?" is told which kind it's changing.
+
+**A source can't be made up.** An item's `source` is kept only if it's one of the URLs the search actually returned, read from the
+`web_search_tool_result` blocks by `FoodAi` and checked again by `core.estimateFromReading`. A source must be http(s), because the review
+shows it as a link ("Published · host"). A search that leaves no item with a source reads `none`, whatever the model said, and its
+`web` line in What I found is dropped.
+
+**What the rider sees.** `EstimateResult.search` is `off`, `found`, `none` or `failed`. The review and the questions say which: found
+the place's published nutrition, couldn't find it, or couldn't search.
+
+**Cost.** Searches are priced into `costUsd` at $10 per 1,000 (`WEB_SEARCH_USD`), and `ai_calls.webSearches` counts them. Fetches
+cost only the tokens they add. In the live check, a searching estimate cost 3–5¢ US and a home-cooked one about 1¢. So the spend
+guard, the hosted pools and Costs need no change. The purpose stays `food_estimate`. A search turn can pause: it's sent back to finish
+at most twice, and its requests count as one call. The answer is the last text block, because searching puts text between the tool
+blocks. The rider waits up to 90 s instead of 60.
+
+**Fallback.** If the request with search gets a 400 (web search can be off for the key's organization), it's made once more without
+search and comes back as `failed`. The estimate never depends on search.
+
+**This amends #94's trade-off** "No web search". Search is the rider's choice, per estimate, and only for a named place.
+
+**Rejected.**
+- *The model decides when to search*: every restaurant estimate would pay for the tool's tokens, and the rider knows best whether a
+  place publishes nutrition.
+- *Search on home-cooked meals*: there's nothing to look up, and the place is a person's home.
+- *A separate search call, then the estimate*: twice the calls and a second wait. Kept as the fallback design if search and
+  structured outputs ever stop working together in one call.
+- *Keeping the model's source as given*: it could cite a page it never saw.
+
+**Known limits.**
+- In the first live checks (`estimate:smoke`, a Big Mac meal at McDonald's), the model searched and the results held a page with the
+  chain's figures. It still went by what it knew and cited nothing, so the result read `none`. Asking it to open pages and telling
+  it the rider wants a lookup didn't change that. If it keeps happening with real meals, the plan's fallback is the fix: one call that
+  only finds the published figures, then the estimate with them passed in.
+

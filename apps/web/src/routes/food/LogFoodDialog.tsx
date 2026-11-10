@@ -10,7 +10,7 @@ import { useFoodMutations } from '../../lib/foodQueries';
 import { errorMessage } from '../../lib/queries';
 import { useIsMobile } from '../../lib/useIsMobile';
 import { CaloriesPanel } from './CaloriesPanel';
-import { EatingOut, useEatingOut } from './EatingOut';
+import { EstimateFood, useEstimateFood } from './EstimateFood';
 import { LogFoodAI } from './LogFoodAI';
 import { MealLogPanel } from './MealLogPanel';
 import { SourceTag } from './SourceTag';
@@ -229,8 +229,8 @@ function Detail({
 /**
  * Log food: search the user's own foods, recipes and meals — never a
  * public database — ranked by text, then how often and how recently they log them. Or "Log with
- * AI": describe it, check every matched item, then log. Or Eating out: an estimate of a restaurant
- * meal, the one thing here that guesses. The mode is remembered here.
+ * AI": describe it, check every matched item, then log. Or Estimate: a home-cooked or restaurant meal
+ * estimated from photos and words, the one thing here that guesses. The mode is remembered here.
  */
 export function LogFoodDialog({
   lib,
@@ -275,10 +275,10 @@ export function LogFoodDialog({
   };
   const [staple, setStaple] = useState<StapleResult | null>(null);
   const [calories, setCalories] = useState(false);
-  const eatingOut = useEatingOut();
+  const estimateFood = useEstimateFood();
   // Closing throws away an estimate that's been paid for and not logged.
   const close = () => {
-    if (!eatingOut.result || window.confirm('Close without logging? This estimate will be lost.')) onClose();
+    if (!estimateFood.result || window.confirm('Close without logging? This estimate will be lost.')) onClose();
   };
   const [tab, setTab] = useState<TabKey>('all');
   const [slot, setSlot] = useState(initialSlot);
@@ -381,7 +381,7 @@ export function LogFoodDialog({
         [
           ['search', mobile ? 'Search' : 'Search my foods', <SearchIcon key="s" size={14} />],
           ['ai', 'Log with AI', <SparkleIcon key="a" size={14} />],
-          ['out', 'Eating out', <ForkKnifeIcon key="o" size={14} />],
+          ['out', 'Estimate', <ForkKnifeIcon key="o" size={14} />],
         ] as const
       ).map(([key, label, icon]) => (
         <button
@@ -489,7 +489,7 @@ export function LogFoodDialog({
   if (mode === 'out') {
     return (
       <Dialog title={title} onClose={close} width={1040} tall>
-        <EatingOut s={eatingOut} lib={lib} date={date} slot={slot} isToday={dateLabel.startsWith('Today')} mobile={mobile} modeSwitch={modeSwitch} onSearchMode={() => setMode('search')} onClose={onClose} />
+        <EstimateFood s={estimateFood} lib={lib} date={date} slot={slot} isToday={dateLabel.startsWith('Today')} mobile={mobile} modeSwitch={modeSwitch} onSearchMode={() => setMode('search')} onClose={onClose} />
       </Dialog>
     );
   }

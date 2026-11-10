@@ -2,10 +2,12 @@ import type {
   EstimateAdjustment,
   EstimateItem,
   EstimateItemReading,
+  EstimateKind,
   EstimateQuestion,
   EstimateRange,
   EstimateReading,
   EstimateResult,
+  EstimateSearch,
   FoodInput,
   FoodLogEntry,
   Nutrients,
@@ -13,7 +15,7 @@ import type {
 import { roundTo } from './units';
 
 /**
- * Eating out (DECISIONS #94). The model says what's in a meal and how sure it is; every sum happens
+ * Estimate (DECISIONS #94, #104). The model says what's in a meal and how sure it is; every sum happens
  * here, so the header is always the total of the cards. An estimate is the one thing in food logging
  * that's a guess, so nothing in it is allowed to look exact: kcal go to the nearest 5, and every item
  * keeps a range.
@@ -111,8 +113,11 @@ function tidySizes(sizes: EstimateItemReading['sizes']): { sizes: EstimateItem['
   return { sizes: usable.map((s) => ({ label: text(s.label, 80), factor: roundTo(s.factor / base, 3) })), size };
 }
 
-/** A reading as an item, or null when there's nothing usable in it. Never trusts the model's limits. */
-function tidyItem(r: EstimateItemReading): EstimateItem | null {
+/**
+ * A reading as an item, or null when there's nothing usable in it. Never trusts the model's limits.
+ * A source survives only if it's one of the pages a search returned, so a link can't be made up.
+ */
+function tidyItem(r: EstimateItemReading, sources: ReadonlySet<string> = NO_SOURCES): EstimateItem | null {
   const name = text(r.name, 120);
   if (!name || !Number.isFinite(r.kcal)) return null;
   const kcal = num(r.kcal, 20_000);
@@ -139,8 +144,11 @@ function tidyItem(r: EstimateItemReading): EstimateItem | null {
     size,
     mods: [],
     assumed: '',
+    ...(sources.has(r.source.trim()) ? { source: r.source.trim() } : {}),
   };
 }
+
+const NO_SOURCES: ReadonlySet<string> = new Set();
 
 function tidyQuestion(q: EstimateQuestion, item: number): EstimateQuestion | null {
   const options = q.options
@@ -152,12 +160,20 @@ function tidyQuestion(q: EstimateQuestion, item: number): EstimateQuestion | nul
   return { item, text: text(q.text, 200), options, typical, assumed: text(q.assumed, 200) };
 }
 
+/** How the estimate was asked for, and the pages any search returned. */
+export interface EstimateContext {
+  kind: EstimateKind;
+  search: EstimateSearch;
+  sources?: readonly string[] | undefined;
+}
+
 /** What the model said, made safe to show. Questions follow their item, however many were dropped. */
-export function estimateFromReading(r: EstimateReading): EstimateResult {
+export function estimateFromReading(r: EstimateReading, ctx: EstimateContext): EstimateResult {
+  const sources = new Set((ctx.sources ?? []).filter((url) => /^https?:\/\/\S+$/i.test(url) && url.length <= 500));
   const items: EstimateItem[] = [];
   const moved = new Map<number, number>();
   r.items.forEach((reading, i) => {
-    const item = tidyItem(reading);
+    const item = tidyItem(reading, sources);
     if (!item) return;
     moved.set(i, items.length);
     items.push(item);
@@ -169,9 +185,18 @@ export function estimateFromReading(r: EstimateReading): EstimateResult {
     const tidy = tidyQuestion(q, item);
     if (tidy) questions.push(tidy);
   }
+  // A search that found nothing usable says so, whatever the model claimed.
+  const search: EstimateSearch = ctx.search === 'found' && !items.some((i) => i.source) ? 'none' : ctx.search;
   return {
+    kind: ctx.kind,
+    search,
     dish: text(r.dish, 120) || (items[0]?.name ?? ''),
-    found: r.found.map((f) => ({ from: f.from, text: text(f.text, 200) })).filter((f) => f.text).slice(0, 6),
+    found: r.found
+      .filter((f) => f.from !== 'web' || search === 'found')
+      .filter((f) => ctx.kind === 'restaurant' || f.from !== 'menu')
+      .map((f) => ({ from: f.from, text: text(f.text, 200) }))
+      .filter((f) => f.text)
+      .slice(0, 6),
     items,
     questions,
   };
@@ -254,7 +279,7 @@ export function applyEstimateAdjustment(items: readonly EstimateItem[], a: Estim
     if (item) next[c.item] = applyChange(item, c);
   }
   const gone = new Set([...a.removed, ...a.changes.filter((c) => c.factor === 0).map((c) => c.item)]);
-  const added = a.added.map(tidyItem).filter((i): i is EstimateItem => i != null);
+  const added = a.added.map((r) => tidyItem(r)).filter((i): i is EstimateItem => i != null);
   return [...next.filter((_, i) => !gone.has(i)), ...added].slice(0, 20);
 }
 

@@ -413,7 +413,7 @@ export interface FoodTurnContext {
   chosen: boolean;
   /** Eaten so far that day. */
   eaten: { kcal: number; protein: number; carbs: number; fat: number };
-  /** How many restaurant estimates `eaten` includes, so the coach doesn't quote it as exact. */
+  /** How many meal estimates `eaten` includes, so the coach doesn't quote it as exact. */
   estimates?: number | undefined;
   /** Null until RMR is set on the Athlete page. */
   budgetKcal: number | null;
@@ -433,7 +433,7 @@ export function renderFoodLine(f: FoodTurnContext): string {
       ? 'no calorie budget yet (RMR not set on the Athlete page)'
       : `budget ${n0(f.budgetKcal)} kcal → ${n0(f.budgetKcal - f.eaten.kcal)} kcal left${f.proteinTargetG ? `; protein target ${n0(f.proteinTargetG)} g → ${n0(Math.max(0, f.proteinTargetG - f.eaten.protein))} g left` : ''}`;
   const slot = f.chosen ? `The athlete is planning ${f.slot} for ${day} (picked in the app).` : `The meal for this time of day is ${f.slot}.`;
-  const guessed = f.estimates ? ` These totals include ${f.estimates === 1 ? 'a restaurant meal' : `${f.estimates} restaurant meals`} logged as an estimate, so treat them as approximate.` : '';
+  const guessed = f.estimates ? ` These totals include ${f.estimates === 1 ? 'a meal' : `${f.estimates} meals`} logged as an estimate, so treat them as approximate.` : '';
   return `Food ${day} (their food log): ${eaten}; ${budget}.${guessed}${f.note ? ` ${f.note}.` : ''} ${slot}`;
 }
 

@@ -57,7 +57,7 @@ const item = (over: Partial<EstimateItem> = {}): EstimateItem => ({
 const lager = item({ name: 'Lager', kcal: 210, low: 180, high: 260, protein: 2, carbs: 18, fat: 0, alcohol: 14 });
 
 const photo = { mediaType: 'image/jpeg' as const, data: 'x'.repeat(200), kind: 'plate' as const };
-const input = (over: Partial<EstimateLogInput> = {}): EstimateLogInput => ({ ...at, name: 'The Keg · Sirloin dinner', place: 'The Keg', items: [item(), lager], logAs: 'meal', images: [], ...over });
+const input = (over: Partial<EstimateLogInput> = {}): EstimateLogInput => ({ ...at, name: 'The Keg · Sirloin dinner', kind: 'restaurant', place: 'The Keg', items: [item(), lager], logAs: 'meal', images: [], ...over });
 
 function store() {
   const keys = new Set<string>();
@@ -123,6 +123,19 @@ describe('logging an estimate', () => {
     expect(entry?.nutrients).toEqual({ kcal: 690, protein: 52, carbs: 18, fat: 30, alcohol: 14 });
     expect(entry?.estimate).toMatchObject({ low: 610, high: 800, place: 'The Keg' });
     expect(entry?.estimate?.items).toHaveLength(2);
+  });
+
+  it('keeps the kind and where each item\'s numbers were published', async () => {
+    const source = 'https://www.example-grill.ca/nutrition';
+    const [entry] = await service().logEstimate(U, input({ items: [item({ source }), lager] }));
+    expect(entry?.estimate?.kind).toBe('restaurant');
+    expect(entry?.estimate?.items.map((i) => i.source)).toEqual([source, undefined]);
+  });
+
+  it('logs a home-cooked meal with no place', async () => {
+    const [entry] = await service().logEstimate(U, input({ kind: 'home', name: 'Lasagna', place: 'Somewhere' }));
+    expect(entry?.estimate?.kind).toBe('home');
+    expect(entry?.estimate?.place).toBeUndefined();
   });
 
   it('logs one entry per item when asked, as one estimate', async () => {

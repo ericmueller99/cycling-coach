@@ -78,6 +78,21 @@ export function EstimateHeader({ items, left, isToday }: { items: readonly Estim
   );
 }
 
+/** Where a search found the published numbers. Only http(s) gets this far (`estimateSourceSchema`). */
+function SourceLink({ url }: { url: string }) {
+  let host = url;
+  try {
+    host = new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    /* shown as given */
+  }
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer" className="self-start text-xs font-medium text-accent-ink">
+      Published · {host}
+    </a>
+  );
+}
+
 function ItemCard({ item, mobile, onChange, onRemove }: { item: EstimateItem; mobile: boolean; onChange: (next: EstimateItem) => void; onRemove: (() => void) | null }) {
   const { low, high, nutrients } = estimateItemTotals(item);
   const hint = item.assumed ? otherSizeHint(item) : null;
@@ -105,6 +120,7 @@ function ItemCard({ item, mobile, onChange, onRemove }: { item: EstimateItem; mo
           {fmtKcal(low)}–{fmtKcal(high)}
         </div>
       )}
+      {item.source && <SourceLink url={item.source} />}
       {item.sizes.length > 0 ? (
         <div className="flex flex-wrap gap-1.5">
           {item.sizes.map((s, i) => (

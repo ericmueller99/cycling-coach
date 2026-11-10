@@ -1,6 +1,6 @@
 import { applyEstimateAnswers, estimateTotals, sumNutrients } from '@cycling-coach/core';
-import type { EstimateItem, EstimatePhotoKind, EstimateQuestion, EstimateResult, FoodLibrary, IsoDate } from '@cycling-coach/shared';
-import { useEffect, useId, useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode, type RefObject } from 'react';
+import type { EstimateItem, EstimateKind, EstimatePhotoKind, EstimateQuestion, EstimateResult, FoodLibrary, IsoDate } from '@cycling-coach/shared';
+import { useEffect, useId, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { CameraIcon, ChevronLeft, XIcon } from '../../components/icons';
 import { Button, Chip, ErrorNote, Segmented, Spinner, errorContent, inputCls } from '../../components/ui';
 import { fmtKcal, nowTime } from '../../lib/food';
@@ -10,6 +10,15 @@ import { errorMessage } from '../../lib/queries';
 import { EstimateHeader, EstimateItems } from './EstimateReview';
 
 const MAX_PHOTOS = 4;
+const KIND_KEY = 'food.estimate.kind';
+
+function readKind(): EstimateKind {
+  try {
+    return localStorage.getItem(KIND_KEY) === 'home' ? 'home' : 'restaurant';
+  } catch {
+    return 'restaurant';
+  }
+}
 
 interface TaggedPhoto extends PreparedPhoto {
   kind: EstimatePhotoKind;
@@ -21,8 +30,22 @@ type Stage = 'capture' | 'questions' | 'review';
  * Everything the tab holds, kept by the dialog so moving between tabs can't lose an estimate that's
  * been paid for. The photos stay here until Log: they're sent to estimate, then again to keep.
  */
-export function useEatingOut() {
+export function useEstimateFood() {
+  const [kind, setKindState] = useState<EstimateKind>(readKind);
+  const setKind = (next: EstimateKind) => {
+    setKindState(next);
+    try {
+      localStorage.setItem(KIND_KEY, next);
+    } catch {
+      /* private mode */
+    }
+  };
   const [place, setPlace] = useState('');
+  const [dish, setDish] = useState('');
+  // On once a place is named, unless they turned it off.
+  const [searchPick, setSearchPick] = useState<boolean | null>(null);
+  const canSearch = kind === 'restaurant' && place.trim().length > 0;
+  const search = canSearch && (searchPick ?? true);
   const [text, setText] = useState('');
   const [photos, setPhotos] = useState<TaggedPhoto[]>([]);
   const [preparing, setPreparing] = useState(false);
@@ -70,7 +93,7 @@ export function useEatingOut() {
   const receive = (r: EstimateResult) => {
     if (!r.items.length) {
       // A menu says what's on offer, not what they ate, and the model is right not to guess.
-      setError(r.found.some((f) => f.from === 'menu') ? 'I can read the menu, but not what you had. Say what you ordered.' : 'I couldn’t find any food in that. Try a clearer photo, or say what you had.');
+      setError(r.kind === 'restaurant' && r.found.some((f) => f.from === 'menu') ? 'I can read the menu, but not what you had. Say what you ordered.' : 'I couldn’t find any food in that. Try a clearer photo, or say what you had.');
       return;
     }
     const none = r.questions.map(() => null);
@@ -85,19 +108,24 @@ export function useEatingOut() {
     setTouched(true);
   };
 
-  return { place, setPlace, text, setText, photos, preparing, addPhotos, removePhoto, retag, stage, setStage, result, answers, setAnswers, items, setItems, changeItems, touched, error, setError, receive, showEstimate };
+  /** A home meal has no menu, so every photo goes as the food. */
+  const photoKind = (p: TaggedPhoto): EstimatePhotoKind => (kind === 'home' ? 'plate' : p.kind);
+
+  return { kind, setKind, place, setPlace, dish, setDish, canSearch, search, setSearch: setSearchPick, photoKind, text, setText, photos, preparing, addPhotos, removePhoto, retag, stage, setStage, result, answers, setAnswers, items, setItems, changeItems, touched, error, setError, receive, showEstimate };
 }
-export type EatingOutState = ReturnType<typeof useEatingOut>;
+export type EstimateFoodState = ReturnType<typeof useEstimateFood>;
 
 const imageFiles = (list: FileList | null | undefined) => [...(list ?? [])].filter((f) => f.type.startsWith('image/'));
 
-function PhotoTile({ photo, onRetag, onRemove }: { photo: TaggedPhoto; onRetag: () => void; onRemove: () => void }) {
+function PhotoTile({ photo, onRetag, onRemove }: { photo: TaggedPhoto; onRetag: (() => void) | null; onRemove: () => void }) {
   return (
     <figure className="relative m-0 h-24 w-24 flex-none">
-      <img src={photo.preview} alt={`The ${photo.kind}`} className="h-full w-full rounded-[10px] border border-line object-cover" />
-      <button type="button" aria-label={`Tagged ${photo.kind}. Change it`} onClick={onRetag} className="absolute bottom-1 left-1 min-h-6 rounded-md border-0 bg-[rgba(21,24,30,.75)] px-1.5 text-[11px] font-semibold text-white capitalize">
-        {photo.kind}
-      </button>
+      <img src={photo.preview} alt={onRetag ? `The ${photo.kind}` : 'The food'} className="h-full w-full rounded-[10px] border border-line object-cover" />
+      {onRetag && (
+        <button type="button" aria-label={`Tagged ${photo.kind}. Change it`} onClick={onRetag} className="absolute bottom-1 left-1 min-h-6 rounded-md border-0 bg-[rgba(21,24,30,.75)] px-1.5 text-[11px] font-semibold text-white capitalize">
+          {photo.kind}
+        </button>
+      )}
       <button type="button" aria-label="Remove photo" onClick={onRemove} className="absolute top-1 right-1 flex h-7 w-7 items-center justify-center rounded-full border-0 bg-[rgba(21,24,30,.7)] text-white">
         <XIcon size={14} />
       </button>
@@ -105,7 +133,7 @@ function PhotoTile({ photo, onRetag, onRemove }: { photo: TaggedPhoto; onRetag: 
   );
 }
 
-function Photos({ s, mobile }: { s: EatingOutState; mobile: boolean }) {
+function Photos({ s, mobile }: { s: EstimateFoodState; mobile: boolean }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
   const full = s.photos.length >= MAX_PHOTOS;
@@ -117,7 +145,7 @@ function Photos({ s, mobile }: { s: EatingOutState; mobile: boolean }) {
   return (
     <div>
       <div className="mb-1 text-[13px] font-semibold">
-        Photos <span className="font-normal text-muted">· the plate, the menu, or both</span>
+        Photos <span className="font-normal text-muted">· {s.kind === 'home' ? 'the plate, or the dish on the table' : 'the plate, the menu, or both'}</span>
       </div>
       <div
         onDragOver={(e) => {
@@ -129,7 +157,7 @@ function Photos({ s, mobile }: { s: EatingOutState; mobile: boolean }) {
         className={`flex flex-wrap items-center gap-2 rounded-[12px] ${mobile ? '' : `border border-dashed p-2 ${over ? 'border-accent-ring bg-accent-tint' : 'border-line-strong'}`}`}
       >
         {s.photos.map((p) => (
-          <PhotoTile key={p.preview} photo={p} onRetag={() => s.retag(p)} onRemove={() => s.removePhoto(p)} />
+          <PhotoTile key={p.preview} photo={p} onRetag={s.kind === 'restaurant' ? () => s.retag(p) : null} onRemove={() => s.removePhoto(p)} />
         ))}
         {!full &&
           (mobile ? (
@@ -186,12 +214,25 @@ function Question({ q, value, mobile, onChange }: { q: EstimateQuestion; value: 
 /** Reaches through the panel's padding, or the cards show underneath it as they scroll past. */
 const FOOTER = 'sticky -bottom-4 -mb-4 mt-auto border-t border-divider bg-surface-alt pt-3 pb-4 mobile:bottom-[calc(-20px-env(safe-area-inset-bottom))] mobile:mb-[calc(-20px-env(safe-area-inset-bottom))] mobile:bg-surface mobile:pb-[calc(20px+env(safe-area-inset-bottom))]';
 
-const FOUND_LABEL = { menu: 'Menu:', plate: 'Plate:', said: 'You said:' } as const;
+const FOUND_LABEL = { menu: 'Menu:', plate: 'Plate:', said: 'You said:', web: 'Published:' } as const;
 
-function Questions({ s, result, mobile }: { s: EatingOutState; result: EstimateResult; mobile: boolean }) {
+/** What a search did, when one was asked for. */
+function SearchNote({ result, place }: { result: EstimateResult; place: string }) {
+  if (result.search === 'off') return null;
+  const text =
+    result.search === 'found'
+      ? `Found ${place ? `${place}’s` : 'the'} published nutrition, and used it where it matched.`
+      : result.search === 'none'
+        ? 'Couldn’t find published nutrition for this, so it’s from what I know.'
+        : 'Couldn’t search this time, so it’s from what I know.';
+  return <div className={`text-xs ${result.search === 'found' ? 'text-accent-ink' : 'text-muted'}`}>{text}</div>;
+}
+
+function Questions({ s, result, mobile }: { s: EstimateFoodState; result: EstimateResult; mobile: boolean }) {
   const none = result.questions.map(() => null);
   return (
     <div className="flex flex-[1_0_auto] flex-col gap-4">
+      <SearchNote result={result} place={s.place.trim()} />
       {result.found.length > 0 && (
         <section aria-label="What I found" className="flex flex-col gap-1.5">
           <h3 className="m-0 text-[15px]">What I found</h3>
@@ -231,7 +272,7 @@ function Questions({ s, result, mobile }: { s: EatingOutState; result: EstimateR
 }
 
 /** "Anything different?": the change comes back as items, for the rider to see before logging. */
-function AnythingDifferent({ s, focusRef }: { s: EatingOutState; focusRef: RefObject<HTMLInputElement | null> }) {
+function AnythingDifferent({ s, focusRef }: { s: EstimateFoodState; focusRef: RefObject<HTMLInputElement | null> }) {
   const id = useId();
   const adjust = useAdjustEstimate();
   const [message, setMessage] = useState('');
@@ -242,7 +283,7 @@ function AnythingDifferent({ s, focusRef }: { s: EatingOutState; focusRef: RefOb
     if (said.length < 2 || adjust.isPending) return;
     setError(null);
     adjust.mutate(
-      { items: s.items, message: said, ...(s.place.trim() ? { place: s.place.trim() } : {}) },
+      { kind: s.result?.kind ?? s.kind, items: s.items, message: said, ...(s.result?.kind !== 'home' && s.place.trim() ? { place: s.place.trim() } : {}) },
       {
         onSuccess: (r) => {
           if (r.items.length) s.changeItems(r.items);
@@ -284,18 +325,20 @@ function AnythingDifferent({ s, focusRef }: { s: EatingOutState; focusRef: RefOb
   );
 }
 
-function Review({ s, result, lib, date, slot, isToday, mobile, onClose }: { s: EatingOutState; result: EstimateResult; lib: FoodLibrary; date: IsoDate; slot: string; isToday: boolean; mobile: boolean; onClose: () => void }) {
+function Review({ s, result, lib, date, slot, isToday, mobile, onClose }: { s: EstimateFoodState; result: EstimateResult; lib: FoodLibrary; date: IsoDate; slot: string; isToday: boolean; mobile: boolean; onClose: () => void }) {
   const id = useId();
   const m = useFoodMutations();
   const addRef = useRef<HTMLInputElement>(null);
   const budget = useEnergyBudget(date).data;
   const dayLog = useFoodLog(date).data;
   const [logAs, setLogAs] = useState<'meal' | 'items'>('meal');
-  const place = s.place.trim();
+  // The kind it was estimated as, even if the picker has moved since.
+  const place = result.kind === 'restaurant' ? s.place.trim() : '';
   // On when a place is named: that's what makes it findable next time.
   const [save, setSave] = useState(!!place);
   const [error, setError] = useState<string | null>(null);
-  const name = (place ? `${place} · ${result.dish}` : result.dish).slice(0, 120);
+  const dish = (result.kind === 'home' && s.dish.trim()) || result.dish;
+  const name = (place ? `${place} · ${dish}` : dish).slice(0, 120);
   const { nutrients } = estimateTotals(s.items);
   const eaten = sumNutrients((dayLog?.entries ?? []).map((e) => e.nutrients)).kcal;
   const left = budget?.ready ? Math.round(budget.total - eaten - nutrients.kcal) : null;
@@ -307,11 +350,12 @@ function Review({ s, result, lib, date, slot, isToday, mobile, onClose }: { s: E
         slot,
         time: lib.settings.slots.find((x) => x.name === slot)?.time ?? nowTime(),
         name,
+        kind: result.kind,
         ...(place ? { place } : {}),
         items: s.items,
         logAs,
         ...(save ? { saveAs: name } : {}),
-        images: s.photos.map((p) => ({ mediaType: p.mediaType, data: p.data, kind: p.kind })),
+        images: s.photos.map((p) => ({ mediaType: p.mediaType, data: p.data, kind: result.kind === 'home' ? 'plate' : p.kind })),
       },
       { onSuccess: onClose, onError: (e) => setError(errorMessage(e)) },
     );
@@ -319,6 +363,7 @@ function Review({ s, result, lib, date, slot, isToday, mobile, onClose }: { s: E
   return (
     <div className="flex flex-[1_0_auto] flex-col gap-4">
       <EstimateHeader items={s.items} left={left} isToday={isToday} />
+      <SearchNote result={result} place={place} />
       <div className="flex items-baseline justify-between">
         <h3 className="m-0 text-base">What’s in it</h3>
         <button type="button" onClick={() => addRef.current?.focus()} className="min-h-11 border-0 bg-transparent text-[13px] font-semibold text-[#3F6212]">
@@ -360,10 +405,11 @@ function Review({ s, result, lib, date, slot, isToday, mobile, onClose }: { s: E
 }
 
 /**
- * Eating out, in Log food: the one place food logging guesses (DECISIONS #94), so every number here
- * is marked as one, and nothing is written until Log.
+ * Estimate, in Log food: the one place food logging guesses (DECISIONS #94, #104), so every number here
+ * is marked as one, and nothing is written until Log. Home-cooked goes by what's in it; Restaurant can
+ * name the place and look up its published nutrition.
  */
-export function EatingOut({
+export function EstimateFood({
   s,
   lib,
   date,
@@ -374,7 +420,7 @@ export function EatingOut({
   onSearchMode,
   onClose,
 }: {
-  s: EatingOutState;
+  s: EstimateFoodState;
   lib: FoodLibrary;
   date: IsoDate;
   slot: string;
@@ -386,19 +432,24 @@ export function EatingOut({
 }) {
   const id = useId();
   const estimate = useEstimateMeal();
-  const ready = (s.photos.length > 0 || s.text.trim().length >= 2) && !estimate.isPending && !s.preparing;
+  const home = s.kind === 'home';
+  const ready = (s.photos.length > 0 || s.text.trim().length >= 2 || (home && s.dish.trim().length >= 2)) && !estimate.isPending && !s.preparing;
 
   const run = () => {
     if (!ready) return;
     if (s.touched && !window.confirm('Estimate again? Your changes to this estimate will be lost.')) return;
     s.setError(null);
-    const place = s.place.trim();
+    const place = home ? '' : s.place.trim();
+    const dish = home ? s.dish.trim() : '';
     const text = s.text.trim();
     estimate.mutate(
       {
+        kind: s.kind,
         ...(place ? { place } : {}),
+        ...(dish ? { dish } : {}),
         ...(text ? { text } : {}),
-        images: s.photos.map((p) => ({ mediaType: p.mediaType, data: p.data, kind: p.kind })),
+        images: s.photos.map((p) => ({ mediaType: p.mediaType, data: p.data, kind: s.photoKind(p) })),
+        search: s.search,
       },
       { onSuccess: s.receive, onError: (e) => s.setError(errorContent(e)) },
     );
@@ -411,14 +462,28 @@ export function EatingOut({
     void s.addPhotos(files);
   };
 
-  const capture = (
-    <div className="flex flex-col gap-3" onPaste={paste}>
+  const enter = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      run();
+    }
+  };
+
+  const restaurantFields = (
+    <>
       <label className="flex flex-col gap-1 text-[13px] font-semibold" htmlFor={`${id}-place`}>
         <span>
           {mobile ? 'Where are you?' : 'Where were you?'} <span className="font-normal text-muted">optional</span>
         </span>
         <input id={`${id}-place`} value={s.place} maxLength={120} placeholder="The Keg · Prince George" onChange={(e) => s.setPlace(e.target.value)} className={`${inputCls} font-normal`} />
         <span className="text-xs font-normal text-muted">Chains often publish nutrition. Naming it helps the estimate.</span>
+      </label>
+      <label htmlFor={`${id}-search`} className={`flex min-h-11 items-start gap-2.5 text-[13px] ${s.canSearch ? '' : 'opacity-60'}`}>
+        <input id={`${id}-search`} type="checkbox" checked={s.search} disabled={!s.canSearch} onChange={(e) => s.setSearch(e.target.checked)} className="mt-0.5 h-4 w-4 flex-none" />
+        <span>
+          <span className="font-semibold">Look up published nutrition</span>
+          <span className="block text-xs text-muted">{s.canSearch ? 'Searches the web for this place’s nutrition. A few seconds slower.' : 'Name the place to look it up.'}</span>
+        </span>
       </label>
       <Photos s={s} mobile={mobile} />
       <label className="flex flex-col gap-1 text-[13px] font-semibold" htmlFor={`${id}-text`}>
@@ -430,16 +495,50 @@ export function EatingOut({
           maxLength={2000}
           placeholder="8 oz sirloin, garlic mashed instead of fries, side caesar. Shared the bread, had 2 pieces. Pint of lager."
           onChange={(e) => s.setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-              e.preventDefault();
-              run();
-            }
-          }}
+          onKeyDown={enter}
           className={`${inputCls} resize-none font-normal`}
         />
         <span className="text-xs font-normal text-muted">Swaps, sides, sauces, how much you ate, and drinks all help.</span>
       </label>
+    </>
+  );
+
+  const homeFields = (
+    <>
+      <Photos s={s} mobile={mobile} />
+      <label className="flex flex-col gap-1 text-[13px] font-semibold" htmlFor={`${id}-dish`}>
+        What was it?
+        <input id={`${id}-dish`} value={s.dish} maxLength={120} placeholder="Lasagna, caesar salad, garlic bread" onChange={(e) => s.setDish(e.target.value)} className={`${inputCls} font-normal`} />
+      </label>
+      <label className="flex flex-col gap-1 text-[13px] font-semibold" htmlFor={`${id}-text`}>
+        What’s in it?
+        <textarea
+          id={`${id}-text`}
+          rows={mobile ? 3 : 4}
+          value={s.text}
+          maxLength={2000}
+          placeholder="Beef and pork, ricotta, mozzarella, tomato sauce. A big square, about a sixth of the pan. Salad with creamy dressing, one piece of garlic bread."
+          onChange={(e) => s.setText(e.target.value)}
+          onKeyDown={enter}
+          className={`${inputCls} resize-none font-normal`}
+        />
+        <span className="text-xs font-normal text-muted">Ingredients, how it was cooked, and how much you had all help.</span>
+      </label>
+    </>
+  );
+
+  const capture = (
+    <div className="flex flex-col gap-3" onPaste={paste}>
+      <Segmented
+        label="What kind of meal"
+        value={s.kind}
+        onChange={s.setKind}
+        options={[
+          { key: 'home', label: 'Home-cooked' },
+          { key: 'restaurant', label: 'Restaurant' },
+        ]}
+      />
+      {home ? homeFields : restaurantFields}
       {s.error && <ErrorNote>{s.error}</ErrorNote>}
       <div className="flex flex-col gap-1">
         <Button variant="primary" disabled={!ready} onClick={run}>
@@ -459,10 +558,12 @@ export function EatingOut({
     </div>
   );
 
+  const working = s.search ? `Looking up ${s.place.trim()}…` : 'Working out your meal…';
+
   const panel =
     estimate.isPending ? (
       <div className="flex flex-auto items-center justify-center">
-        <Spinner label="Working out your meal…" />
+        <Spinner label={working} />
       </div>
     ) : s.stage === 'questions' && s.result ? (
       <Questions s={s} result={s.result} mobile={mobile} />
@@ -471,7 +572,11 @@ export function EatingOut({
     ) : (
       <div className="flex flex-auto flex-col items-center justify-center gap-1 p-6 text-center">
         <div className="text-[15px] font-semibold">Your estimate shows up here</div>
-        <p className="m-0 text-[13px] text-muted">Add a photo of your plate or the menu, say what you had, then press Estimate my meal. You’ll see each item with a range and change anything before it’s logged.</p>
+        <p className="m-0 text-[13px] text-muted">
+          {home
+            ? 'Add a photo of your plate, say what it was and what’s in it, then press Estimate my meal. You’ll see each item with a range and change anything before it’s logged.'
+            : 'Add a photo of your plate or the menu, say what you had, then press Estimate my meal. You’ll see each item with a range and change anything before it’s logged.'}
+        </p>
       </div>
     );
 
@@ -481,7 +586,7 @@ export function EatingOut({
         <>
           {modeSwitch}
           {capture}
-          {estimate.isPending && <Spinner label="Working out your meal…" />}
+          {estimate.isPending && <Spinner label={working} />}
         </>
       );
     }

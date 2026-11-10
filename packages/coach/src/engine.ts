@@ -31,6 +31,8 @@ export interface CallUsage extends CoachUsage {
   effort?: Effort;
   /** A stopped stream never reports its output tokens, so they're estimated. */
   estimated?: boolean;
+  /** Web searches the call ran, already priced into `costUsd` (DECISIONS #104). */
+  webSearches?: number;
 }
 
 /** Where a turn starts and whether it may use the build model at all. */

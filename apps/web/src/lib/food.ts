@@ -31,7 +31,7 @@ export const SOURCE_LINE: Record<FoodSource, string> = {
   usda: 'USDA FoodData Central',
   off: 'Open Food Facts',
   manual: 'Entered by hand',
-  estimate: 'Estimated by AI from a restaurant meal',
+  estimate: 'Estimated by AI from a meal',
 };
 
 /** Macro colours. */

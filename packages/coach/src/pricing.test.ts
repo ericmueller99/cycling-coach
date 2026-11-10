@@ -50,6 +50,12 @@ describe('priceUsage', () => {
     expect(costUsd).toBeCloseTo((1000 * 2 + 100 * 10) / M);
   });
 
+  it('adds a cent per web search to the tokens', () => {
+    const { costUsd, webSearches } = priceUsage('claude-sonnet-5-5', { input_tokens: 1000, output_tokens: 100, server_tool_use: { web_search_requests: 2 } });
+    expect(webSearches).toBe(2);
+    expect(costUsd).toBeCloseTo((1000 * 2 + 100 * 10) / M + 0.02);
+  });
+
   it('bills every attempt of a fallback, each at its own model, not just the final one', () => {
     const { usage: u, costUsd } = priceUsage('claude-opus-5', {
       input_tokens: 500,

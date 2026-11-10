@@ -187,7 +187,7 @@ export function useAdjustFood() {
   return useMutation({ mutationFn: async (input: FoodAdjustInput) => unwrap(await api.api.food.adjust.$post({ json: input })) });
 }
 
-/** Eating out: photos and words to an itemised estimate (nothing is saved or kept). */
+/** Estimate: photos and words to an itemised estimate of a home-cooked or restaurant meal (nothing is saved or kept). */
 export function useEstimateMeal() {
   return useMutation({ mutationFn: async (input: EstimateInput) => unwrap(await api.api.food.estimate.$post({ json: input })) });
 }

@@ -14,7 +14,7 @@ export interface ModelRouter {
   build: ModelChoice;
   /** Thread titles and the food calls. */
   small: string;
-  /** Estimating a restaurant meal from photos (DECISIONS #94). One of `SMALL_MODELS`: never Opus. */
+  /** Estimating a home-cooked or restaurant meal from photos and words (DECISIONS #94, #104). One of `SMALL_MODELS`: never Opus. */
   estimate: ModelChoice;
 }
 
