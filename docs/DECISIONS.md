@@ -243,6 +243,13 @@ week in place itself (browser scroll anchoring off) so prepended weeks and late-
 above the view don't make it jump. The detail panel is sticky beside the grid, or a bottom sheet
 on phones, since it can no longer sit below an endless grid.
 
+*Nov 10:* the anchor is now the top week's position in the list's content, not the viewport, and
+one `settle()` compensates for any shift before it re-reads the anchor. It runs on every commit (a
+layout effect), from the ResizeObserver and from the scroll frame. Before, a scroll frame could run
+between a prepend's commit and the ResizeObserver, re-read the anchor from the shifted layout and
+adopt the shift, which made the view jump about 8 weeks (two months) back and then snap forward
+while the athlete scrolled up.
+
 **Rejected.** *Paged months that fill the screen* — still jumps at month edges. *One query for the
 whole range* — refetches everything (and hits intervals.icu) on every extension.
 

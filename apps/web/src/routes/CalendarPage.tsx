@@ -279,11 +279,14 @@ function ScrollingCalendar({ today, initialWeek }: { today: string; initialWeek:
   const gridRef = useRef<HTMLDivElement>(null);
   const topRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  /** The topmost visible week and where it sat, so layout changes above it don't move the view. */
-  const anchor = useRef<{ week: string; top: number } | null>(null);
+  /**
+   * The topmost visible week and where it sits in the list's content (not the viewport), so layout
+   * changes above it don't move the view. Scrolling never changes `pos`; only rows above the week do.
+   */
+  const anchor = useRef<{ week: string; pos: number } | null>(null);
   /** A week to scroll to once it's rendered: today's week centred (on mount, Today). */
   const pendingJump = useRef<{ week: string; align: 'top' | 'center' } | null>({ week: initialWeek, align: 'center' });
-  const [jumpTick, setJumpTick] = useState(0);
+  const [, setJumpTick] = useState(0);
   /** The last jump; re-applied on every layout change until a wheel, touch, key or pointer event. */
   const pinned = useRef<{ week: string; align: 'top' | 'center' } | null>(null);
 
@@ -317,47 +320,8 @@ function ScrollingCalendar({ today, initialWeek }: { today: string; initialWeek:
   /** Where the visible grid starts: below the sticky weekday labels. */
   const stickyBottom = () => Math.max(labelsRef.current?.getBoundingClientRect().bottom ?? 0, scrollRef.current?.getBoundingClientRect().top ?? 0);
 
-  /** Record the topmost visible week (the scroll anchor) and title the page with its month. */
-  const track = useCallback(() => {
-    const below = stickyBottom();
-    for (const el of gridRef.current?.querySelectorAll<HTMLElement>('[data-week]') ?? []) {
-      const rect = el.getBoundingClientRect();
-      // A week mostly hidden under the sticky labels isn't the one on show.
-      if (rect.bottom <= below + rect.height / 2) continue;
-      const week = el.dataset['week']!;
-      anchor.current = { week, top: rect.top };
-      // A week belongs to the month it ends in — the same rule that puts the month dividers above it.
-      const m = monthOf(addDays(week, 6));
-      setVisibleMonth((v) => (v.year === m.year && v.month === m.month ? v : m));
-      return;
-    }
-  }, []);
-
-  useEffect(() => {
-    const unpin = () => {
-      pinned.current = null;
-    };
-    const events = ['wheel', 'touchstart', 'keydown', 'pointerdown'] as const;
-    for (const e of events) window.addEventListener(e, unpin, { passive: true });
-    return () => {
-      for (const e of events) window.removeEventListener(e, unpin);
-    };
-  }, []);
-
-  useEffect(() => {
-    const scroller = scrollRef.current;
-    if (!scroller) return;
-    let frame = 0;
-    const onScroll = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(track);
-    };
-    scroller.addEventListener('scroll', onScroll, { passive: true });
-    return () => {
-      cancelAnimationFrame(frame);
-      scroller.removeEventListener('scroll', onScroll);
-    };
-  }, [track]);
+  /** Where an element starts in the scroller's content: the same whatever the scroll position. */
+  const contentPos = (el: HTMLElement, scroller: HTMLElement) => el.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
 
   /** Put a week centred in the list, or its month divider (else the week) just under the sticky labels. */
   const scrollToWeek = useCallback((week: string, align: 'top' | 'center') => {
@@ -376,35 +340,85 @@ function ScrollingCalendar({ today, initialWeek }: { today: string; initialWeek:
     return true;
   }, []);
 
-  // Weeks prepended, or chips loading into rows above the view: hold a fresh jump's target in place
-  // (rows above it may still be loading), otherwise keep the topmost week where it was.
+  /**
+   * Undo any shift above the view since the anchor was taken (weeks prepended, chips loading into
+   * rows above), or hold a fresh jump's target in place, then take a new anchor and title the page
+   * with its month. Compensating always comes first: re-reading the anchor from a shifted layout
+   * would adopt the shift, which is how a prepend once jumped the view eight weeks.
+   */
+  const settle = useCallback(() => {
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    if (pinned.current) {
+      scrollToWeek(pinned.current.week, pinned.current.align);
+    } else {
+      const a = anchor.current;
+      const el = a && weekEl(a.week);
+      if (a && el) {
+        const delta = contentPos(el, scroller) - a.pos;
+        if (Math.abs(delta) > 0.5) scroller.scrollBy(0, delta);
+      }
+    }
+    const below = stickyBottom();
+    for (const el of gridRef.current?.querySelectorAll<HTMLElement>('[data-week]') ?? []) {
+      const rect = el.getBoundingClientRect();
+      // A week mostly hidden under the sticky labels isn't the one on show.
+      if (rect.bottom <= below + rect.height / 2) continue;
+      const week = el.dataset['week']!;
+      anchor.current = { week, pos: contentPos(el, scroller) };
+      // A week belongs to the month it ends in — the same rule that puts the month dividers above it.
+      const m = monthOf(addDays(week, 6));
+      setVisibleMonth((v) => (v.year === m.year && v.month === m.month ? v : m));
+      return;
+    }
+  }, [scrollToWeek]);
+
+  useEffect(() => {
+    const unpin = () => {
+      pinned.current = null;
+    };
+    const events = ['wheel', 'touchstart', 'keydown', 'pointerdown'] as const;
+    for (const e of events) window.addEventListener(e, unpin, { passive: true });
+    return () => {
+      for (const e of events) window.removeEventListener(e, unpin);
+    };
+  }, []);
+
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    let frame = 0;
+    const onScroll = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(settle);
+    };
+    scroller.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      cancelAnimationFrame(frame);
+      scroller.removeEventListener('scroll', onScroll);
+    };
+  }, [settle]);
+
+  // Size changes that don't come from this component's commits (a child's own state, images, the
+  // day panel narrowing the grid).
   useEffect(() => {
     const grid = gridRef.current;
     if (!grid) return;
-    const ro = new ResizeObserver(() => {
-      if (pinned.current) {
-        scrollToWeek(pinned.current.week, pinned.current.align);
-        track();
-        return;
-      }
-      const a = anchor.current;
-      const el = a && weekEl(a.week);
-      if (!a || !el) return;
-      const delta = el.getBoundingClientRect().top - a.top;
-      if (Math.abs(delta) > 0.5) scrollRef.current?.scrollBy(0, delta);
-      track();
-    });
+    const ro = new ResizeObserver(settle);
     ro.observe(grid);
     return () => ro.disconnect();
-  }, [track, scrollToWeek]);
+  }, [settle]);
 
+  // Every commit (weeks prepended, chips arriving) settles before the browser paints or runs a
+  // scroll frame, so the view never shows, or re-anchors on, an uncompensated shift.
   useLayoutEffect(() => {
     const jump = pendingJump.current;
-    if (!jump || !scrollToWeek(jump.week, jump.align)) return;
-    pendingJump.current = null;
-    pinned.current = jump;
-    track();
-  }, [weeks, jumpTick, track, scrollToWeek]);
+    if (jump && scrollToWeek(jump.week, jump.align)) {
+      pendingJump.current = null;
+      pinned.current = jump;
+    }
+    settle();
+  });
 
   // Re-observed whenever the range changes, so a sentinel still in reach after growing fires again.
   useEffect(() => {
