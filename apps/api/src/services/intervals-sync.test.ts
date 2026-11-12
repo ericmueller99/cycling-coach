@@ -54,7 +54,7 @@ const quiet = () => ({
 
 function syncWith(icu: Partial<Record<keyof IntervalsIcu, unknown>> | null, jobs = { full: vi.fn(), delta: vi.fn() }) {
   const integrations = { intervalsFor: async () => icu as IntervalsIcu | null };
-  return new IntervalsSync(c, integrations, { eventNameSuffix: '' } as unknown as CalendarService, jobs, () => NOW);
+  return new IntervalsSync(c, integrations, {} as unknown as CalendarService, jobs, () => NOW);
 }
 
 describe('manual sync limits (DECISIONS #75)', () => {

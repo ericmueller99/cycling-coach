@@ -110,12 +110,6 @@ export interface CoreOptions {
   otherRideSource?: OtherRideSource;
   /** Ride sources the coach mustn't read for an athlete, though they stay on show. Default: none (DECISIONS #92). */
   coachHiddenProviders?: CoachHiddenProviders;
-  /**
-   * Appended to workout names pushed to intervals.icu, e.g. " via example.com". Zwift titles the ride
-   * after the workout, so it shows wherever the ride is shared. Stripped from names read back.
-   * Default: none (DECISIONS #63).
-   */
-  eventNameSuffix?: string;
   /** How often each athlete's intervals.icu delta runs. Default 15 min; less with webhooks (DECISIONS #64). */
   intervalsSyncEveryMs?: number | undefined;
   /** How soon an athlete can repeat "Sync now" and "Full sync". Default: no limit (DECISIONS #75). */
@@ -253,7 +247,6 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     integrations,
     authorName,
     now,
-    opts.eventNameSuffix,
     (userId) => jobs.kickSoon(JOB.delta, userId, PUSH_RETRY_MS),
     routeCourses,
   );

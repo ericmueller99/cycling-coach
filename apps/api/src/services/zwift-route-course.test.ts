@@ -33,7 +33,7 @@ beforeAll(async () => {
   await ensureIndexes(db);
   c = collections(db);
   routes = new ZwiftRouteCourses(c, new ZwiftRouteData(), { forUser: async (userId) => ({ zwiftAccount: userId === FLAGGED }) }, () => now);
-  cal = new CalendarService(c, { intervalsFor: async () => null }, async () => 'Athlete', () => now, undefined, undefined, routes);
+  cal = new CalendarService(c, { intervalsFor: async () => null }, async () => 'Athlete', () => now, undefined, routes);
   await saveZwiftRoutes(c, [{ id: NEW_ROUTE, name: 'Made-up New Route', world: 'Watopia', distanceM: 10_000, ascentM: 100, leadinM: 500, leadinAscentM: 5 }], now);
 }, 120_000);
 

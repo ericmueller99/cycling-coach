@@ -19,7 +19,7 @@ const race: CalendarEvent = {
 describe('a failed push (DECISIONS #75)', () => {
   const session = { id: 'x', kind: 'workout' } as unknown as CalendarEvent;
   const service = (icu: object | null, onPushFailed: (userId: string) => Promise<void>) =>
-    new CalendarService({} as never, { intervalsFor: async () => icu as never }, async () => 'A Rider', () => new Date(), undefined, onPushFailed);
+    new CalendarService({} as never, { intervalsFor: async () => icu as never }, async () => 'A Rider', () => new Date(), onPushFailed);
 
   it('asks for a retry, so it never waits for a slow poll', async () => {
     const failed = vi.fn(async () => {});

@@ -271,32 +271,16 @@ function where(platform: Platform | undefined) {
 }
 
 /**
- * A deployment's tag on pushed workout names (`createCore`'s `eventNameSuffix`, DECISIONS #63).
- * Zwift titles the ride after the workout, so the tag travels on to wherever the ride is shared.
- * Never doubled.
- */
-export function withNameSuffix(name: string, suffix: string | undefined): string {
-  if (!suffix || name.endsWith(suffix)) return name;
-  return `${name}${suffix}`;
-}
-
-/** The name without the tag, for names read back from intervals.icu. Only an exact trailing match goes. */
-export function withoutNameSuffix(name: string, suffix: string | undefined): string {
-  if (!suffix || !name.endsWith(suffix) || name.length === suffix.length) return name;
-  return name.slice(0, -suffix.length);
-}
-
-/**
  * A planned workout for the intervals.icu calendar. Uploading our own .zwo (rather than
  * intervals.icu's text syntax) means the workout Zwift receives is exactly the one in our library.
  */
-export function buildWorkoutEvent(event: CalendarEvent, workout: Workout, zwoXml: string, nameSuffix?: string) {
+export function buildWorkoutEvent(event: CalendarEvent, workout: Workout, zwoXml: string) {
   const description = [event.coachNote, event.meta, workout.description].filter(Boolean).join('\n\n');
   return {
     category: 'WORKOUT',
     start_date_local: startDateLocal(event),
     ...where(event.platform),
-    name: withNameSuffix(event.title, nameSuffix),
+    name: event.title,
     // Always sent: an update with no description would keep the old notes there.
     description,
     moving_time: workoutMetrics(workout.segments).totalSec,

@@ -1,6 +1,6 @@
 import { STANDARD_COOLDOWN, STANDARD_WARMUP, buildZwo } from '@cycling-coach/core';
 import { describe, expect, it } from 'vitest';
-import { buildRaceEvent, buildWorkoutEvent, hiddenActivityIds, mapActivity, mapCurvePoints, mapInterval, mapPowerCurves, mapRemoteEvent, mapWellnessDays, withNameSuffix, withoutNameSuffix } from './map';
+import { buildRaceEvent, buildWorkoutEvent, hiddenActivityIds, mapActivity, mapCurvePoints, mapInterval, mapPowerCurves, mapRemoteEvent, mapWellnessDays } from './map';
 
 /** A plain 6 × 3 min VO2 session (63 min). */
 const VO2_6X3 = {
@@ -136,30 +136,6 @@ it('builds an indoor workout event carrying our .zwo', () => {
   });
   expect(body.description).toContain("Only if you didn't race Wednesday");
   expect(body.file_contents).toBe(xml);
-});
-
-describe('workout name suffix', () => {
-  const workout = { ...VO2_6X3, id: 'w1', source: 'seed' as const, createdAt: '' };
-  const event = { id: 'e1', date: '2026-11-05', kind: 'workout', platform: 'zwift', type: 'intervals', title: 'VO2 6x3', tentative: false, status: 'planned', source: 'coach' } as const;
-  const suffix = ' via example.com';
-
-  it('tags the pushed name only when the deployment sets one', () => {
-    expect(buildWorkoutEvent(event, workout, '').name).toBe('VO2 6x3');
-    expect(buildWorkoutEvent(event, workout, '', suffix).name).toBe('VO2 6x3 via example.com');
-  });
-
-  it('never doubles it', () => {
-    expect(withNameSuffix('VO2 6x3 via example.com', suffix)).toBe('VO2 6x3 via example.com');
-  });
-
-  it('strips only an exact trailing match from names read back', () => {
-    expect(withoutNameSuffix('VO2 6x3 via example.com', suffix)).toBe('VO2 6x3');
-    expect(withoutNameSuffix('VO2 6x3', suffix)).toBe('VO2 6x3');
-    expect(withoutNameSuffix('Ride via example.com and back', suffix)).toBe('Ride via example.com and back');
-    expect(withoutNameSuffix('VO2 6x3 via example.org', suffix)).toBe('VO2 6x3 via example.org');
-    expect(withoutNameSuffix(suffix, suffix)).toBe(suffix);
-    expect(withoutNameSuffix('VO2 6x3 via example.com', undefined)).toBe('VO2 6x3 via example.com');
-  });
 });
 
 describe('remote events', () => {

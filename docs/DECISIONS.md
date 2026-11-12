@@ -1383,6 +1383,8 @@ prescribe by feel and heart rate and to propose an FTP from the ramp test (about
 
 ## 63. A deployment can tag pushed workout names (`eventNameSuffix`) (Nov 3)
 
+*Superseded by #105: the option is gone, and pushed workouts keep their own name.*
+
 **Decision.** `createCore` takes an optional `eventNameSuffix`, e.g. `" via example.com"`. It's appended
 to the `name` of every workout pushed to intervals.icu. The default is none, so a self-host install is
 unchanged.
@@ -2656,3 +2658,14 @@ search and comes back as `failed`. The estimate never depends on search.
   it the rider wants a lookup didn't change that. If it keeps happening with real meals, the plan's fallback is the fix: one call that
   only finds the published figures, then the estimate with them passed in.
 
+
+## 105. Pushed workouts keep their own name (Nov 10)
+
+**Decision.** `createCore`'s `eventNameSuffix` (#63) is removed. A workout pushed to intervals.icu is named after its title,
+nothing added, and the sync reads remote names as they are.
+- **Why:** no deployment uses it any more, and Strava strips a tag like this from Zwift's ride titles anyway, so it never
+  reached where it was meant to.
+- **Gone with it:** `withNameSuffix` and `withoutNameSuffix` (`providers/intervals-icu/map.ts`), and `CalendarService`'s
+  `eventNameSuffix` argument.
+- **Events pushed with a tag** keep it in intervals.icu until they're pushed again (an edit or a move renames them). An
+  edit made to one in intervals.icu brings the tagged name back as the local title; renaming it fixes that.
