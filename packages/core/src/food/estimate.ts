@@ -43,6 +43,8 @@ export function estimateMultiplier(item: EstimateItem): number {
 }
 
 export interface EstimateTotals extends EstimateRange {
+  /** The model's most likely kcal, before any lean. `nutrients.kcal` is what gets logged. */
+  likely: number;
   nutrients: Nutrients;
 }
 
@@ -52,22 +54,29 @@ const withAlcohol = (n: Nutrients, alcohol: number): Nutrients => (alcohol > 0 ?
 /** The one place an item's numbers are worked out. Rounded here, so totals add up to what's shown. */
 export function estimateItemTotals(item: EstimateItem): EstimateTotals {
   const m = estimateMultiplier(item);
-  const kcal = round5(item.kcal * m);
+  const lean = Math.min(Math.max(item.lean ?? 0, -1), 1);
+  // The lean moves the kcal toward an end of the range, and the macros with it.
+  const point = item.kcal + lean * (lean > 0 ? item.high - item.kcal : item.kcal - item.low);
+  const r = item.kcal > 0 ? point / item.kcal : 1;
+  const likely = round5(item.kcal * m);
+  const kcal = round5(point * m);
   return {
-    low: Math.min(round5(item.low * m), kcal),
-    high: Math.max(round5(item.high * m), kcal),
+    likely,
+    low: Math.min(round5(item.low * m), likely, kcal),
+    high: Math.max(round5(item.high * m), likely, kcal),
     nutrients: withAlcohol(
-      { kcal, protein: roundTo(item.protein * m, 1), carbs: roundTo(item.carbs * m, 1), fat: roundTo(item.fat * m, 1) },
-      roundTo(item.alcohol * m, 1),
+      { kcal, protein: roundTo(item.protein * m * r, 1), carbs: roundTo(item.carbs * m * r, 1), fat: roundTo(item.fat * m * r, 1) },
+      roundTo(item.alcohol * m * r, 1),
     ),
   };
 }
 
 export function estimateTotals(items: readonly EstimateItem[]): EstimateTotals {
-  const sum = { kcal: 0, low: 0, high: 0, protein: 0, carbs: 0, fat: 0, alcohol: 0 };
+  const sum = { kcal: 0, likely: 0, low: 0, high: 0, protein: 0, carbs: 0, fat: 0, alcohol: 0 };
   for (const item of items) {
     const t = estimateItemTotals(item);
     sum.kcal += t.nutrients.kcal;
+    sum.likely += t.likely;
     sum.low += t.low;
     sum.high += t.high;
     sum.protein += t.nutrients.protein;
@@ -76,6 +85,7 @@ export function estimateTotals(items: readonly EstimateItem[]): EstimateTotals {
     sum.alcohol += t.nutrients.alcohol ?? 0;
   }
   return {
+    likely: sum.likely,
     low: sum.low,
     high: sum.high,
     nutrients: withAlcohol(
@@ -85,7 +95,25 @@ export function estimateTotals(items: readonly EstimateItem[]): EstimateTotals {
   };
 }
 
-/** From the range rather than the model, so it moves when the rider changes something. */
+/**
+ * The rider slid the meal along its range: every item leans the same way, so the total moves from the
+ * meal's low to its high. 0 is back to the most likely.
+ */
+export function setEstimateLean(items: readonly EstimateItem[], lean: number): EstimateItem[] {
+  const l = Number.isFinite(lean) ? roundTo(Math.min(Math.max(lean, -1), 1), 3) : 0;
+  return items.map((item) => ({ ...item, lean: l }));
+}
+
+/** The lean that puts the total at `kcal`: a share of the way from the most likely to the end it's toward. */
+export function leanForKcal(totals: Pick<EstimateTotals, 'likely' | 'low' | 'high'>, kcal: number): number {
+  const { likely, low, high } = totals;
+  const lean = kcal >= likely ? (high > likely ? (kcal - likely) / (high - likely) : 0) : likely > low ? (kcal - likely) / (likely - low) : 0;
+  return Math.min(Math.max(lean, -1), 1);
+}
+
+export const isLeaned = (items: readonly EstimateItem[]): boolean => items.some((i) => (i.lean ?? 0) !== 0);
+
+/** From the range rather than the model, so it moves when the rider changes something. Pass `likely`, so a lean doesn't. */
 export function estimateConfidence(kcal: number, range: EstimateRange): EstimateConfidence {
   if (kcal <= 0) return 'low';
   const width = (range.high - range.low) / kcal;

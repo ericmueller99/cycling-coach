@@ -2669,3 +2669,17 @@ nothing added, and the sync reads remote names as they are.
   `eventNameSuffix` argument.
 - **Events pushed with a tag** keep it in intervals.icu until they're pushed again (an edit or a move renames them). An
   edit made to one in intervals.icu brings the tagged name back as the local title; renaming it fixes that.
+
+## 106. An estimate can be logged anywhere in its range (Nov 13)
+
+**Decision.** The range in an estimate's header is a slider. The rider can log the meal anywhere from its low to its
+high, not only at the most likely. The macros move with the kcal.
+- **The position lives on the items**, as `lean` (-1 is the low end, 0 or absent the most likely, 1 the high end), and
+  `core.estimateItemTotals` applies it. The server works out every number from the items it's sent (#94), so a
+  web-only number would be lost on Log. With the lean on the items, the cards, the header, the logged entry, a saved
+  food and a later Change portions all agree, and a portion change keeps the lean.
+- **One slider for the meal, not one per item.** The slider sets the same lean on every item, so the total moves
+  steadily from the meal's low to its high (`leanForKcal`). An item added later starts at 0, and the slider puts it
+  back in step when it's next moved. Per-item sliders would mean four more controls for a guess.
+- **Confidence is read off the most likely** (`EstimateTotals.likely`), so sliding doesn't change the label.
+- `lean` is optional and has no default (rule 1b: `caloriesEditSchema` carries items). Older entries read as 0.

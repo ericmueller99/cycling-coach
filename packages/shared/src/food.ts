@@ -884,6 +884,11 @@ export const estimateItemSchema = z.object({
   assumed: z.string().trim().max(200),
   /** The published page the numbers came from, when a search found one. */
   source: estimateSourceSchema.optional(),
+  /**
+   * Where in its range the rider put it: 0 (or absent) is the most likely, -1 the low end, 1 the high end.
+   * No default (rule 1b): `caloriesEditSchema` carries items.
+   */
+  lean: z.number().min(-1).max(1).optional(),
 });
 export type EstimateItem = z.infer<typeof estimateItemSchema>;
 

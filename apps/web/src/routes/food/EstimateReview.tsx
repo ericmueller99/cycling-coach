@@ -1,5 +1,6 @@
-import { estimateAmount, estimateConfidence, estimateItemTotals, estimateStep, estimateTotals, formatPortion, otherSizeHint, setEstimateAmount } from '@cycling-coach/core';
+import { estimateAmount, estimateConfidence, estimateItemTotals, estimateStep, estimateTotals, formatPortion, isLeaned, leanForKcal, otherSizeHint, setEstimateAmount, setEstimateLean } from '@cycling-coach/core';
 import type { EstimateItem } from '@cycling-coach/shared';
+import { useState } from 'react';
 import { Chip, Stepper } from '../../components/ui';
 import { XIcon } from '../../components/icons';
 import { AMBER, fmtKcal } from '../../lib/food';
@@ -16,14 +17,28 @@ export function itemTitle(item: EstimateItem): string {
 
 const CONFIDENCE = { low: 'Low confidence', medium: 'Medium confidence', high: 'High confidence' } as const;
 
-/** The header: every number here is the sum of the cards below it. */
-export function EstimateHeader({ items, left, isToday }: { items: readonly EstimateItem[]; left: number | null; isToday: boolean }) {
-  const { low, high, nutrients } = estimateTotals(items);
-  const confidence = estimateConfidence(nutrients.kcal, { low, high });
+/**
+ * The header: every number here is the sum of the cards below it. With `onItemsChange` the range is a
+ * slider, for logging anywhere in it rather than only the most likely.
+ */
+export function EstimateHeader({ items, left, isToday, onItemsChange }: { items: readonly EstimateItem[]; left: number | null; isToday: boolean; onItemsChange?: (items: EstimateItem[]) => void }) {
+  const totals = estimateTotals(items);
+  const { low, high, likely, nutrients } = totals;
+  const confidence = estimateConfidence(likely, { low, high });
   const from = low * 0.85;
   const span = high * 1.1 - from || 1;
   const at = (n: number) => `${((n - from) / span) * 100}%`;
   const budget = isToday ? 'today’s budget' : 'this day’s budget';
+  const leaned = isLeaned(items);
+  // What the slider asked for, while the total is still what that gave: each item rounds to 5, so a
+  // 5 kcal arrow press can land back where it was, and the next one has to start from the ask.
+  const [asked, setAsked] = useState<{ kcal: number; gave: number } | null>(null);
+  const sliderKcal = asked && asked.gave === nutrients.kcal ? asked.kcal : nutrients.kcal;
+  const slide = (kcal: number) => {
+    const next = setEstimateLean(items, leanForKcal(totals, kcal));
+    setAsked({ kcal, gave: estimateTotals(next).nutrients.kcal });
+    onItemsChange?.(next);
+  };
   return (
     <section aria-label="The estimate" className="flex flex-col gap-2.5 rounded-2xl border border-[#D6E8A6] bg-[#F4FADF] p-4">
       <div className="flex items-center justify-between">
@@ -37,14 +52,43 @@ export function EstimateHeader({ items, left, isToday }: { items: readonly Estim
         <span className="text-[15px] text-[#3A414D]">kcal</span>
       </div>
       <div className="flex flex-col gap-1">
-        <div aria-hidden="true" className="relative h-2 rounded-full bg-[#E5E8EC]">
-          <span className="absolute inset-y-0 rounded-full bg-[#C8F25A]" style={{ left: at(low), width: `${((high - low) / span) * 100}%` }} />
-          <span className="absolute -top-[3px] h-3.5 w-[3px] rounded-sm bg-ink" style={{ left: at(nutrients.kcal) }} />
+        <div className={`group relative ${onItemsChange ? 'flex h-8 items-center' : ''}`}>
+          <div aria-hidden="true" className="relative h-2 w-full rounded-full bg-[#E5E8EC]">
+            <span className="absolute inset-y-0 rounded-full bg-[#C8F25A]" style={{ left: at(low), width: `${((high - low) / span) * 100}%` }} />
+            {onItemsChange && leaned && <span className="absolute -top-[3px] h-3.5 w-[2px] -translate-x-1/2 rounded-sm bg-[#3F6212]/45" style={{ left: at(likely) }} />}
+            <span
+              className={`absolute bg-ink ${onItemsChange ? '-top-[6px] h-5 w-5 -translate-x-1/2 rounded-full border-2 border-white shadow group-has-[:focus-visible]:ring-2 group-has-[:focus-visible]:ring-accent-ring' : '-top-[3px] h-3.5 w-[3px] rounded-sm'}`}
+              style={{ left: at(nutrients.kcal) }}
+            />
+          </div>
+          {onItemsChange && high > low && (
+            // Invisible, over the band, so the range keeps its look and the thumb lines up with it.
+            <input
+              type="range"
+              aria-label="Estimated kcal"
+              aria-valuetext={`${fmtKcal(nutrients.kcal)} kcal`}
+              min={low}
+              max={high}
+              step={5}
+              value={sliderKcal}
+              onChange={(e) => slide(Number(e.target.value))}
+              className="absolute inset-y-0 m-0 cursor-pointer appearance-none opacity-0 [&::-moz-range-thumb]:w-px [&::-webkit-slider-thumb]:w-px [&::-webkit-slider-thumb]:appearance-none"
+              style={{ left: at(low), width: `${((high - low) / span) * 100}%` }}
+            />
+          )}
         </div>
         <div className="flex justify-between font-mono text-xs text-muted">
           <span>likely {fmtKcal(low)}</span>
           <span>to {fmtKcal(high)}</span>
         </div>
+        {onItemsChange && leaned && (
+          <div className="text-xs text-muted">
+            Most likely {fmtKcal(likely)} ·{' '}
+            <button type="button" onClick={() => onItemsChange(setEstimateLean(items, 0))} className="border-0 bg-transparent p-0 font-semibold text-[#3F6212]">
+              Reset
+            </button>
+          </div>
+        )}
       </div>
       <div className="grid grid-cols-4 gap-1.5 text-xs text-muted">
         {(

@@ -362,7 +362,7 @@ function Review({ s, result, lib, date, slot, isToday, mobile, onClose }: { s: E
 
   return (
     <div className="flex flex-[1_0_auto] flex-col gap-4">
-      <EstimateHeader items={s.items} left={left} isToday={isToday} />
+      <EstimateHeader items={s.items} left={left} isToday={isToday} onItemsChange={s.changeItems} />
       <SearchNote result={result} place={place} />
       <div className="flex items-baseline justify-between">
         <h3 className="m-0 text-base">What’s in it</h3>

@@ -11,8 +11,11 @@ import {
   type EstimateContext,
   estimateItemTotals,
   estimateTotals,
+  isLeaned,
+  leanForKcal,
   otherSizeHint,
   setEstimateAmount,
+  setEstimateLean,
 } from './estimate';
 import { entryRef } from './portions';
 
@@ -88,6 +91,54 @@ describe('estimateTotals', () => {
   it('only carries alcohol when there is some', () => {
     expect(estimateTotals([item()]).nutrients.alcohol).toBeUndefined();
     expect(estimateTotals([item({ alcohol: 14 })]).nutrients.alcohol).toBe(14);
+  });
+});
+
+describe('leaning within the range', () => {
+  it('changes nothing at 0, or with no lean', () => {
+    expect(estimateItemTotals({ ...item(), lean: 0 })).toEqual(estimateItemTotals(item()));
+    expect(estimateItemTotals(item()).likely).toBe(340);
+  });
+
+  it('goes to either end, and takes the macros with it', () => {
+    const up = estimateItemTotals({ ...item(), lean: 1 });
+    expect(up.nutrients).toMatchObject({ kcal: 440, carbs: 51.8, fat: 23.3 });
+    expect(up).toMatchObject({ likely: 340, low: 260, high: 440 });
+    const down = estimateItemTotals({ ...item(), lean: -1 });
+    expect(down.nutrients).toMatchObject({ kcal: 260, carbs: 30.6 });
+    expect(estimateItemTotals({ ...item(), lean: 0.5 }).nutrients.kcal).toBe(390);
+  });
+
+  it('moves the whole meal to the kcal the slider asked for, keeping the most likely', () => {
+    const items = [item(), item({ kcal: 142, low: 100, high: 190 })];
+    const before = estimateTotals(items);
+    expect(before).toMatchObject({ likely: 480, low: 360, high: 630 });
+    const lean = leanForKcal(before, 555);
+    expect(lean).toBe(0.5);
+    const after = estimateTotals(setEstimateLean(items, lean));
+    expect(after).toMatchObject({ likely: 480, low: 360, high: 630 });
+    expect(after.nutrients.kcal).toBe(555);
+    expect(estimateTotals(setEstimateLean(items, leanForKcal(before, 630))).nutrients.kcal).toBe(630);
+    expect(estimateTotals(setEstimateLean(items, leanForKcal(before, 360))).nutrients.kcal).toBe(360);
+  });
+
+  it('never leans past an end', () => {
+    expect(leanForKcal({ likely: 480, low: 360, high: 630 }, 900)).toBe(1);
+    expect(leanForKcal({ likely: 480, low: 480, high: 480 }, 400)).toBe(0);
+    expect(setEstimateLean([item()], 4)[0]!.lean).toBe(1);
+  });
+
+  it('says when the rider has moved it', () => {
+    expect(isLeaned([item()])).toBe(false);
+    expect(isLeaned(setEstimateLean([item()], 0.2))).toBe(true);
+    expect(isLeaned(setEstimateLean([item()], 0))).toBe(false);
+  });
+
+  it('keeps the lean through a change of amount or size', () => {
+    const leaned = setEstimateLean([item()], 1)[0]!;
+    expect(estimateItemTotals(setEstimateAmount(leaned, 0.5)).nutrients.kcal).toBe(220);
+    const steakUp = setEstimateLean([parse({ items: [steak] }).items[0]!], 1)[0]!;
+    expect(estimateItemTotals({ ...steakUp, size: 2 })).toMatchObject({ likely: 600, nutrients: { kcal: 675 } });
   });
 });
 
