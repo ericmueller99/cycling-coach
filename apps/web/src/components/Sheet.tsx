@@ -1,5 +1,6 @@
-import { useEffect, useId, useRef, type ReactNode } from 'react';
+import { useId, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { useModal } from './useModal';
 import { XIcon } from './icons';
 
 /**
@@ -34,22 +35,7 @@ export function Sheet({
 }) {
   const titleId = useId();
   const ref = useRef<HTMLElement>(null);
-  const close = useRef(onClose);
-  close.current = onClose;
-
-  useEffect(() => {
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    ref.current?.focus();
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && close.current();
-    window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = overflow;
-      previous?.focus();
-    };
-  }, []);
+  useModal(ref, onClose);
 
   return createPortal(
     <div className="fixed inset-0 z-50">

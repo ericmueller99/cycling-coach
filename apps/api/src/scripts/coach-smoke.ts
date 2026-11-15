@@ -76,7 +76,7 @@ async function turn(label: string, messages: ApiMessageParam[], route?: TurnRout
     recordUsage: async (u) => void usage.push(u),
   })) {
     if (e.type === 'text_delta') text += e.text;
-    if (e.type === 'discard') text = '';
+    if (e.type === 'discard' && !e.keepText) text = '';
     if (e.type === 'error') error = e.message;
     if (e.type === 'model') moved = e.model;
   }
@@ -106,15 +106,21 @@ if (second.cacheRead === 0) process.exit(1);
 
 if (!buildModel) fail('The router has one model, so nothing routes.');
 
-// A build tool moves the turn to the build model: the live stream has to stop cleanly.
+// A build tool moves the turn to the build model: the live stream has to stop cleanly. The words the
+// chat model wrote first stay, followed by a system note the build model carries on from (DECISIONS #110).
 const ask: ApiMessageParam[] = [
-  { role: 'user', content: 'Smoke test: call propose_plan now with one easy 30 minute ride on 2026-01-02. Then reply "done".' },
+  {
+    role: 'user',
+    content: 'Smoke test: first write one short sentence saying you will set it up, then call propose_plan with one easy 30 minute ride on 2026-01-02. Then reply "done".',
+  },
   context,
 ];
 const built = await turn('build', ask);
 if (!built.ok) fail('The build turn failed.');
 if (built.moved !== buildModel) fail(`The turn never moved to ${buildModel}.`);
 console.log('moved to the build model ✓');
+if (JSON.stringify(built.kept[1] ?? '').includes('An automated note from the app')) console.log('kept the chat model\'s words, and the build model carried on from the note ✓');
+else console.log('note: the chat model wrote nothing before the build tool, so the kept-words path went untested');
 
 // One thread across both models, the way routing uses it. Build-model thinking can't be read by the
 // chat model; that has to be dropped quietly, not rejected.

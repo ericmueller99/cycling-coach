@@ -1,5 +1,6 @@
 import type { Food, Portion } from '@cycling-coach/shared';
 import { useEffect, useRef, useState } from 'react';
+import { Dialog } from '../../components/Dialog';
 import { Button, ErrorNote } from '../../components/ui';
 import { useFoodMutations } from '../../lib/foodQueries';
 import { errorMessage } from '../../lib/queries';
@@ -15,24 +16,10 @@ interface Review {
   previews: string[];
 }
 
-/**
- * A nutrition label read inside the recipe / meal builder or the food intro: photos → one
- * small-model read → the usual food form to check → an explicit save. In a builder there are two
- * saves: both create the food (an ingredient or meal item always points at one of the user's
- * foods), and only one also adds it. With no `target` there's nothing to add it to.
- */
-export function LabelAddPanel({
-  target,
-  nameHint = '',
-  onSaved,
-  onCancel,
-}: {
-  target?: 'recipe' | 'meal';
-  /** The search text — the name when the label doesn't show one. */
-  nameHint?: string;
-  onSaved: (food: Food, portion: Portion, add: boolean) => void;
-  onCancel?: () => void;
-}) {
+const HINT = "Photo of the nutrition facts — add the front of the pack as a 2nd photo for the name. Read once by a small model; you check it before it's saved.";
+
+/** Photos → one small-model read → the usual food form to check → an explicit save (`add` as the caller asks). */
+function useLabelAdd({ nameHint, onSaved }: { nameHint: string; onSaved: (food: Food, portion: Portion, add: boolean) => void }) {
   const m = useFoodMutations();
   const [review, setReview] = useState<Review | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -43,7 +30,7 @@ export function LabelAddPanel({
     },
   });
 
-  // This card holds the previews once read; drop them when it goes away.
+  // The previews live as long as this flow; drop them when it goes away.
   const held = useRef<string[]>([]);
   held.current = review?.previews ?? capture.photos.map((p) => p.preview);
   useEffect(() => () => held.current.forEach((u) => URL.revokeObjectURL(u)), []);
@@ -56,39 +43,36 @@ export function LabelAddPanel({
     m.createFood.mutate(parsed.input, { onSuccess: (food) => onSaved(food, food.defaultPortion, add), onError: (e) => setError(errorMessage(e)) });
   };
 
-  const cancel = onCancel && (
-    <button type="button" onClick={onCancel} className="border-0 bg-transparent p-0 text-[13px] font-medium text-accent-ink">
-      Cancel
-    </button>
+  const reviewBody = review && (
+    <>
+      <ReadBanner previews={review.previews} read={review.read} check={[...review.flags].filter((f) => f !== 'barcode').length} note={review.note} />
+      <FoodForm draft={review.draft} onChange={(draft) => setReview({ ...review, draft })} flags={review.flags} />
+    </>
   );
+  return { capture, review, reviewBody, error, save, busy: m.createFood.isPending };
+}
 
+/** The label read inline, on the food intro: there's nothing else on that page to tap, and nothing to add it to. */
+export function LabelAddPanel({ onSaved }: { onSaved: (food: Food) => void }) {
+  const { capture, review, reviewBody, error, save, busy } = useLabelAdd({ nameHint: '', onSaved: (food) => onSaved(food) });
   return (
     <div className="flex flex-col gap-3 rounded-[12px] border border-line bg-surface-alt p-3">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[13px] font-semibold">{review ? 'Check and save' : 'Read a nutrition label'}</span>
-        {cancel}
-      </div>
+      <span className="text-[13px] font-semibold">{review ? 'Check and save' : 'Read a nutrition label'}</span>
       {review ? (
         <>
-          <ReadBanner previews={review.previews} read={review.read} check={[...review.flags].filter((f) => f !== 'barcode').length} note={review.note} />
-          <FoodForm draft={review.draft} onChange={(draft) => setReview({ ...review, draft })} flags={review.flags} />
+          {reviewBody}
           {error && <ErrorNote>{error}</ErrorNote>}
           <div className="flex flex-wrap items-center gap-2">
             <DraftPreview draft={review.draft} />
             <span className="grow" />
-            <Button variant={target ? 'secondary' : 'primary'} disabled={m.createFood.isPending} onClick={() => save(false)}>
-              {target ? 'Save to my foods only' : 'Save to my foods'}
+            <Button variant="primary" disabled={busy} onClick={() => save(false)}>
+              Save to my foods
             </Button>
-            {target && (
-              <Button variant="primary" disabled={m.createFood.isPending} onClick={() => save(true)}>
-                Save to my foods &amp; add to {target}
-              </Button>
-            )}
           </div>
         </>
       ) : (
         <>
-          <div className="text-xs text-muted">Photo of the nutrition facts — add the front of the pack as a 2nd photo for the name. Read once by a small model; you check it before it's saved.</div>
+          <div className="text-xs text-muted">{HINT}</div>
           <PhotoTiles capture={capture} compact />
           <div className="flex justify-end">
             <Button variant="primary" disabled={!capture.canRead} onClick={capture.read}>
@@ -98,5 +82,74 @@ export function LabelAddPanel({
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * A nutrition label read from the recipe / meal builder, over it (DECISIONS #109): while it's open its own
+ * actions are the only ones, and Cancel or a save lands back on the builder. Both saves create the food (an
+ * ingredient or meal item always points at one of the user's foods); only one also adds it.
+ */
+export function LabelAddDialog({
+  target,
+  nameHint = '',
+  onSaved,
+  onClose,
+}: {
+  target: 'recipe' | 'meal';
+  /** The search text — the name when the label doesn't show one. */
+  nameHint?: string;
+  onSaved: (food: Food, portion: Portion, add: boolean) => void;
+  onClose: () => void;
+}) {
+  const { capture, review, reviewBody, error, save, busy } = useLabelAdd({ nameHint, onSaved });
+  const cancel = (
+    <Button variant="ghost" onClick={onClose}>
+      Cancel
+    </Button>
+  );
+  return (
+    <Dialog
+      title={review ? 'Check and save' : 'Read a nutrition label'}
+      width={640}
+      tall={!!review}
+      panel
+      onClose={onClose}
+      footer={
+        review ? (
+          <div className="flex flex-col gap-2">
+            {error && <ErrorNote>{error}</ErrorNote>}
+            <div className="flex flex-wrap items-center gap-2">
+              <DraftPreview draft={review.draft} />
+              <span className="grow" />
+              {cancel}
+              <Button disabled={busy} onClick={() => save(false)}>
+                Save to my foods only
+              </Button>
+              <Button variant="primary" disabled={busy} onClick={() => save(true)}>
+                Save to my foods &amp; add to {target}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            {cancel}
+            <span className="grow" />
+            <Button variant="primary" disabled={!capture.canRead} onClick={capture.read}>
+              {capture.reading ? 'Reading…' : 'Read it'}
+            </Button>
+          </div>
+        )
+      }
+    >
+      {review ? (
+        reviewBody
+      ) : (
+        <>
+          <div className="text-[13px] text-muted">{HINT}</div>
+          <PhotoTiles capture={capture} />
+        </>
+      )}
+    </Dialog>
   );
 }

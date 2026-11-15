@@ -155,7 +155,9 @@ export type UiBlock =
   /** A Log this button: the athlete's words, opened in the food logger. Nothing is stored but the words. */
   | { type: 'food_log_offer'; phrase: string }
   /** The coach rewrote its outlook (DECISIONS #101); `previous` is what Undo puts back (none: clear it). */
-  | { type: 'outlook'; text: string; previous?: string | undefined };
+  | { type: 'outlook'; text: string; previous?: string | undefined }
+  /** The turn moved to the build model here, when the chat model opened `tool` (DECISIONS #110). */
+  | { type: 'handoff'; model: string; tool: string };
 
 export interface UiMessage {
   id: string;
@@ -223,8 +225,11 @@ export type CoachEvent =
   | { type: 'block'; block: Exclude<UiBlock, { type: 'text' }> }
   | { type: 'thread_title'; title: string }
   | { type: 'done'; usage: CoachUsage }
-  /** Take back what the model call being dropped showed: its text, and these tool chips. */
-  | { type: 'discard'; toolUseIds: string[] }
+  /**
+   * Take back what the model call being dropped showed: its text, and these tool chips. `keepText`:
+   * a handoff kept the text (it's in the transcript), so only the chips go (DECISIONS #110).
+   */
+  | { type: 'discard'; toolUseIds: string[]; keepText?: boolean }
   /** The turn moved to this model. `fallback`: the build model couldn't run, so it's the chat model. */
   | { type: 'model'; model: string; tier: CoachTier; fallback?: boolean }
   | { type: 'error'; message: string; retryable: boolean; action?: TurnStop['action'] };

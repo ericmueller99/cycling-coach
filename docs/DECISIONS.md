@@ -1456,6 +1456,7 @@ work that matters most. This replaces #11's single model. Titles move to the sma
 - **Use {model}** in the composer sends one message to the build model, for a question no tool would catch.
 - Set both to the same model for no routing.
 - The env vars named here are gone: see #69.
+- What a handoff keeps from the chat model's call: see #110.
 
 **Why.** Opus on every turn costs more than most people want to pay. Sonnet is exactly half of Opus on every price
 line. Plans and workouts are all tools inside one chat loop, so routing has to happen inside it. Sonnet → Opus keeps
@@ -2748,3 +2749,49 @@ recipe editor, and saving no longer means logging.
 **Rejected.** A full-page draft route: it needs add, rename and steps on the draft API, which the editor already
 does for recipes. Keeping the inline edit mode beside the editor: two ways to do one thing in a 420 px column. Saving
 staples to the rider's foods when the editor opens (rule 1a).
+
+## 109. A builder's label photo and staple open over it, not inside it (Nov 14)
+
+**Decision.** In the recipe and meal builders (and the coach recipe pane's "Pick from my foods"), **Label photo** and a
+picked staple open as their own dialog stacked over the builder, not as a card inside its body. On a phone the dialog
+is the whole screen (`Dialog`'s `panel`); on desktop it's a centred dialog over the dimmed builder. While it's open its
+own actions are the only ones: **Cancel** (or ×, the backdrop, Esc) goes back to the builder untouched, and **Read
+it** → **Save to my foods only** / **Save to my foods & add to {recipe|meal}** land back on it too.
+- **Why.** The inline card left the builder's footer live under it. On a phone, mid-way through reading a label, the
+  rider could tap **Save & log a serving** and log a recipe they hadn't finished, with three or four calls to action in
+  view at once.
+- **Esc closes only the top modal.** `useModal` (now its own module, and used by `Sheet` too) keeps a stack of open
+  modals. Before, each listened for Esc on its own, so a stacked dialog's Esc would have closed the builder and lost it.
+- **The food intro keeps the inline panel** (`LabelAddPanel`), because nothing else on that page competes with it.
+
+**Rejected.** Hiding the builder's body and footer in place while a card is open: each of the four hosts of
+`ItemSearch` would have to opt in, and the coach pane isn't a dialog.
+
+## 110. A handoff keeps the chat model's words, and says the build model is taking over (Nov 14)
+
+**Decision.** When the chat model opens a build tool (#65), its call is still stopped, but the words it had already
+written stay. The engine takes the finished text blocks from the stream's snapshot and appends them as an assistant
+message on the chat model. After them it appends a short note (kind `context`, role `user`, marked as from the app and
+not the athlete) telling the build model those words are on screen, so it shouldn't repeat them and should go straight
+to the work. The build model's request ends with that note. The call's thinking and its tool calls are still dropped. If the chat model wrote nothing first, nothing is
+kept and the same messages go up, as before.
+- **The marker:** at every handoff the stream sends a `handoff` UI block (`model`, and the `tool` that moved the turn),
+  and it's stored as `ui` on the build model's first message, so the chat keeps it on reload. The chat shows it as a
+  quiet divider ("**Opus 5.5** is planning your week"), and the working indicator uses the same words.
+- **On screen:** `discard` has `keepText`. The client lets the kept text finish showing, takes back only that call's
+  chips, and the marker comes in behind the words. A build that then can't run takes back the marker with its own
+  output, but not the kept words.
+- **Why user, not system:** the API takes a system message only after a user message or a server tool result, and
+  rejected one after the kept words (coach:smoke, Nov 14). A user-role note is valid anywhere, including when the
+  turn dies before the build model replies and the next user message follows it.
+
+**Why.** The words came in and then vanished when Opus started over, which looked like a glitch. Keeping them looks
+like the coach calling in the expert.
+
+**Rejected.**
+- *Dropping the words, as before*: the glitch.
+- *Keeping the thinking too*: on a build it's mostly the plan, and the build model would copy it instead of writing
+  its own (#65).
+- *Keeping the words on screen without telling the build model*: it opens with its own preamble, so the reply says the
+  same thing twice.
+

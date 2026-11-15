@@ -4,6 +4,7 @@ import { useSyncExternalStore } from 'react';
 import { keys } from './queries';
 import { streamCoachTurn } from './sse';
 import { TextPacer } from './textPacer';
+import { dropCall } from './turnBlocks';
 
 /**
  * The coach turn being streamed, kept outside the Coach page (DECISIONS #46). A turn outlives the
@@ -126,16 +127,6 @@ function appendText(blocks: UiBlock[], text: string): UiBlock[] {
   return [...blocks, { type: 'text', text }];
 }
 
-/** A dropped model call's output is whatever sits at the end: its text and its chips. */
-function dropCall(blocks: UiBlock[], toolUseIds: string[]): UiBlock[] {
-  const kept = [...blocks];
-  for (let last = kept.at(-1); last; last = kept.at(-1)) {
-    if (last.type !== 'text' && !(last.type === 'tool' && toolUseIds.includes(last.toolUseId))) break;
-    kept.pop();
-  }
-  return kept;
-}
-
 /**
  * Stream one turn into the store. Resolves when it's done and the thread has been refetched, with
  * whether it was refused before it started, so the page can give the user their words back.
@@ -174,7 +165,7 @@ export async function startTurn(opts: {
         started = true;
         break;
       case 'discard':
-        update(id, (l) => ({ ...l, writing: false, runningTool: undefined, blocks: dropCall(l.blocks, event.toolUseIds) }));
+        update(id, (l) => ({ ...l, writing: false, runningTool: undefined, blocks: dropCall(l.blocks, event.toolUseIds, event.keepText) }));
         break;
       case 'model':
         update(id, (l) => ({ ...l, thinking: true, model: { id: event.model, fallback: event.fallback === true } }));
@@ -232,7 +223,8 @@ export async function startTurn(opts: {
       if (event.type === 'text_delta') {
         pacer.pushText(event.text);
       } else {
-        if (event.type === 'discard') pacer.dropText();
+        // A handoff's kept words finish showing before the marker comes in behind them.
+        if (event.type === 'discard' && !event.keepText) pacer.dropText();
         pacer.pushEvent(event);
       }
     }

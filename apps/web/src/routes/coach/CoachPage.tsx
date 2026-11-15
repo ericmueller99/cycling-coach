@@ -16,7 +16,7 @@ import { settleMarkdown } from '../../lib/textPacer';
 import { abortTurn, clearDoneTurn, patchTurn, runningThreadId, setWatching, startTurn, useLiveTurn, type LiveTurn, type TurnError as TurnErrorInfo, type TurnOrigin } from '../../lib/coachTurn';
 import { useAwayReturn } from '../../lib/useAwayReturn';
 import { useIsMobile } from '../../lib/useIsMobile';
-import { MemoryChip, OutlookChip, ProposalBlock, RequestChangesContext, TextBlock, ToolChip, WorkoutBlock } from './blocks';
+import { HandoffMarker, MemoryChip, OutlookChip, ProposalBlock, RequestChangesContext, TextBlock, ToolChip, WorkoutBlock } from './blocks';
 import { dayLabel } from '../food/dayLabel';
 import { useFoodFlows } from '../food/flows';
 import { CoachFoodContext, FoodLogOfferBlock, MealIdeasBlock, RecipeRefBlock, type CoachFoodActions } from './foodBlocks';
@@ -86,6 +86,8 @@ function AssistantBlocks({ blocks, threadId, cards, live = false }: { blocks: Ui
             return <FoodLogOfferBlock key={i} phrase={b.phrase} />;
           case 'outlook':
             return <OutlookChip key={i} block={b} />;
+          case 'handoff':
+            return <HandoffMarker key={i} block={b} />;
         }
       })}
     </>

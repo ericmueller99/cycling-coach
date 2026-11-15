@@ -18,6 +18,7 @@ import { Link } from '@tanstack/react-router';
 import ReactMarkdown from 'react-markdown';
 import { CalendarAddIcon, CheckIcon, ChevronDown, LogoIcon, MemoryIcon, PlusIcon, PulseIcon, WarningIcon, XIcon } from '../../components/icons';
 import { Button, Card, ErrorNote, SessionTag } from '../../components/ui';
+import { handoffWork, modelName } from '../../lib/models';
 import { ScheduleControl } from '../../components/ScheduleControl';
 import { ZoneChart } from '../../components/ZoneChart';
 import { downloadZwo } from '../../lib/api';
@@ -678,3 +679,23 @@ export function OutlookChip({ block }: { block: Extract<UiBlock, { type: 'outloo
     </div>
   );
 }
+
+/**
+ * Where the coach handed the turn to the build model (DECISIONS #110): a quiet line between the chat
+ * model's words and the build, like calling in the expert. Stays in the chat after it's done.
+ */
+export function HandoffMarker({ block }: { block: Extract<UiBlock, { type: 'handoff' }> }) {
+  return (
+    <div role="separator" className="flex items-center gap-3 text-[13px] text-muted">
+      <span className="h-px flex-auto bg-line" />
+      <span className="flex min-w-0 items-center gap-1.5">
+        <LogoIcon size={14} className="shrink-0 text-accent-ink" />
+        <span className="truncate">
+          <strong className="font-semibold text-ink">{modelName(block.model)}</strong> is {handoffWork(block.tool)}
+        </span>
+      </span>
+      <span className="h-px flex-auto bg-line" />
+    </div>
+  );
+}
+

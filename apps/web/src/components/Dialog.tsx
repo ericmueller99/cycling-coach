@@ -1,28 +1,11 @@
-import { useEffect, useId, useRef, type ReactNode, type RefObject } from 'react';
+import { useId, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useIsMobile } from '../lib/useIsMobile';
 import { XIcon } from './icons';
 import { Sheet } from './Sheet';
+import { useModal } from './useModal';
 
-/** While mounted: takes focus and gives it back, closes on Esc, and stops the page behind scrolling. */
-export function useModal(ref: RefObject<HTMLElement | null>, onClose: () => void) {
-  const close = useRef(onClose);
-  close.current = onClose;
-
-  useEffect(() => {
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    ref.current?.focus();
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && close.current();
-    window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = overflow;
-      previous?.focus();
-    };
-  }, [ref]);
-}
+export { useModal };
 
 /**
  * A modal that is a centred dialog on desktop and the bottom sheet on phones (the food
@@ -37,6 +20,7 @@ export function Dialog({
   onClose,
   width = 640,
   tall = false,
+  panel = false,
   children,
 }: {
   title: ReactNode;
@@ -49,12 +33,14 @@ export function Dialog({
   width?: number;
   /** Fill most of the screen (lists that scroll). */
   tall?: boolean;
+  /** On a phone, the whole screen: a step taken over another dialog, which it hides until it's done. */
+  panel?: boolean;
   children: ReactNode;
 }) {
   const mobile = useIsMobile();
   if (mobile) {
     return (
-      <Sheet title={title} eyebrow={eyebrow} header={header} footer={footer} onClose={onClose} tall={tall}>
+      <Sheet title={title} eyebrow={eyebrow} header={header} footer={footer} onClose={onClose} tall={tall} panel={panel}>
         {children}
       </Sheet>
     );

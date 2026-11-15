@@ -14,7 +14,8 @@ export interface CoachConfig {
 /** A message the engine produced and the caller must append to the thread, in order. */
 export interface PersistedMessage {
   role: 'assistant' | 'user';
-  kind: 'assistant' | 'tool_results';
+  /** `context` here: the note a handoff leaves for the build model, a user-role message (DECISIONS #110). */
+  kind: 'assistant' | 'tool_results' | 'context';
   content: unknown[];
   ui?: Exclude<UiBlock, { type: 'text' }>[];
   /** The model that wrote it (assistant messages). */
@@ -91,6 +92,26 @@ export function withoutDeclinedAttempt(content: Anthropic.Beta.BetaContentBlock[
 }
 
 /**
+ * What the build model reads after the chat model's kept words (DECISIONS #110). A user-role message:
+ * the API takes a system message only after a user message or a server tool result.
+ */
+export const HANDOFF_NOTE =
+  "(An automated note from the app, not from the athlete.) The build model takes over this turn here. Your words " +
+  "above are already on the athlete's screen: don't repeat or re-introduce them, and don't reply to this note. Go " +
+  'straight to the work, starting with the tool call that was not run.';
+
+/**
+ * The text a handoff keeps from the stopped call: finished text blocks only. Its thinking is left
+ * out, because on a build it's mostly the draft the build model should write itself, and so is the
+ * tool call that was never run.
+ */
+export function keptHandoffText(content: Anthropic.Beta.BetaContentBlock[] | undefined): Anthropic.Beta.BetaTextBlock[] {
+  return withoutDeclinedAttempt(content ?? [])
+    .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === 'text' && b.text.trim() !== '')
+    .map((b) => ({ type: 'text', text: b.text, citations: null }));
+}
+
+/**
  * Every coach call goes through here (ESLint keeps the SDK inside this package). One engine over the
  * Messages API; a different runtime would re-wrap the same tools and ports (docs/DECISIONS.md #1).
  */
@@ -113,10 +134,11 @@ export class CoachEngine {
 
   /**
    * One coach turn. It runs on the chat model until the model opens a build tool: that call is
-   * stopped, nothing from it is kept, and the same messages go to the build model, so a plan is
-   * really written there and not copied from a draft. The chat model's earlier tool calls stay in
-   * the history, and the build model reads its thinking. The router is read once, here, so a change
-   * made during a turn starts with the next one.
+   * stopped and its tool call and thinking are dropped, so a plan is really written on the build
+   * model and not copied from a draft. Words it had already written stay, with a note telling the
+   * build model to carry on from them (DECISIONS #110). The chat model's earlier tool calls stay in
+   * the history, and the build model reads their thinking. The router is read once, here, so a
+   * change made during a turn starts with the next one.
    */
   async *runTurn(args: RunTurnArgs): AsyncGenerator<CoachEvent> {
     const total = emptyUsage();
@@ -128,6 +150,8 @@ export class CoachEngine {
     let tier: CoachTier = canBuild ? route.start : 'chat';
     /** A refusal has already moved this turn once, so a second one ends it. */
     let refusalMoved = false;
+    /** Shown live at a handoff, and stored with the build model's first message, so it's there on reload. */
+    let pendingMarker: Extract<UiBlock, { type: 'handoff' }> | null = null;
     if (tier === 'build') await args.onBuildStart?.();
 
     const system: Anthropic.Beta.BetaTextBlockParam[] = args.system.map((text, i) => ({
@@ -175,7 +199,7 @@ export class CoachEngine {
       /** Input usage, known from the first event. It's what a stopped stream still costs. */
       let opened: Anthropic.Beta.BetaUsage | null = null;
       let settled = false;
-      let handoff = false;
+      let handoff: string | null = null;
       /** Tool chips and text shown from this call, to take back if the call is dropped. */
       const shownChips: string[] = [];
 
@@ -202,7 +226,7 @@ export class CoachEngine {
               const tool = findTool(block.name);
               if (tool && 'tier' in tool && tool.tier === 'build') {
                 if (tier === 'chat' && canBuild) {
-                  handoff = true;
+                  handoff = block.name;
                   break; // Leaving the loop stops the stream.
                 }
                 if (tier === 'build') await args.onBuildTool?.(new Date(startedAt));
@@ -225,11 +249,22 @@ export class CoachEngine {
 
         if (handoff) {
           await recordStopped('handoff');
-          yield { type: 'discard', toolUseIds: shownChips };
+          const kept = keptHandoffText(stream.currentMessage?.content);
+          if (kept.length) {
+            // Appended, never edited: the athlete already read these words, so they stay, and the
+            // build model is told to carry on from them rather than start over.
+            const note: Anthropic.Beta.BetaTextBlockParam[] = [{ type: 'text', text: HANDOFF_NOTE }];
+            await args.persist({ role: 'assistant', kind: 'assistant', content: kept, model });
+            await args.persist({ role: 'user', kind: 'context', content: note });
+            messages.push({ role: 'assistant', content: kept }, { role: 'user', content: note });
+          }
+          yield { type: 'discard', toolUseIds: shownChips, keepText: true };
           tier = 'build';
           iteration = 0; // Bounded: a turn moves up at most once.
           await args.onBuildStart?.();
           yield { type: 'model', model: router.build.model, tier };
+          pendingMarker = { type: 'handoff', model: router.build.model, tool: handoff };
+          yield { type: 'block', block: pendingMarker };
           continue;
         }
 
@@ -245,6 +280,7 @@ export class CoachEngine {
         if (err instanceof Anthropic.APIError) {
           // A build that can't run shouldn't lose the turn: the chat model carries on.
           if (retryable(err) && tier === 'build') {
+            pendingMarker = null;
             yield* this.dropToChat(args, shownChips, router);
             tier = 'chat';
             canBuild = false;
@@ -293,6 +329,7 @@ export class CoachEngine {
         }
         if (!refusalMoved && tier === 'build') {
           refusalMoved = true;
+          pendingMarker = null;
           yield* this.dropToChat(args, shownChips, router);
           tier = 'chat';
           canBuild = false;
@@ -311,7 +348,8 @@ export class CoachEngine {
       // Verbatim, including thinking blocks — they're only valid when replayed exactly.
       const content = withoutDeclinedAttempt(message.content);
       const assistant: Anthropic.Beta.BetaMessageParam = { role: 'assistant', content };
-      await args.persist({ role: 'assistant', kind: 'assistant', content, model: message.model });
+      await args.persist({ role: 'assistant', kind: 'assistant', content, model: message.model, ...(pendingMarker ? { ui: [pendingMarker] } : {}) });
+      pendingMarker = null;
       if (tier === 'build') await args.onBuildDone?.();
       messages.push(assistant);
 

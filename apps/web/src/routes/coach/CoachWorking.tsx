@@ -1,7 +1,7 @@
 import type { UiBlock } from '@cycling-coach/shared';
 import { useEffect, useState } from 'react';
 import type { LiveTurn } from '../../lib/coachTurn';
-import { modelName } from '../../lib/models';
+import { handoffWork, modelName } from '../../lib/models';
 
 /** What the coach is doing, in words, while a tool runs. */
 const TOOL_LABELS: Record<string, string> = {
@@ -42,7 +42,12 @@ function label(turn: LiveTurn) {
   const last = turn.blocks.at(-1);
   if (last && CARDS.includes(last.type)) return 'Finishing up';
   if (!turn.model) return 'Thinking';
-  return turn.model.fallback ? `Carrying on with ${modelName(turn.model.id)}` : `Building with ${modelName(turn.model.id)}`;
+  if (turn.model.fallback) return `Carrying on with ${modelName(turn.model.id)}`;
+  // After a handoff, the same words as the marker in the chat (DECISIONS #110).
+  const handoff = turn.blocks.findLast((b) => b.type === 'handoff');
+  if (!handoff) return `Building with ${modelName(turn.model.id)}`;
+  const work = handoffWork(handoff.tool);
+  return `${work[0]!.toUpperCase()}${work.slice(1)} with ${modelName(turn.model.id)}`;
 }
 
 /** The 4-spoke wheel on the lime tile (DESIGN 15), turning once every 1.1 s. */

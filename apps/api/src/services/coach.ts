@@ -651,7 +651,7 @@ export async function* sendMessage(
       : {}),
   })) {
     if (event.type === 'text_delta') assistantText += event.text;
-    if (event.type === 'discard') assistantText = assistantText.slice(0, textBefore);
+    if (event.type === 'discard' && !event.keepText) assistantText = assistantText.slice(0, textBefore);
     yield event;
   }
 

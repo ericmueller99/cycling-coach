@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { CoachEvent } from '@cycling-coach/shared';
 import { describe, expect, it, vi } from 'vitest';
-import { CoachEngine, withoutDeclinedAttempt, type CallUsage, type PersistedMessage, type RunTurnArgs } from './engine';
+import { CoachEngine, HANDOFF_NOTE, withoutDeclinedAttempt, type CallUsage, type PersistedMessage, type RunTurnArgs } from './engine';
 import type { ModelRouter } from './router';
 import type { CoachPorts } from './tools';
 
@@ -23,11 +23,17 @@ function fakeClient(script: Scripted[]) {
     const res = script.shift();
     if (!res) throw new Error('no scripted response left');
     const content = res.content ?? [];
+    /** Blocks started so far, like the SDK's snapshot. */
+    const started: Block[] = [];
     return {
+      get currentMessage() {
+        return { content: started };
+      },
       async *[Symbol.asyncIterator]() {
         yield { type: 'message_start', message: { usage: { input_tokens: 100, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } };
         if (res.error) throw res.error;
         for (const [index, block] of content.entries()) {
+          started.push(block);
           yield { type: 'content_block_start', index, content_block: block.type === 'text' ? { type: 'text', text: '' } : block };
           if (block.type === 'text') yield { type: 'content_block_delta', index, delta: { type: 'text_delta', text: block.text } };
         }
@@ -73,18 +79,31 @@ async function run(engine: CoachEngine, extra: Partial<RunTurnArgs> = {}) {
 }
 
 describe('moving a turn to the build model', () => {
-  it('drops the chat model call that opens a build tool and re-issues the same messages', async () => {
+  it('keeps the words the chat model wrote before a build tool, and the build model carries on from a note', async () => {
     const { engine, calls } = engineWith([{ content: [text('Let me draft that'), planCall] }, { content: [text('Here is your plan.')] }]);
     const { persisted, usage, events } = await run(engine);
 
     expect(calls.map((c) => c.model)).toEqual([SONNET, OPUS]);
-    expect(calls[1]!.messages).toEqual(calls[0]!.messages);
     expect(calls[1]!.output_config).toEqual({ effort: 'high' });
-    expect(persisted).toHaveLength(1);
-    expect(persisted[0]!.model).toBe(OPUS);
+    const kept = { role: 'assistant', content: [{ type: 'text', text: 'Let me draft that', citations: null }] };
+    const note = { role: 'user', content: [{ type: 'text', text: HANDOFF_NOTE }] };
+    expect(calls[1]!.messages).toEqual([...calls[0]!.messages, kept, note]);
+    expect(persisted.map((m) => [m.kind, m.model])).toEqual([
+      ['assistant', SONNET],
+      ['context', undefined],
+      ['assistant', OPUS],
+    ]);
+    expect(persisted[1]!.role).toBe('user');
     expect(JSON.stringify(persisted)).not.toContain('plan1');
-    expect(events).toContainEqual({ type: 'discard', toolUseIds: [] });
-    expect(events).toContainEqual({ type: 'model', model: OPUS, tier: 'build' });
+    const marker = { type: 'handoff', model: OPUS, tool: 'propose_plan' };
+    expect(persisted[2]!.ui).toEqual([marker]);
+    // The kept words stay on screen; the marker comes after the move.
+    const shown = events.filter((e) => e.type === 'discard' || e.type === 'model' || e.type === 'block');
+    expect(shown).toEqual([
+      { type: 'discard', toolUseIds: [], keepText: true },
+      { type: 'model', model: OPUS, tier: 'build' },
+      { type: 'block', block: marker },
+    ]);
     // The dropped call still cost something, so it's recorded, as an estimate.
     expect(usage[0]).toMatchObject({ model: SONNET, tier: 'chat', stopReason: 'handoff', estimated: true, inputTokens: 100 });
     expect(usage[1]).toMatchObject({ model: OPUS, tier: 'build', outputTokens: 50 });
@@ -101,7 +120,38 @@ describe('moving a turn to the build model', () => {
     const { events } = await run(engine);
     expect(calls.map((c) => c.model)).toEqual([SONNET, SONNET, OPUS]);
     expect(calls[2]!.messages).toHaveLength(3);
-    expect(events).toContainEqual({ type: 'discard', toolUseIds: ['ride1'] });
+    expect(events).toContainEqual({ type: 'discard', toolUseIds: ['ride1'], keepText: true });
+  });
+
+  it('re-issues the same messages when the chat model wrote nothing first, and still marks the move', async () => {
+    const { engine, calls } = engineWith([{ content: [planCall] }, { content: [text('Here is your plan.')] }]);
+    const { persisted, events } = await run(engine);
+    expect(calls[1]!.messages).toEqual(calls[0]!.messages);
+    expect(persisted).toHaveLength(1);
+    expect(persisted[0]).toMatchObject({ model: OPUS, ui: [{ type: 'handoff', model: OPUS, tool: 'propose_plan' }] });
+    expect(events).toContainEqual({ type: 'block', block: { type: 'handoff', model: OPUS, tool: 'propose_plan' } });
+  });
+
+  it('keeps only the text: not the thinking, a declined attempt, or the tool calls that never ran', async () => {
+    const thinking: Block = { type: 'thinking', thinking: 'Mon rest, Tue VO2…', signature: 'sig' };
+    const chip: Block = { type: 'tool_use', id: 'ride1', name: 'get_recent_activities', input: {} };
+    const { engine, calls } = engineWith([
+      { content: [text('declined words'), { type: 'fallback' }, thinking, text('Good call.'), chip, text('  '), planCall] },
+      { content: [text('Plan.')] },
+    ]);
+    const { persisted } = await run(engine);
+    expect(persisted[0]!.content).toEqual([{ type: 'text', text: 'declined words', citations: null }, { type: 'text', text: 'Good call.', citations: null }]);
+    expect(JSON.stringify(calls[1]!.messages)).not.toMatch(/Mon rest|ride1|plan1/);
+  });
+
+  it('keeps the words but stores no marker when the build model then cannot run', async () => {
+    const { engine, calls } = engineWith([{ content: [text('On it.'), planCall] }, { error: overloaded() }, { content: [text('Here is a plan.')] }]);
+    const { persisted, events } = await run(engine);
+    expect(calls.map((c) => c.model)).toEqual([SONNET, OPUS, SONNET]);
+    expect(persisted.map((m) => m.kind)).toEqual(['assistant', 'context', 'assistant']);
+    expect(persisted[2]).toMatchObject({ model: SONNET });
+    expect(persisted[2]!.ui).toBeUndefined();
+    expect(events).toContainEqual({ type: 'model', model: SONNET, tier: 'chat', fallback: true });
   });
 
   it('stays on the chat model when the account has no build allowance', async () => {

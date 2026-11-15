@@ -1,6 +1,7 @@
 import { computePortion, rankByUse, startingPortion } from '@cycling-coach/core';
 import type { Food, FoodLibrary, Portion, StapleResult } from '@cycling-coach/shared';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Dialog } from '../../components/Dialog';
 import { CameraIcon, SearchIcon } from '../../components/icons';
 import { PortionPicker } from '../../components/PortionPicker';
 import { Button, ErrorNote, Spinner, inputCls } from '../../components/ui';
@@ -8,7 +9,7 @@ import { fmtKcal, itemUsage, libraryItems, type LibraryItem } from '../../lib/fo
 import { useFoodMutations } from '../../lib/foodQueries';
 import { errorMessage } from '../../lib/queries';
 import { useIsMobile } from '../../lib/useIsMobile';
-import { LabelAddPanel } from './LabelAddPanel';
+import { LabelAddDialog } from './LabelAddPanel';
 import { SourceTag } from './SourceTag';
 import { STAPLE_SOURCE_LINE, StapleHits, StaplesSwitch, useIncludeStaples, useStapleFood } from './staples';
 
@@ -26,10 +27,10 @@ export interface ItemSearchAddNew {
 }
 
 /**
- * A staple picked in a builder: name, portion, and two explicit saves. Both create the food (an
- * ingredient or meal item always points at one of the user's foods); only one also adds it.
+ * A staple picked in a builder, over it (DECISIONS #109): name, portion, and two explicit saves. Both
+ * create the food (an ingredient or meal item always points at one of the user's foods); only one also adds it.
  */
-function StapleAddPanel({ hit, target, onSaved, onCancel }: { hit: StapleResult; target: ItemSearchAddNew['target']; onSaved: (food: Food, portion: Portion, add: boolean) => void; onCancel: () => void }) {
+function StapleAddDialog({ hit, target, onSaved, onClose }: { hit: StapleResult; target: ItemSearchAddNew['target']; onSaved: (food: Food, portion: Portion, add: boolean) => void; onClose: () => void }) {
   const id = useId();
   const m = useFoodMutations();
   const [name, setName] = useState(hit.name);
@@ -40,56 +41,52 @@ function StapleAddPanel({ hit, target, onSaved, onCancel }: { hit: StapleResult;
     if (input && !portion) setPortion(input.defaultPortion);
   }, [input, portion]);
 
-  const body = detail.isPending ? (
-    <Spinner />
-  ) : detail.error || !input || !loggable || !portion ? (
-    <ErrorNote>{errorMessage(detail.error)}</ErrorNote>
-  ) : (
-    (() => {
-      const priced = computePortion(loggable, portion.quantity, portion.unit);
-      const busy = m.createFood.isPending;
-      const save = (add: boolean) =>
-        m.createFood.mutate({ ...input, name: name.trim() || hit.name }, { onSuccess: (food) => onSaved(food, portion, add), onError: (e) => setError(errorMessage(e)) });
-      return (
-        <>
-          <PortionPicker item={loggable} value={portion} onChange={setPortion} />
+  const ready = !detail.isPending && !detail.error && input && loggable && portion ? { input, loggable, portion } : null;
+  const priced = ready && computePortion(ready.loggable, ready.portion.quantity, ready.portion.unit);
+  const busy = m.createFood.isPending;
+  const save = (add: boolean) =>
+    ready && m.createFood.mutate({ ...ready.input, name: name.trim() || hit.name }, { onSuccess: (food) => onSaved(food, ready.portion, add), onError: (e) => setError(errorMessage(e)) });
+
+  return (
+    <Dialog
+      title="Add a staple"
+      width={560}
+      panel
+      onClose={onClose}
+      footer={
+        <div className="flex flex-col gap-2">
           {error && <ErrorNote>{error}</ErrorNote>}
-          <div className="flex flex-wrap justify-end gap-2">
-            <Button disabled={busy || !name.trim()} onClick={() => save(false)}>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <span className="grow" />
+            <Button disabled={busy || !ready || !name.trim()} onClick={() => save(false)}>
               Save to my foods only
             </Button>
             <Button variant="primary" disabled={busy || !priced || !name.trim()} onClick={() => save(true)}>
               Save to my foods &amp; add {priced ? `${fmtKcal(priced.nutrients.kcal)} kcal ` : ''}to {target}
             </Button>
           </div>
-        </>
-      );
-    })()
-  );
-
-  return (
-    <div className="flex flex-col gap-3 rounded-[12px] border border-line bg-surface-alt p-3">
-      <div className="flex flex-col gap-1">
-        <div className="flex items-center justify-between gap-2">
-          <label htmlFor={`${id}-name`} className="text-xs text-muted">
-            Save to your foods as
-          </label>
-          <button type="button" onClick={onCancel} className="border-0 bg-transparent p-0 text-[13px] font-medium text-accent-ink">
-            Cancel
-          </button>
         </div>
+      }
+    >
+      <div className="flex flex-col gap-1">
+        <label htmlFor={`${id}-name`} className="text-xs text-muted">
+          Save to your foods as
+        </label>
         <input id={`${id}-name`} value={name} onChange={(e) => setName(e.target.value)} className={`${inputCls} font-semibold`} />
         <div className="text-xs text-muted">{STAPLE_SOURCE_LINE[hit.source]} · not in your foods yet</div>
       </div>
-      {body}
-    </div>
+      {detail.isPending ? <Spinner /> : ready ? <PortionPicker item={ready.loggable} value={ready.portion} onChange={setPortion} /> : <ErrorNote>{errorMessage(detail.error)}</ErrorNote>}
+    </Dialog>
   );
 }
 
 /**
  * Search the user's foods (and recipes) to add as an ingredient or meal item. Picks start at the usual
  * portion, like logging does. With `addNew`, an "Include staples" switch adds CNF / USDA matches
- * and "Label photo" reads a nutrition label — either saved to their foods (and added) in place.
+ * and "Label photo" reads a nutrition label — each in a dialog over the builder, saved to their foods (and added).
  */
 export function ItemSearch({
   lib,
@@ -114,7 +111,7 @@ export function ItemSearch({
   const mobile = useIsMobile();
   const [q, setQ] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
-  // One inline card at a time: a picked staple or a label being read.
+  // One at a time, each a dialog over the builder: a picked staple or a label being read.
   const [card, setCard] = useState<{ kind: 'staple'; hit: StapleResult } | { kind: 'label' } | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   useEffect(() => {
@@ -149,7 +146,6 @@ export function ItemSearch({
       <StaplesSwitch on={staplesOn} onToggle={staples.toggle} />
       <button
         type="button"
-        aria-pressed={card?.kind === 'label'}
         onClick={openLabel}
         className="flex min-h-8 items-center gap-1.5 rounded-full border border-line-strong bg-surface px-2.5 text-[13px] font-medium text-ink hover:bg-surface-2 mobile:min-h-9"
       >
@@ -177,7 +173,6 @@ export function ItemSearch({
             value={q}
             onChange={(e) => {
               setQ(e.target.value);
-              if (card?.kind === 'staple') setCard(null);
               setSaved(null);
             }}
             className="min-h-10 min-w-0 flex-auto border-0 bg-transparent text-ink outline-none mobile:min-h-[44px]"
@@ -200,7 +195,6 @@ export function ItemSearch({
                 onClick={() => {
                   onPick(item, { quantity: start.quantity, unit: start.unit });
                   setQ('');
-                  if (card?.kind === 'staple') setCard(null);
                 }}
                 className="flex min-h-11 items-center gap-2 border-0 border-b border-divider bg-surface px-3 text-left text-ink last:border-b-0 hover:bg-surface-2"
               >
@@ -225,15 +219,14 @@ export function ItemSearch({
           )}
         </div>
       )}
+      {addNew && <StapleHits query={query} staples={staples} selected={null} onPick={(hit) => setCard({ kind: 'staple', hit })} className="" />}
       {addNew &&
-        // A card replaces the staples list; Cancel brings the list back.
+        // Opened over the builder, so its own Save & log can't be tapped mid-way (DECISIONS #109).
         (card?.kind === 'label' ? (
-          <LabelAddPanel target={addNew.target} nameHint={query} onCancel={() => setCard(null)} onSaved={onNewSaved} />
+          <LabelAddDialog target={addNew.target} nameHint={query} onClose={() => setCard(null)} onSaved={onNewSaved} />
         ) : card?.kind === 'staple' ? (
-          <StapleAddPanel key={`${card.hit.source}:${card.hit.ref}`} hit={card.hit} target={addNew.target} onCancel={() => setCard(null)} onSaved={onNewSaved} />
-        ) : (
-          <StapleHits query={query} staples={staples} selected={null} onPick={(hit) => setCard({ kind: 'staple', hit })} className="" />
-        ))}
+          <StapleAddDialog key={`${card.hit.source}:${card.hit.ref}`} hit={card.hit} target={addNew.target} onClose={() => setCard(null)} onSaved={onNewSaved} />
+        ) : null)}
       {saved && <div className="rounded-lg bg-[#ECFDF3] px-3 py-1.5 text-[13px] text-[#085D3A]">Saved {saved} to your foods.</div>}
       {footer}
     </div>

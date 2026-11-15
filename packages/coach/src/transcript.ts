@@ -58,6 +58,8 @@ export function toUiMessages(messages: StoredMessage[]): UiMessage[] {
       });
     } else if (m.kind === 'assistant') {
       const texts = textOf(m.content);
+      // A handoff marker comes before the build model's first words (DECISIONS #110).
+      if (m.ui?.length) current(m.createdAt, m.id).blocks.push(...m.ui);
       if (texts.length) current(m.createdAt, m.id).blocks.push(...texts.map((text) => ({ type: 'text' as const, text })));
       // One bubble can span both models; it's labelled with the one that wrote last.
       const bubble = out[out.length - 1];
