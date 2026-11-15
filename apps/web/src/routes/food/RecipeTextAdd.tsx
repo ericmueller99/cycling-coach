@@ -1,5 +1,5 @@
-import { computePortion, defaultPortionIndex, fitPortion, foodFromStaple, isStandardUnit, unitKey } from '@cycling-coach/core';
-import type { Food, FoodInput, IngredientLine, RecipeIngredient, RecipeTextResult, StapleMatch } from '@cycling-coach/shared';
+import { computePortion, defaultPortionIndex, fitPortion, foodFromStaple, formatPortion, isStandardUnit, unitKey } from '@cycling-coach/core';
+import type { FinishedVolume, Food, FoodInput, IngredientLine, RecipeIngredient, RecipeTextResult, StapleMatch } from '@cycling-coach/shared';
 import { useMutation } from '@tanstack/react-query';
 import { useEffect, useState, type ReactNode } from 'react';
 import { SparkleIcon } from '../../components/icons';
@@ -36,13 +36,14 @@ function stapleFood(p: Pending): { input: FoodInput; quantity: number; unit: str
 /**
  * "Add with AI" in the recipe editor (DECISIONS #107). Typed or pasted ingredients go to the small
  * model, which matches them to the user's foods. Those go straight into the unsaved recipe (a food
- * already in it takes the new amount), and "makes 6" sets the servings. A staple is saved to their foods
+ * already in it takes the new amount), "makes 6" sets the servings and "makes 4 cups" the total volume. A staple is saved to their foods
  * only when they click it; anything else waits here to be searched for or skipped. A coach recipe opened
  * in the editor starts with its staple and unmatched lines here (`initialPending`, DECISIONS #108).
  */
 export function RecipeTextAdd({
   onFoods,
   onServings,
+  onVolume,
   onToTaste,
   onFoodSaved,
   onSearch,
@@ -51,6 +52,8 @@ export function RecipeTextAdd({
 }: {
   onFoods: (ings: RecipeIngredient[]) => void;
   onServings: (n: number) => void;
+  /** "Makes 4 cups" (DECISIONS #111). */
+  onVolume: (v: FinishedVolume) => void;
   onToTaste: (names: string[]) => void;
   /** A staple was saved as one of their foods (the library hasn't refetched yet). */
   onFoodSaved: (food: Food) => void;
@@ -84,16 +87,18 @@ export function RecipeTextAdd({
         if (foods.length) onFoods(foods);
         if (toTaste.length) onToTaste(toTaste);
         if (r.servings) onServings(r.servings);
+        if (r.volume) onVolume(r.volume);
         // Typing a line again replaces its card.
         setPending((ps) => [...ps.filter((p) => !rest.some((x) => x.name.toLowerCase() === p.name.toLowerCase())), ...rest]);
         const parts = [
           foods.length ? `Added ${foods.length} from your foods` : null,
           r.servings ? `Makes ${r.servings}` : null,
+          r.volume ? `${r.servings ? '' : 'Makes '}${formatPortion(r.volume.quantity, r.volume.unit)}` : null,
           toTaste.length ? `${toTaste.length} to taste` : null,
           rest.length ? `${rest.length} to check below` : null,
         ].filter(Boolean);
         setNote(parts.length ? `${parts.join(' · ')}.` : 'No ingredients found in that — try “1 cup flour, 2 eggs”.');
-        if (foods.length || toTaste.length || r.servings) setText('');
+        if (foods.length || toTaste.length || r.servings || r.volume) setText('');
       },
       onError: (e) => setError(errorContent(e)),
     });

@@ -1,4 +1,4 @@
-import { formatLongDay, formatQuantity, macroSplit } from '@cycling-coach/core';
+import { formatLongDay, formatPortion, formatQuantity, macroSplit } from '@cycling-coach/core';
 import type { MealIdea, MealIdeas, RecipeDraft } from '@cycling-coach/shared';
 import { Link } from '@tanstack/react-router';
 import { createContext, useContext } from 'react';
@@ -173,7 +173,7 @@ export function LoggedPill({ log }: { log: RecipeDraft['logged'][number] }) {
     <div className="flex items-center gap-2 self-start rounded-full border border-[#B7E4C7] bg-[#F0FAF3] px-3 py-1.5 text-[13px]">
       <CheckIcon className="text-success" />
       <span>
-        Logged {servingsText(log.quantity)} · {fmtKcal(log.kcal)} kcal to {log.slot} · {formatLongDay(log.date)} —{' '}
+        Logged {log.unit ? formatPortion(log.quantity, log.unit) : servingsText(log.quantity)} · {fmtKcal(log.kcal)} kcal to {log.slot} · {formatLongDay(log.date)} —{' '}
         <Link to="/calendar/$date" params={{ date: log.date }} className="text-accent-ink">
           see day
         </Link>

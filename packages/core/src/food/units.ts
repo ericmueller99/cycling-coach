@@ -1,4 +1,4 @@
-import type { Measure, Portion } from '@cycling-coach/shared';
+import type { FinishedVolume, Measure, Portion } from '@cycling-coach/shared';
 
 /**
  * The portion maths (DECISIONS #33). A food's nutrients are for one reference serving; `measures`
@@ -54,6 +54,16 @@ export function unitKey(raw: string): string {
 
 interface HasMeasures {
   measures: readonly Measure[];
+}
+
+/**
+ * A recipe's volume as said or typed ("4", "cups") → the stored form, or null when it isn't a volume
+ * the recipe can keep (DECISIONS #111).
+ */
+export function finishedVolumeOf(quantity: number | null | undefined, unit: string | null | undefined): FinishedVolume | null {
+  if (quantity == null || !(quantity > 0) || quantity > 100_000 || !unit) return null;
+  const u = canonicalUnit(unit);
+  return isVolumeUnit(u) ? { quantity: roundTo(quantity, 2), unit: u } : null;
 }
 
 /** How many `unit` make up one reference serving, or null when the food can't be measured that way. */

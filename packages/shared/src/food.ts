@@ -141,6 +141,13 @@ export const recipeIngredientSchema = z.object({
 });
 export type RecipeIngredient = z.infer<typeof recipeIngredientSchema>;
 
+/** How much a whole recipe makes by volume ("makes 4 cups", DECISIONS #111). Counts are servings, so volume units only. */
+export const finishedVolumeSchema = z.object({
+  quantity: z.number().positive().max(100_000),
+  unit: z.enum(['cup', 'ml', 'l', 'tbsp', 'tsp', 'fl_oz']),
+});
+export type FinishedVolume = z.infer<typeof finishedVolumeSchema>;
+
 const recipeFields = z.object({
   name: z.string().trim().min(1).max(120),
   aliases: z.array(z.string().trim().min(1).max(60)).max(20),
@@ -148,6 +155,8 @@ const recipeFields = z.object({
   servings: z.number().positive().max(200),
   /** Cooked weight of the whole batch, so a batch can be logged by weight. */
   finishedGrams: z.number().positive().max(100_000).optional(),
+  /** Volume of the whole batch ("makes 4 cups"), so a batch can be logged by the cup. Counts are servings. */
+  finishedVolume: finishedVolumeSchema.optional(),
   ingredients: z.array(recipeIngredientSchema).min(1).max(60),
   notes: z.string().max(2000).optional(),
   /** The method, one step per line (coach-generated recipes always have it). Inline markdown (bold) allowed. */
@@ -162,7 +171,7 @@ const recipeFields = z.object({
 export const recipeInputSchema = recipeFields.extend({ aliases: recipeFields.shape.aliases.default([]) });
 export type RecipeInput = z.infer<typeof recipeInputSchema>;
 export const recipePatchSchema = recipeFields.partial().extend({
-  unset: z.array(z.enum(['finishedGrams', 'notes', 'steps', 'description', 'minutes', 'toTaste'])).optional(),
+  unset: z.array(z.enum(['finishedGrams', 'finishedVolume', 'notes', 'steps', 'description', 'minutes', 'toTaste'])).optional(),
 });
 export type RecipePatch = z.infer<typeof recipePatchSchema>;
 

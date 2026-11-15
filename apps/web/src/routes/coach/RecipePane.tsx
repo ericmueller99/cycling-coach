@@ -28,6 +28,12 @@ import { RIGHT_COL } from './rightColumn';
  */
 
 const PRESETS = [0.5, 1, 1.25, 1.5, 2];
+/** Presets when they log by the recipe's volume (DECISIONS #111). */
+const VOLUME_PRESETS: Record<string, number[]> = { cup: [0.5, 0.75, 1, 1.5, 2], ml: [125, 250, 375, 500], l: [0.25, 0.5, 0.75, 1] };
+const VOLUME_NAMES: Record<string, string> = { cup: 'cups', ml: 'ml', l: 'litres', tbsp: 'tbsp', tsp: 'tsp', fl_oz: 'fl oz' };
+
+/** A recipe's volume per serving, for logging by the cup. */
+type VolumeMeasure = { unit: string; perServing: number };
 
 export function StapleTag() {
   return <span className="flex-none rounded-[5px] bg-[#ECFDF3] px-1.5 text-[10px] leading-[17px] font-bold text-[#085D3A]">Staple</span>;
@@ -139,12 +145,43 @@ function IngredientRow({ line, index, lib, today, draft }: { line: DraftIngredie
   );
 }
 
-/** "How much did you eat?" — presets, slot, day and Log. Logging an unsaved recipe saves it too. */
-function LogBlock({ draft, lib, perKcal, slot: initialSlot, date: initialDate, onCancel }: { draft: RecipeDraft; lib: FoodLibrary; perKcal: number; slot: string; date: IsoDate; onCancel: () => void }) {
+/**
+ * "How much did you eat?" — presets, slot, day and Log. Logging an unsaved recipe saves it too. A recipe
+ * with a volume can be logged by it ("1 cup"), and starts there (DECISIONS #111).
+ */
+function LogBlock({
+  draft,
+  lib,
+  perKcal,
+  volume,
+  slot: initialSlot,
+  date: initialDate,
+  onCancel,
+}: {
+  draft: RecipeDraft;
+  lib: FoodLibrary;
+  perKcal: number;
+  volume?: VolumeMeasure | undefined;
+  slot: string;
+  date: IsoDate;
+  onCancel: () => void;
+}) {
   const id = useId();
   const m = useRecipeDraftMutations(draft.id);
+  const [byVolume, setByVolume] = useState(!!volume);
+  const unit = byVolume && volume ? volume.unit : 'serving';
+  const presets = byVolume && volume ? (VOLUME_PRESETS[volume.unit] ?? [1, 2, 4, 8]) : PRESETS;
   const [q, setQ] = useState(1);
   const [custom, setCustom] = useState('');
+  const servingsEaten = byVolume && volume ? q / volume.perServing : q;
+  const switchTo = (vol: boolean) => {
+    if (!volume || vol === byVolume) return;
+    // Same amount of food in the other unit, as the portion picker does (DECISIONS #33).
+    const next = vol ? servingsEaten * volume.perServing : servingsEaten;
+    setByVolume(vol);
+    setQ(Math.round(next * 100) / 100);
+    setCustom('');
+  };
   const [slot, setSlot] = useState(initialSlot);
   const [date, setDate] = useState(initialDate);
   const slots = lib.settings.slots.map((s) => s.name);
@@ -158,25 +195,34 @@ function LogBlock({ draft, lib, perKcal, slot: initialSlot, date: initialDate, o
           {slot} · {formatLongDay(date)}
         </span>
       </div>
-      <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Servings eaten">
-        {PRESETS.map((v) => (
+      {volume && (
+        <div className="flex gap-1.5" role="group" aria-label="Log by">
+          {[false, true].map((vol) => (
+            <button key={String(vol)} type="button" aria-pressed={byVolume === vol} className={`${chip(byVolume === vol)} font-sans`} onClick={() => switchTo(vol)}>
+              {vol ? VOLUME_NAMES[volume.unit] ?? volume.unit : 'servings'}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={byVolume && volume ? `Amount eaten, ${VOLUME_NAMES[volume.unit] ?? volume.unit}` : 'Servings eaten'}>
+        {presets.map((v) => (
           <button key={v} type="button" aria-pressed={q === v && !custom} className={chip(q === v && !custom)} onClick={() => (setQ(v), setCustom(''))}>
             {formatQuantity(v)}
           </button>
         ))}
         <input
-          aria-label="Other amount, servings"
+          aria-label={`Other amount, ${byVolume && volume ? (VOLUME_NAMES[volume.unit] ?? volume.unit) : 'servings'}`}
           inputMode="decimal"
           placeholder="other"
           value={custom}
           onChange={(e) => {
             setCustom(e.target.value);
             const n = Number(e.target.value);
-            if (n > 0 && n <= 20) setQ(n);
+            if (n > 0 && (byVolume || n <= 20)) setQ(n);
           }}
           className={`${inputCls} h-9 w-[72px] text-[13px]`}
         />
-        <span className="ml-auto font-mono text-sm font-semibold">{fmtKcal(perKcal * q)} kcal</span>
+        <span className="ml-auto font-mono text-sm font-semibold">{fmtKcal(perKcal * servingsEaten)} kcal</span>
       </div>
       <div className="flex gap-2">
         <label className="sr-only" htmlFor={`${id}-slot`}>
@@ -197,8 +243,8 @@ function LogBlock({ draft, lib, perKcal, slot: initialSlot, date: initialDate, o
         <Button variant="ghost" onClick={onCancel}>
           Cancel
         </Button>
-        <Button variant="primary" size="lg" className="flex-auto" disabled={m.log.isPending} onClick={() => m.log.mutate({ quantity: q, slot, date }, { onSuccess: onCancel })}>
-          {m.log.isPending ? 'Logging…' : `Log ${formatQuantity(q)} serving${q === 1 ? '' : 's'} to ${slot}`}
+        <Button variant="primary" size="lg" className="flex-auto" disabled={m.log.isPending} onClick={() => m.log.mutate({ quantity: q, ...(unit !== 'serving' ? { unit } : {}), slot, date }, { onSuccess: onCancel })}>
+          {m.log.isPending ? 'Logging…' : `Log ${formatPortion(q, unit)} to ${slot}`}
         </Button>
       </div>
       {m.log.error && <ErrorNote>{errorMessage(m.log.error)}</ErrorNote>}
@@ -214,6 +260,7 @@ function Actions({
   draft,
   lib,
   perKcal,
+  volume,
   slot,
   date,
   logOpen,
@@ -223,6 +270,7 @@ function Actions({
   draft: RecipeDraft;
   lib: FoodLibrary;
   perKcal: number;
+  volume?: VolumeMeasure | undefined;
   slot: string;
   date: IsoDate;
   logOpen: boolean;
@@ -231,7 +279,7 @@ function Actions({
 }) {
   const m = useRecipeDraftMutations(draft.id);
   const unresolved = draft.recipeId ? 0 : draft.totals.unresolved;
-  if (logOpen && !unresolved) return <LogBlock key={`${slot}-${date}`} draft={draft} lib={lib} perKcal={perKcal} slot={slot} date={date} onCancel={() => setLogOpen(false)} />;
+  if (logOpen && !unresolved) return <LogBlock key={`${slot}-${date}`} draft={draft} lib={lib} perKcal={perKcal} volume={volume} slot={slot} date={date} onCancel={() => setLogOpen(false)} />;
   return (
     <div className="flex flex-col gap-2.5">
       {draft.recipeId ? (
@@ -286,6 +334,7 @@ function DraftBody({ draft, lib, today }: { draft: RecipeDraft; lib: FoodLibrary
       <div className="flex flex-wrap items-center justify-between gap-2">
         <SectionLabel>
           Ingredients · makes {formatQuantity(draft.servings)} serving{draft.servings === 1 ? '' : 's'}
+          {draft.finishedVolume ? ` · about ${formatPortion(draft.finishedVolume.quantity, draft.finishedVolume.unit)}` : ''}
         </SectionLabel>
         {/* Before it's saved, the servings scale every amount (DECISIONS #47). */}
         <ServingsPicker label="Making" value={draft.servings} disabled={m.patch.isPending} onChange={(n) => m.patch.mutate({ servings: n })} />
@@ -402,9 +451,13 @@ export function RecipePane({
       </>
     );
   const perKcal = saved.data?.view.perServing.kcal ?? draft?.totals.perServing.kcal ?? 0;
+  // Once saved, the Library recipe's volume is the one that counts (the editor may have changed it).
+  const vol = draft?.recipeId ? saved.data?.recipe.finishedVolume : draft?.finishedVolume;
+  const volServings = (draft?.recipeId ? saved.data?.recipe.servings : draft?.servings) ?? 0;
+  const volume = vol && volServings > 0 ? { unit: vol.unit, perServing: vol.quantity / volServings } : undefined;
   const footer =
     draft && lib ? (
-      <Actions draft={draft} lib={lib} perKcal={perKcal} slot={slot} date={date} logOpen={logOpen} setLogOpen={setLogOpen} onFinish={() => setEditing(true)} />
+      <Actions draft={draft} lib={lib} perKcal={perKcal} volume={volume} slot={slot} date={date} logOpen={logOpen} setLogOpen={setLogOpen} onFinish={() => setEditing(true)} />
     ) : null;
 
   if (mobile) {

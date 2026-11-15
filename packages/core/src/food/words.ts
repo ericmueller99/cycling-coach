@@ -40,7 +40,8 @@ export function buildCatalog(lib: FoodLibrary): { lines: CatalogLine[]; refs: Ma
     .forEach((r, i) => {
       const id = `r${i + 1}`;
       refs.set(id, { kind: 'recipe', id: r.id, name: r.name });
-      lines.push({ id, name: `${r.name} (recipe)`, aliases: r.aliases, units: unitsFor(recipeAsLoggable(r)), usual: usual('recipe', r.id) ?? '1 serving' });
+      const loggable = recipeAsLoggable(r);
+      lines.push({ id, name: `${r.name} (recipe)`, aliases: r.aliases, units: unitsFor(loggable), usual: usual('recipe', r.id) ?? formatPortion(loggable.defaultPortion.quantity, loggable.defaultPortion.unit) });
     });
   lib.meals
     .filter((m) => !m.archived)

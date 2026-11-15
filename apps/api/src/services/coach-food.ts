@@ -5,6 +5,7 @@ import {
   computePortion,
   defaultPortionIndex,
   draftToRecipeInput,
+  finishedVolumeOf,
   fitPortion,
   foodFromStaple,
   perServingOf,
@@ -199,6 +200,7 @@ export async function recipeTextLines(deps: Pick<MatchDeps, 'library' | 'searchS
   const servings = reading.servings != null && reading.servings >= 1 ? Math.min(200, Math.round(reading.servings)) : null;
   return {
     servings,
+    volume: finishedVolumeOf(reading.volumeQuantity, reading.volumeUnit),
     lines: lines.map((l, i) => {
       const portion = !said[i] && l.match ? usual(l.match) : undefined;
       if (portion) return { ...l, quantity: portion.quantity, unit: portion.unit };
@@ -425,6 +427,7 @@ export class CoachFoodService {
       return freshMatched[fresh.indexOf(l)] ?? { ...l, match: null };
     });
     const now = this.now();
+    const volume = finishedVolumeOf(input.finishedVolume?.quantity, input.finishedVolume?.unit);
     const doc = await insertRecipeDraft(this.c, {
       userId,
       threadId,
@@ -433,6 +436,7 @@ export class CoachFoodService {
       name: input.name,
       ...(input.description ? { description: input.description } : {}),
       servings: input.servings,
+      ...(volume ? { finishedVolume: volume } : {}),
       ...(input.minutes ? { minutes: input.minutes } : {}),
       ingredients,
       steps: input.steps,
@@ -456,6 +460,7 @@ export class CoachFoodService {
       name: doc.name,
       ...(doc.description ? { description: doc.description } : {}),
       servings: doc.servings,
+      ...(doc.finishedVolume ? { finishedVolume: doc.finishedVolume } : {}),
       ...(doc.minutes ? { minutes: doc.minutes } : {}),
       ingredients: priced.ingredients,
       steps: doc.steps,
@@ -518,7 +523,10 @@ export class CoachFoodService {
     if (!doc?._id) return { error: 'Recipe not found.', status: 404 };
     if (doc.recipeId) return { error: 'This recipe is saved — edit it in Library › Recipes.', status: 409 };
     // "Making it for 3": every amount scales with the servings, so per-serving numbers hold (DECISIONS #47).
-    const ingredients = patch.servings && patch.servings !== doc.servings ? scaleLines(doc.ingredients, doc.servings, patch.servings) : [...doc.ingredients];
+    const rescale = !!patch.servings && patch.servings !== doc.servings;
+    const ingredients = rescale ? scaleLines(doc.ingredients, doc.servings, patch.servings!) : [...doc.ingredients];
+    // The pot grows with the amounts, so a cup stays a cup of the same food.
+    const volume = rescale && doc.finishedVolume ? finishedVolumeOf((doc.finishedVolume.quantity * patch.servings!) / doc.servings, doc.finishedVolume.unit) : null;
     const p = patch.ingredient;
     if (p) {
       const line = ingredients[p.index];
@@ -546,7 +554,7 @@ export class CoachFoodService {
         };
       }
     }
-    const updated = await updateRecipeDraft(this.c, userId, doc._id, { ingredients, ...(patch.servings ? { servings: patch.servings } : {}) }, this.now());
+    const updated = await updateRecipeDraft(this.c, userId, doc._id, { ingredients, ...(patch.servings ? { servings: patch.servings } : {}), ...(volume ? { finishedVolume: volume } : {}) }, this.now());
     if (!updated) return { error: 'This recipe is saved — edit it in Library › Recipes.', status: 409 };
     return this.view(userId, updated);
   }
@@ -641,12 +649,13 @@ export class CoachFoodService {
     return this.view(userId, after!);
   }
 
-  /** Log servings of it (saving it first if needed) as a normal recipe entry. */
+  /** Log servings of it, or cups when it has a volume (saving it first if needed), as a normal recipe entry. */
   async log(userId: string, id: string, input: RecipeDraftLogInput): Promise<RecipeDraft | Failure> {
     const saved = await this.save(userId, id);
     if ('error' in saved) return saved;
+    const unit = input.unit && canonicalUnit(input.unit) !== 'serving' ? canonicalUnit(input.unit) : undefined;
     const entries = await this.food.log(userId, [
-      { date: input.date, slot: input.slot, ...(input.time ? { time: input.time } : {}), kind: 'recipe', refId: saved.recipeId!, quantity: input.quantity, unit: 'serving', via: 'coach' },
+      { date: input.date, slot: input.slot, ...(input.time ? { time: input.time } : {}), kind: 'recipe', refId: saved.recipeId!, quantity: input.quantity, unit: unit ?? 'serving', via: 'coach' },
     ]);
     if ('error' in entries) return entries;
     const entry = entries[0]!;
@@ -654,7 +663,7 @@ export class CoachFoodService {
       this.c,
       userId,
       (await getRecipeDraft(this.c, userId, id))!._id!,
-      { date: entry.date, slot: entry.slot, quantity: input.quantity, kcal: Math.round(entry.nutrients.kcal), entryId: entry.id, at: this.now().toISOString() },
+      { date: entry.date, slot: entry.slot, quantity: input.quantity, ...(unit ? { unit } : {}), kcal: Math.round(entry.nutrients.kcal), entryId: entry.id, at: this.now().toISOString() },
       this.now(),
     );
     return this.view(userId, doc!);

@@ -1,4 +1,4 @@
-import type { DraftIngredient, Food, IngredientLine, IngredientMatch, IngredientSuggestion, Nutrients, RecipeIngredient, RecipeInput } from '@cycling-coach/shared';
+import type { DraftIngredient, FinishedVolume, Food, IngredientLine, IngredientMatch, IngredientSuggestion, Nutrients, RecipeIngredient, RecipeInput } from '@cycling-coach/shared';
 import { scaleNutrients, sumNutrients, ZERO_NUTRIENTS } from './nutrients';
 import { computePortion } from './portions';
 import { defaultPortionIndex, foodFromStaple } from './reference';
@@ -99,6 +99,7 @@ export function draftToRecipeInput(
     steps: string[];
     description?: string | undefined;
     minutes?: number | undefined;
+    finishedVolume?: FinishedVolume | undefined;
     ingredients: readonly (IngredientLine & { match: IngredientMatch | null })[];
   },
   foodIdFor: (m: IngredientMatch) => string,
@@ -112,6 +113,7 @@ export function draftToRecipeInput(
     ingredients: counted.map((l) => ({ foodId: foodIdFor(l.match!), quantity: l.quantity, unit: canonicalUnit(l.unit), label: l.name })),
     ...(draft.description ? { description: draft.description.slice(0, 300) } : {}),
     ...(draft.minutes ? { minutes: draft.minutes } : {}),
+    ...(draft.finishedVolume ? { finishedVolume: draft.finishedVolume } : {}),
     ...(toTaste.length ? { toTaste } : {}),
     ...(draft.steps.length ? { steps: draft.steps } : {}),
   };

@@ -27,6 +27,7 @@ import type {
   FoodImageRef,
   FoodInput,
   FoodLogEntry,
+  FinishedVolume,
   FoodSettings,
   OnboardingFitness,
   OnboardingGoals,
@@ -488,6 +489,8 @@ export interface RecipeDraftDoc {
   name: string;
   description?: string;
   servings: number;
+  /** "Makes about 6 cups", from the coach (DECISIONS #111); scales with servings. */
+  finishedVolume?: FinishedVolume;
   minutes?: number;
   ingredients: (IngredientLine & { match: IngredientMatch | null })[];
   steps: string[];

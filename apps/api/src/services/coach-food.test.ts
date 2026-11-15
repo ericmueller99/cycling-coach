@@ -89,6 +89,8 @@ describe('recipeTextLines', () => {
   it('checks ids, converts units, tries staples, keeps to-taste lines unmatched, and passes servings', async () => {
     const out = await recipeTextLines(deps(), {
       servings: 6,
+      volumeQuantity: null,
+      volumeUnit: null,
       items: [
         item({ name: 'chicken thighs', quantity: 300, unit: 'grams', ref: 'f1' }),
         item({ name: 'eggs', quantity: 100, unit: 'g', ref: 'f2', convQuantity: 2, convUnit: 'large egg' }),
@@ -106,12 +108,12 @@ describe('recipeTextLines', () => {
   });
 
   it('turns a count into the food’s usual piece when the model didn’t convert it', async () => {
-    const out = await recipeTextLines(deps(), { servings: null, items: [item({ name: 'eggs', quantity: 3, unit: 'eggs', ref: 'f2' })] });
+    const out = await recipeTextLines(deps(), { volumeQuantity: null, volumeUnit: null, servings: null, items: [item({ name: 'eggs', quantity: 3, unit: 'eggs', ref: 'f2' })] });
     expect(out.lines[0]).toMatchObject({ quantity: 3, unit: 'large egg', match: { foodId: 'egg' } });
   });
 
   it('gives a line with no amount the matched food’s usual portion', async () => {
-    const out = await recipeTextLines(deps(), { servings: null, items: [item({ name: 'eggs', ref: 'f2' }), item({ name: 'zorblax' })] });
+    const out = await recipeTextLines(deps(), { volumeQuantity: null, volumeUnit: null, servings: null, items: [item({ name: 'eggs', ref: 'f2' }), item({ name: 'zorblax' })] });
     expect(out.servings).toBeNull();
     expect(out.lines[0]).toMatchObject({ quantity: 1, unit: 'large egg', match: { foodId: 'egg' } });
     expect(out.lines[1]).toMatchObject({ quantity: 1, unit: 'serving', match: null });
@@ -129,7 +131,7 @@ describe('recipeTextLines', () => {
         searchStaples: async (q) => (seen.push(q), { source: 'cnf', results: byQuery[q] ?? [] }),
         stapleDetail: async (_s, ref) => ({ ...feta, ref, name: Object.values(byQuery).flat().find((h) => h.ref === ref)!.name }),
       }),
-      { servings: null, items: [item({ name: 'flour', quantity: 1, unit: 'cup', search: 'wheat flour white all purpose' })] },
+      { volumeQuantity: null, volumeUnit: null, servings: null, items: [item({ name: 'flour', quantity: 1, unit: 'cup', search: 'wheat flour white all purpose' })] },
     );
     expect(seen).toEqual(['wheat flour white all purpose', 'flour']); // "flour" is already singular
     expect(out.lines[0]!.match).toMatchObject({ kind: 'staple', ref: 'w1' });
@@ -145,9 +147,18 @@ describe('recipeTextLines', () => {
   });
 
   it('rounds servings and ignores nonsense', async () => {
-    expect((await recipeTextLines(deps(), { servings: 5.6, items: [] })).servings).toBe(6);
-    expect((await recipeTextLines(deps(), { servings: 0, items: [] })).servings).toBeNull();
-    expect((await recipeTextLines(deps(), { servings: 999, items: [] })).servings).toBe(200);
+    expect((await recipeTextLines(deps(), { volumeQuantity: null, volumeUnit: null, servings: 5.6, items: [] })).servings).toBe(6);
+    expect((await recipeTextLines(deps(), { volumeQuantity: null, volumeUnit: null, servings: 0, items: [] })).servings).toBeNull();
+    expect((await recipeTextLines(deps(), { volumeQuantity: null, volumeUnit: null, servings: 999, items: [] })).servings).toBe(200);
+  });
+
+  it('passes a volume the recipe makes, and only a volume', async () => {
+    const vol = async (volumeQuantity: number | null, volumeUnit: string | null) => (await recipeTextLines(deps(), { servings: null, volumeQuantity, volumeUnit, items: [] })).volume;
+    expect(await vol(4, 'cups')).toEqual({ quantity: 4, unit: 'cup' });
+    expect(await vol(1.5, 'Litres')).toEqual({ quantity: 1.5, unit: 'l' });
+    expect(await vol(6, 'pancakes')).toBeNull();
+    expect(await vol(0, 'cup')).toBeNull();
+    expect(await vol(null, null)).toBeNull();
   });
 });
 

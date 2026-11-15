@@ -1,4 +1,4 @@
-import { canonicalUnit, foodAsLoggable, mergeIngredients, recipeTotals, roundTo } from '@cycling-coach/core';
+import { canonicalUnit, foodAsLoggable, formatPortion, mergeIngredients, recipeTotals, roundTo } from '@cycling-coach/core';
 import type { Food, FoodLibrary, Recipe, RecipeDraft, RecipeIngredient, RecipeInput } from '@cycling-coach/shared';
 import { useId, useMemo, useState } from 'react';
 import { Dialog } from '../../components/Dialog';
@@ -13,7 +13,7 @@ import { RecipeTextAdd, type Pending } from './RecipeTextAdd';
 
 /**
  * Recipe builder: ingredients from the user's foods at any amount and unit, makes
- * N servings, optional finished weight so a batch can be logged by the gram. Totals are computed
+ * N servings, optional finished weight and total volume so a batch can be logged by the gram or the cup. Totals are computed
  * from the foods as they are now, so editing an ingredient food updates the recipe. Ingredients can
  * also be typed or pasted and matched with AI (`RecipeTextAdd`, DECISIONS #107).
  *
@@ -21,6 +21,16 @@ import { RecipeTextAdd, type Pending } from './RecipeTextAdd';
  * foods come in as ingredients, and staples and unmatched lines wait as cards to confirm, search or skip.
  * Saving makes it a Library recipe and marks the draft saved.
  */
+
+type VolumeUnit = NonNullable<RecipeInput['finishedVolume']>['unit'];
+const VOLUME_UNITS: { unit: VolumeUnit; label: string }[] = [
+  { unit: 'cup', label: 'cups' },
+  { unit: 'ml', label: 'ml' },
+  { unit: 'l', label: 'L' },
+  { unit: 'tbsp', label: 'tbsp' },
+  { unit: 'tsp', label: 'tsp' },
+  { unit: 'fl_oz', label: 'fl oz' },
+];
 
 /** A coach draft as the editor starts it. A staple they've already saved as a food goes straight in. */
 function seedFromDraft(draft: RecipeDraft, foods: readonly Food[]): { ingredients: RecipeIngredient[]; pending: Pending[]; toTaste: string[] } {
@@ -66,6 +76,10 @@ export function RecipeEditor({
   /** Lines still waiting in the cards above the list: Save leaves them out. */
   const [notAdded, setNotAdded] = useState<string[]>([]);
   const [finished, setFinished] = useState(recipe?.finishedGrams ? String(recipe.finishedGrams) : '');
+  // A coach recipe can come with its yield ("makes about 6 cups", DECISIONS #111).
+  const vol0 = recipe?.finishedVolume ?? draft?.finishedVolume;
+  const [volume, setVolume] = useState(vol0 ? String(vol0.quantity) : '');
+  const [volumeUnit, setVolumeUnit] = useState<VolumeUnit>(vol0?.unit ?? 'cup');
   const [notes, setNotes] = useState(recipe?.notes ?? '');
   /** One step per line (coach recipes come with them). */
   const [steps, setSteps] = useState((recipe?.steps ?? draft?.steps ?? []).join('\n'));
@@ -84,6 +98,7 @@ export function RecipeEditor({
   const totals = useMemo(() => recipeTotals({ ingredients, servings }, foodsById), [ingredients, servings, foodsById]);
   const finishedG = Number(finished) > 0 ? Number(finished) : undefined;
   const totalG = finishedG ?? totals.rawGrams;
+  const finishedVol = Number(volume) > 0 ? { quantity: Number(volume), unit: volumeUnit } : undefined;
 
   const input = (): RecipeInput | null => {
     if (!name.trim()) return setError('Give the recipe a name.'), null;
@@ -94,6 +109,7 @@ export function RecipeEditor({
       ingredients,
       aliases: aliases.split(',').map((a) => a.trim()).filter(Boolean),
       ...(finishedG ? { finishedGrams: finishedG } : {}),
+      ...(finishedVol ? { finishedVolume: finishedVol } : {}),
       ...(notes.trim() ? { notes: notes.trim() } : {}),
       ...(stepList.length ? { steps: stepList } : {}),
       ...(toTaste.length ? { toTaste } : {}),
@@ -107,7 +123,7 @@ export function RecipeEditor({
     const fail = (e: unknown) => setError(errorMessage(e));
     if (draft) dm.saveEdited.mutate(body, { onSuccess: (d) => onDraftSaved?.(d, log), onError: fail });
     else if (recipe) {
-      const unset = [...(!finishedG && recipe.finishedGrams ? (['finishedGrams'] as const) : []), ...(!body.notes && recipe.notes ? (['notes'] as const) : []), ...(!body.steps && recipe.steps?.length ? (['steps'] as const) : []), ...(!body.toTaste && recipe.toTaste?.length ? (['toTaste'] as const) : [])];
+      const unset = [...(!finishedG && recipe.finishedGrams ? (['finishedGrams'] as const) : []), ...(!finishedVol && recipe.finishedVolume ? (['finishedVolume'] as const) : []), ...(!body.notes && recipe.notes ? (['notes'] as const) : []), ...(!body.steps && recipe.steps?.length ? (['steps'] as const) : []), ...(!body.toTaste && recipe.toTaste?.length ? (['toTaste'] as const) : [])];
       m.updateRecipe.mutate({ id: recipe.id, patch: { ...body, ...(unset.length ? { unset } : {}) } }, { onSuccess: (r) => onSaved?.(r, log), onError: fail });
     } else m.createRecipe.mutate(body, { onSuccess: (r) => onSaved?.(r, log), onError: fail });
   };
@@ -172,6 +188,7 @@ export function RecipeEditor({
               <RecipeTextAdd
                 onFoods={(ings) => setIngredients((xs) => mergeIngredients(xs, ings))}
                 onServings={setServings}
+                onVolume={(v) => (setVolume(String(v.quantity)), setVolumeUnit(v.unit))}
                 onToTaste={(names) => setToTaste((xs) => [...xs, ...names.filter((n) => !xs.some((x) => x.toLowerCase() === n.toLowerCase()))].slice(0, 20))}
                 onFoodSaved={(food) => setExtraFoods((xs) => [...xs, food])}
                 onSearch={(q) => setSeed({ q, at: Date.now() })}
@@ -230,10 +247,22 @@ export function RecipeEditor({
                 <span className="text-[13px] text-muted">g</span>
               </div>
             </Field>
-            <Field label={<>Also find it as <span className="font-normal">· optional</span></>} htmlFor={`${id}-al`}>
-              <input id={`${id}-al`} value={aliases} placeholder="oats, my oats" onChange={(e) => setAliases(e.target.value)} className={inputCls} />
+            <Field label={<>Total volume <span className="font-normal">· optional</span></>} htmlFor={`${id}-vol`} hint="Lets you log by volume, e.g. 1 cup of the batch.">
+              <div className="flex items-center gap-2">
+                <input id={`${id}-vol`} inputMode="decimal" value={volume} placeholder="e.g. 4" onChange={(e) => setVolume(e.target.value)} className={`${inputCls} w-28 font-mono`} />
+                <select aria-label="Volume unit" value={volumeUnit} onChange={(e) => setVolumeUnit(e.target.value as VolumeUnit)} className={`${inputCls} w-auto`}>
+                  {VOLUME_UNITS.map((u) => (
+                    <option key={u.unit} value={u.unit}>
+                      {u.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </Field>
           </div>
+          <Field label={<>Also find it as <span className="font-normal">· optional</span></>} htmlFor={`${id}-al`}>
+            <input id={`${id}-al`} value={aliases} placeholder="oats, my oats" onChange={(e) => setAliases(e.target.value)} className={inputCls} />
+          </Field>
           <Field label={<>Notes <span className="font-normal">· optional</span></>} htmlFor={`${id}-notes`}>
             <input id={`${id}-notes`} value={notes} placeholder="Swaps, storage…" onChange={(e) => setNotes(e.target.value)} className={inputCls} />
           </Field>
@@ -265,9 +294,11 @@ export function RecipeEditor({
             <span className="text-muted">Whole recipe</span>
             <span className="font-mono">
               {fmtKcal(totals.total.kcal)} kcal{totalG ? ` · ${Math.round(totalG)} g` : ''}
+              {finishedVol ? ` · ${formatPortion(finishedVol.quantity, finishedVol.unit)}` : ''}
             </span>
           </div>
           {finishedG && <div className="text-xs text-muted">1 serving ≈ {fmtG(roundTo(finishedG / servings, 1))} g of the finished batch.</div>}
+          {finishedVol && <div className="text-xs text-muted">1 serving ≈ {formatPortion(roundTo(finishedVol.quantity / servings, 2), finishedVol.unit)} of the finished batch.</div>}
           {totals.problems.length > 0 && <div className="text-xs text-danger">{totals.problems.length} ingredient(s) can't be counted — check their units.</div>}
         </aside>
       </div>

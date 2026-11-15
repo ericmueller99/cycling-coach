@@ -13,7 +13,7 @@ import type {
   Recipe,
 } from '@cycling-coach/shared';
 import { scaleNutrients } from './nutrients';
-import { canonicalUnit, portionGrams, roundTo, toServings, unitKey } from './units';
+import { canonicalUnit, formatPortion, portionGrams, roundTo, toServings, unitKey } from './units';
 
 /** Anything that can be logged with a portion: a food, or a recipe by the serving (or by weight). */
 export interface Loggable {
@@ -49,20 +49,30 @@ export const foodAsLoggable = (f: Food): Loggable => ({
   estimate: f.estimate,
 });
 
-/** A recipe's reference serving is one serving; with a finished weight it can be logged in grams too. */
-export const recipeAsLoggable = (r: Recipe): Loggable => ({
-  kind: 'recipe',
-  id: r.id,
-  name: r.name,
-  source: 'recipe',
-  measures: [
-    { unit: 'serving', amount: 1 },
-    ...(r.finishedGrams ? [{ unit: 'g', amount: roundTo(r.finishedGrams / r.servings, 2) }] : []),
-  ],
-  defaultPortion: { quantity: 1, unit: 'serving' },
-  nutrients: r.totals.perServing,
-  servingLabel: r.finishedGrams ? `1 serving (${Math.round(r.finishedGrams / r.servings)} g)` : '1 serving',
-});
+/**
+ * A recipe's reference serving is one serving; with a finished weight it can be logged in grams too,
+ * and with a total volume by the cup (or any volume unit), which then starts as the default portion.
+ */
+export function recipeAsLoggable(r: Recipe): Loggable {
+  const perG = r.finishedGrams ? r.finishedGrams / r.servings : undefined;
+  const vol = r.finishedVolume;
+  const perVol = vol ? vol.quantity / r.servings : undefined;
+  const label = [perG ? `${Math.round(perG)} g` : '', vol && perVol ? formatPortion(roundTo(perVol, 2), vol.unit) : ''].filter(Boolean).join(' · ');
+  return {
+    kind: 'recipe',
+    id: r.id,
+    name: r.name,
+    source: 'recipe',
+    measures: [
+      { unit: 'serving', amount: 1 },
+      ...(perG ? [{ unit: 'g', amount: roundTo(perG, 2) }] : []),
+      ...(vol && perVol ? [{ unit: vol.unit, amount: roundTo(perVol, 4) }] : []),
+    ],
+    defaultPortion: vol ? { quantity: 1, unit: vol.unit } : { quantity: 1, unit: 'serving' },
+    nutrients: r.totals.perServing,
+    servingLabel: label ? `1 serving (${label})` : '1 serving',
+  };
+}
 
 export interface PortionResult {
   servings: number;

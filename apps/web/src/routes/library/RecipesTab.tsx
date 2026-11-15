@@ -74,6 +74,7 @@ export function RecipesTab({ lib, flows, slot, today: _today, onEdit }: { lib: F
                     <div className="text-xs text-muted">
                       Makes {r.servings} serving{r.servings === 1 ? '' : 's'}
                       {r.finishedGrams ? ` · ${fmtKcal(r.finishedGrams)} g batch` : ''}
+                      {r.finishedVolume ? ` · ${formatPortion(r.finishedVolume.quantity, r.finishedVolume.unit)}` : ''}
                       {usage ? ` · logged ${usage.count}×` : ''}
                       {r.totals.problems.length ? ' · needs a look' : ''}
                     </div>

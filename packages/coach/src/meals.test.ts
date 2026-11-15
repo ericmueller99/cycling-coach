@@ -59,6 +59,17 @@ describe('meal tools', () => {
     expect(out.content).toContain('not counted until they pick a food or remove it: Rice');
   });
 
+  it('build_recipe passes a volume yield through and tells the model it can be logged by volume', async () => {
+    let seen: unknown;
+    const out = await runTool(
+      'build_recipe',
+      { name: 'Rice', servings: 4, makes: { quantity: 6, unit: 'cup' }, ingredients: [ingredient], steps: ['Cook'] },
+      { toolUseId: 'tu3', today: '2026-11-01', ports: ports({ createMealIdeas: async () => ideas, createRecipeDraft: async (i) => ((seen = i), { ...draft, finishedVolume: { quantity: 6, unit: 'cup' } }) }) },
+    );
+    expect(seen).toMatchObject({ finishedVolume: { quantity: 6, unit: 'cup' } });
+    expect(out.content).toContain('(makes 6 cups, so they can log it by volume)');
+  });
+
   it('suggest_meals passes the Details preview and the kcal range through', async () => {
     let seen: unknown;
     const preview = { difficulty: 'Easy', equipment: ['pan'], leftovers: 'none (1 serving)', why: 'Carbs for the race.', steps: ['Cook rice.', 'Sear chicken.', 'Serve.'] };

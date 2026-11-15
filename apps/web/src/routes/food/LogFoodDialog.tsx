@@ -190,7 +190,7 @@ function Detail({
   const provenance =
     item.kind === 'food'
       ? `${SOURCE_LINE[item.food.source]}${item.food.servingLabel ? ` · per ${item.food.servingLabel}` : ''}`
-      : `Your recipe · makes ${item.recipe.servings} servings`;
+      : `Your recipe · makes ${item.recipe.servings} servings${item.recipe.finishedVolume ? ` · ${formatPortion(item.recipe.finishedVolume.quantity, item.recipe.finishedVolume.unit)}` : ''}`;
 
   return (
     <div className="flex flex-col gap-4">

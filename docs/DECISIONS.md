@@ -2795,3 +2795,41 @@ like the coach calling in the expert.
 - *Keeping the words on screen without telling the build model*: it opens with its own preamble, so the reply says the
   same thing twice.
 
+## 111. A recipe can say how much it makes by volume, and is then logged by the cup (Nov 14)
+
+**Decision.** A recipe has an optional `finishedVolume` (`{ quantity, unit }`, for "makes 4 cups"), next to
+`finishedGrams`. The unit is a volume unit only: cup, ml, l, tbsp, tsp or fl oz. A count like "6 pancakes" is what
+servings are for.
+- **The maths:** `recipeAsLoggable` adds one measure, `volume ÷ servings` in that unit. Everything that logs a recipe
+  already reads its units from there, so cups, ml and tbsp work in the log dialog, the meal rows, log with words and the
+  API with no new conversion code. The same unit is an exact match, and other volume units convert as in #33, with a
+  cup at 250 ml. With both a weight and a volume set, both work.
+- **Default portion:** with a volume set, the first log starts at 1 of that unit (1 cup). Someone enters a volume
+  because that's how they'll eat it. Remembered usage takes over after that, as for foods.
+- **Label:** `servingLabel` lists both ("1 serving (150 g · 1 cup)"). The picker's serving option unwraps it to
+  "serving (1 cup)", where before it showed "serving (1 serving (155 g))".
+- **Editor:** "Total volume · optional", an amount and a unit beside Finished weight. Clearing it unsets the field. No
+  migration: older recipes just don't have it (#47, #77).
+- **The coach:** `build_recipe` takes an optional `makes` (a volume), for food served by the cup or bowl. It goes on the
+  draft (`finishedVolume`), scales with the servings like the amounts do, and is carried into the saved recipe. The
+  tool result tells the model it can be logged by volume.
+- **The pane:** the Log block has a servings / cups switch. With a volume it starts at 1 cup, and switching keeps the
+  amount of food the same. `recipeDraftLogSchema` takes a `unit`. Without one the 20-servings cap still applies.
+  `RecipeDraftLog` keeps the unit, so the pill says "Logged ½ cup". Once the draft is saved, the Library recipe's volume
+  is the one used.
+- **Add with AI:** the recipe-text reading has `volumeQuantity` and `volumeUnit`. "Makes 4 cups" fills Total volume, not
+  servings. `core.finishedVolumeOf` keeps only a real volume unit.
+- **Log with words:** it needed no change, because a recipe's catalog units come from `recipeAsLoggable`. Its "usual
+  portion" is now the default portion ("1 cup"), not a fixed "1 serving". The coach's Log this hands over to it (#83).
+- **The model's number:** a volume from the coach is a yield like the servings, as a recipe would state it. It is never
+  a nutrient (#41). They can correct it in the editor.
+
+**Why.** A pot of rice or soup is measured with a cup, not a scale. "Makes 4 cups" and "I ate 1 cup" is how people
+already think about it.
+
+**Rejected.**
+- *Any unit, including counts*: servings already cover counts, and a free unit would let "4 pancakes" and 4 servings
+  disagree.
+- *A US cup (236.6 ml)*: the app is Canadian metric everywhere (#33), and logging in the unit the volume was entered in
+  is exact either way.
+

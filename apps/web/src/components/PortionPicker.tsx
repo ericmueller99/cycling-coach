@@ -117,7 +117,7 @@ export function PortionPicker({
         <select id={unitId} value={unit} onChange={(e) => onChange(convertPortion(item, value, e.target.value))} className={`${inputCls} min-w-28 flex-auto`}>
           {units.map((u) => (
             <option key={u} value={u}>
-              {u === 'fl_oz' ? 'fl oz' : u === 'serving' && item.servingLabel ? `serving (${item.servingLabel})` : u}
+              {u === 'fl_oz' ? 'fl oz' : u === 'serving' && item.servingLabel ? `serving (${item.servingLabel.replace(/^1 serving \((.*)\)$/, '$1')})` : u}
             </option>
           ))}
         </select>

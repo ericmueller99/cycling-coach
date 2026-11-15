@@ -60,7 +60,7 @@ export async function updateRecipeDraft(
   c: Collections,
   userId: string,
   id: ObjectId,
-  set: Partial<Pick<RecipeDraftDoc, 'servings' | 'ingredients'>>,
+  set: Partial<Pick<RecipeDraftDoc, 'servings' | 'finishedVolume' | 'ingredients'>>,
   now: Date,
 ) {
   return c.recipeDrafts.findOneAndUpdate({ _id: id, userId, recipeId: { $exists: false } }, { $set: { ...set, updatedAt: now } }, { returnDocument: 'after' });

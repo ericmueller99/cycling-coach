@@ -180,13 +180,15 @@ For each item:
 - search: when ref is null, a search for the plain, most common form of the ingredient in the Canadian Nutrient File, using its naming words: "wheat flour white all purpose", "milk fluid partly skimmed 2%", "sugars granulated white", "egg chicken whole raw", "rice white long grain" (dry unless the text says cooked), "oil canola", "blueberry raw". Its names are singular ("carrot", "tomato", "strawberry"), so use singular words. Name the form the text gives (skim, brown, cooked) when it gives one. Empty when ref is set or the item is toTaste.
 - convQuantity and convUnit: only when the item's unit is not one of the matched food's listed units and is not a weight or volume — then the same amount in one of its listed units ("3 eggs" for a food listed in "large egg" → 3 "large egg"; 300 g of eggs for a food with no g unit → 6 "large egg"). Otherwise null.
 
-servings is how many the recipe makes or serves, when the text says ("makes 6 pancakes" → 6, "serves 4" → 4, "12 muffins" → 12); otherwise null. A line that only says how many it makes is not an ingredient.
+servings is how many the recipe makes or serves, when the text says ("makes 6 pancakes" → 6, "serves 4" → 4, "12 muffins" → 12); otherwise null. volumeQuantity and volumeUnit are how much it makes by volume, when the text says ("makes 4 cups" → 4 cup, "yields 1.5 L" → 1.5 l); otherwise null. "Makes 4 cups" is a volume, not 4 servings. A line that only says how much it makes is not an ingredient.
 
 If the text has no ingredients, return no items.`;
 
 /** What the small model returns for typed recipe ingredients. Refs are catalog ids ("f12") — or null. */
 const recipeTextSchema = z.object({
   servings: z.number().nullable().describe('How many it makes or serves, when the text says; else null.'),
+  volumeQuantity: z.number().nullable().describe('How much it makes by volume ("makes 4 cups" → 4), when the text says; else null.'),
+  volumeUnit: z.string().nullable().describe('The volume unit for volumeQuantity ("cup", "ml", "l"); else null.'),
   items: z.array(
     z.object({
       name: z.string().describe('The ingredient as written, without the amount.'),

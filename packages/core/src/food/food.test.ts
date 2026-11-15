@@ -1,9 +1,9 @@
-import type { Food, FoodUsage } from '@cycling-coach/shared';
+import type { Food, FoodUsage, Recipe } from '@cycling-coach/shared';
 import { describe, expect, it } from 'vitest';
 import { isValidGtin, normalizeBarcode, sameBarcode } from './barcode';
 import { fatFreeMass, katchMcArdle } from './energy';
 import { scaleNutrients, sumNutrients } from './nutrients';
-import { computePortion, foodAsLoggable, foodUsage, startingPortion, type UsageEntry } from './portions';
+import { computePortion, foodAsLoggable, foodUsage, recipeAsLoggable, startingPortion, type UsageEntry } from './portions';
 import { mealTotal, recipeTotals } from './recipes';
 import { rankByText, rankByUse, rankStaples, textScore } from './search';
 
@@ -123,6 +123,42 @@ describe('recipes & meals', () => {
     const items = [{ kind: 'food' as const, refId: 'bagel', quantity: 1, unit: 'bagel' }, { kind: 'food' as const, refId: 'butter', quantity: 1, unit: 'tbsp' }];
     expect(mealTotal(items, lookup).kcal).toBe(360);
     expect(mealTotal(items, lookup, 0.5).kcal).toBe(180);
+  });
+
+  const rice = (over: Partial<Recipe> = {}): Recipe => ({
+    id: 'rice',
+    name: 'Rice',
+    aliases: [],
+    servings: 4,
+    ingredients: [{ foodId: 'rice-dry', quantity: 200, unit: 'g' }],
+    archived: false,
+    totals: { total: { kcal: 800, fat: 4, carbs: 160, protein: 16 }, perServing: { kcal: 200, fat: 1, carbs: 40, protein: 4 }, problems: [] },
+    createdAt: '2026-11-01T00:00:00Z',
+    updatedAt: '2026-11-01T00:00:00Z',
+    ...over,
+  });
+  it('a recipe with a total volume logs by the cup or any volume unit', () => {
+    const l = recipeAsLoggable(rice({ finishedVolume: { quantity: 4, unit: 'cup' } }));
+    expect(computePortion(l, 1, 'cup')?.nutrients.kcal).toBe(200);
+    expect(computePortion(l, 0.5, 'cups')?.nutrients.kcal).toBe(100);
+    expect(computePortion(l, 250, 'ml')?.nutrients.kcal).toBe(200);
+    expect(computePortion(l, 2, 'tbsp')?.nutrients.kcal).toBe(24);
+    expect(computePortion(l, 1, 'serving')?.nutrients.kcal).toBe(200);
+    expect(computePortion(l, 100, 'g')).toBeNull();
+    expect(l.defaultPortion).toEqual({ quantity: 1, unit: 'cup' });
+    expect(l.servingLabel).toBe('1 serving (1 cup)');
+  });
+  it('a recipe with weight and volume logs by either', () => {
+    const l = recipeAsLoggable(rice({ finishedGrams: 600, finishedVolume: { quantity: 1, unit: 'l' } }));
+    expect(computePortion(l, 150, 'g')?.nutrients.kcal).toBe(200);
+    expect(computePortion(l, 1, 'cup')).toMatchObject({ servings: 1, grams: 150 });
+    expect(l.servingLabel).toBe('1 serving (150 g · ¼ l)');
+  });
+  it('a recipe without a volume starts at a serving', () => {
+    const l = recipeAsLoggable(rice());
+    expect(l.defaultPortion).toEqual({ quantity: 1, unit: 'serving' });
+    expect(l.servingLabel).toBe('1 serving');
+    expect(computePortion(l, 1, 'cup')).toBeNull();
   });
 });
 

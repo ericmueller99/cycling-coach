@@ -54,6 +54,40 @@ describe('buildCatalog', () => {
   });
 });
 
+describe('a recipe with a total volume (DECISIONS #111)', () => {
+  const rice = {
+    id: 'rice1',
+    name: 'Rice',
+    aliases: [],
+    servings: 4,
+    finishedVolume: { quantity: 4, unit: 'cup' as const },
+    ingredients: [{ foodId: 'x', quantity: 200, unit: 'g' }],
+    archived: false,
+    totals: { total: { kcal: 720, fat: 2, carbs: 160, protein: 14 }, perServing: { kcal: 180, fat: 0.5, carbs: 40, protein: 3.5 }, problems: [] },
+    createdAt: '',
+    updatedAt: '',
+  };
+  const withRice: FoodLibrary = { ...lib, recipes: [rice] };
+  const { lines, refs } = buildCatalog(withRice);
+  const opts = { viewedDate: '2026-11-01', slot: 'Snacks' };
+  const one = (quantity: number | null, unit: string | null) =>
+    resolveWords(parse({ items: [{ heard: 'rice', ref: 'r1', alternatives: [], quantity, unit }] }), refs, withRice, opts).items[0];
+
+  it('lists its volume units and starts at a cup', () => {
+    const line = lines.find((l) => l.id === 'r1')!;
+    expect(line.units.slice(0, 2)).toEqual(['cup', 'serving']);
+    expect(line.units).toContain('ml');
+    expect(line.usual).toBe('1 cup');
+  });
+  it('takes "a cup", "half a cup" and "250 ml", and falls back to a cup', () => {
+    expect(one(1, 'cups')).toMatchObject({ quantity: 1, unit: 'cup' });
+    expect(one(0.5, 'cup')).toMatchObject({ quantity: 0.5, unit: 'cup' });
+    expect(one(250, 'ml')).toMatchObject({ quantity: 250, unit: 'ml' });
+    expect(one(null, null)).toMatchObject({ quantity: 1, unit: 'cup', why: 'Default portion' });
+    expect(one(2, null)).toMatchObject({ quantity: 2, unit: 'serving' });
+  });
+});
+
 describe('resolveWords', () => {
   const { refs } = buildCatalog(lib);
   const opts = { viewedDate: '2026-11-01', slot: 'Snacks' };

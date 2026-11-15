@@ -112,6 +112,14 @@ describe('draftToRecipeInput', () => {
     expect(input.minutes).toBe(30);
     expect(input.toTaste).toEqual(['Oregano']);
     expect(input.steps).toEqual(['Cook the rice.']);
+    expect(input.finishedVolume).toBeUndefined();
+  });
+  it('carries the coach’s volume yield', () => {
+    const input = draftToRecipeInput(
+      { name: 'Rice', servings: 4, steps: ['Cook.'], finishedVolume: { quantity: 6, unit: 'cup' }, ingredients: [line({ name: 'Rice', quantity: 300, unit: 'g', match: { kind: 'food', foodId: 'rice', name: rice.name, source: 'label' } })] },
+      () => 'rice',
+    );
+    expect(input.finishedVolume).toEqual({ quantity: 6, unit: 'cup' });
   });
 });
 

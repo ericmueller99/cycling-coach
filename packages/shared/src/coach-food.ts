@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { isoDateSchema, type IsoDate } from './common';
-import { foodUnitSchema, stapleSources, timeOfDaySchema, type FoodSource, type Nutrients, type StapleDetail } from './food';
+import { foodUnitSchema, stapleSources, timeOfDaySchema, type FinishedVolume, type FoodSource, type Nutrients, type StapleDetail } from './food';
 
 /**
  * Meal ideas and recipes the coach builds in chat (DECISIONS #41). The coach writes
@@ -55,6 +55,8 @@ export type RecipeTextInput = z.infer<typeof recipeTextInputSchema>;
 export interface RecipeTextResult {
   /** "makes 6 pancakes" → 6; null when the text didn't say. */
   servings: number | null;
+  /** "makes 4 cups" → 4 cup; null when the text didn't say a volume (DECISIONS #111). */
+  volume: FinishedVolume | null;
   /** In the order typed. "To taste" lines aren't matched. */
   lines: (IngredientLine & { match: IngredientMatch | null; alternatives?: StapleMatch[] | undefined })[];
 }
@@ -117,6 +119,8 @@ export interface RecipeDraftLog {
   date: IsoDate;
   slot: string;
   quantity: number;
+  /** A volume unit when they logged by the cup (DECISIONS #111); servings when absent. */
+  unit?: string | undefined;
   kcal: number;
   entryId: string;
   at: string;
@@ -130,6 +134,8 @@ export interface RecipeDraft {
   name: string;
   description?: string | undefined;
   servings: number;
+  /** What the whole recipe makes by volume, from the coach ("makes about 6 cups"). Scales with servings. */
+  finishedVolume?: FinishedVolume | undefined;
   minutes?: number | undefined;
   ingredients: DraftIngredient[];
   steps: string[];
@@ -164,12 +170,16 @@ export const recipeDraftPatchSchema = z.object({
 });
 export type RecipeDraftPatch = z.infer<typeof recipeDraftPatchSchema>;
 
-export const recipeDraftLogSchema = z.object({
-  quantity: z.number().positive().max(20),
-  slot: z.string().trim().min(1).max(30),
-  date: isoDateSchema,
-  time: timeOfDaySchema.optional(),
-});
+/** Servings eaten, or an amount in the recipe's volume unit (`unit`, DECISIONS #111). No defaults (rule 1b). */
+export const recipeDraftLogSchema = z
+  .object({
+    quantity: z.number().positive().max(10_000),
+    unit: foodUnitSchema.optional(),
+    slot: z.string().trim().min(1).max(30),
+    date: isoDateSchema,
+    time: timeOfDaySchema.optional(),
+  })
+  .refine((v) => (v.unit && v.unit !== 'serving') || v.quantity <= 20, { message: 'At most 20 servings.', path: ['quantity'] });
 export type RecipeDraftLogInput = z.infer<typeof recipeDraftLogSchema>;
 
 export interface RecipeDraftSaved {

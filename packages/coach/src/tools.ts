@@ -9,6 +9,7 @@ import {
   formatLongDate,
   formatLongDay,
   formatMeters,
+  formatPortion,
   formatRange,
   formatStepDuration,
   formatTimeRange,
@@ -22,6 +23,7 @@ import {
   eventFiltersSchema,
   eventSorts,
   goalProposalSchema,
+  finishedVolumeSchema,
   ingredientLineSchema,
   isoDateSchema,
   mealDifficulties,
@@ -42,6 +44,7 @@ import {
   type EventQueryResult,
   type FitnessDay,
   type GoalProposal,
+  type FinishedVolume,
   type IngredientLine,
   type IsoDate,
   type MealDifficulty,
@@ -132,6 +135,8 @@ export interface NewRecipeDraft {
   name: string;
   description?: string | undefined;
   servings: number;
+  /** What it makes by volume, for food eaten by the cup or bowl (DECISIONS #111). */
+  finishedVolume?: FinishedVolume | undefined;
   minutes?: number | undefined;
   ingredients: IngredientLine[];
   steps: string[];
@@ -1050,6 +1055,11 @@ export const COACH_TOOLS = [
       name: z.string().min(1).max(80),
       description: z.string().max(160).optional(),
       servings: z.number().positive().max(12).describe('Servings the recipe makes.'),
+      makes: finishedVolumeSchema
+        .optional()
+        .describe(
+          'The cooked yield by volume, as a recipe would state it ("makes about 6 cups"), for food that is served by the cup or bowl: rice, grains, soup, stew, chili, oatmeal, sauce, smoothies. It lets them log "1 cup" of it. Leave it out for food eaten by the piece or the plate.',
+        ),
       minutes: z.number().int().min(1).max(600).optional(),
       ingredients: mealIngredientsSchema,
       steps: z
@@ -1071,6 +1081,7 @@ export const COACH_TOOLS = [
         name: input.name,
         description: input.description,
         servings: input.servings,
+        finishedVolume: input.makes,
         minutes: input.minutes,
         ingredients: input.ingredients,
         steps: input.steps,
@@ -1078,7 +1089,7 @@ export const COACH_TOOLS = [
       const staples = draft.totals.staples.length ? `Staples used (from the Canadian Nutrient File — saved to their foods when they log or save): ${draft.totals.staples.join(', ')}.` : '';
       return {
         content: [
-          `Recipe card shown and opened in the recipe pane (draft ${draft.id}). ${draft.servings} serving${draft.servings === 1 ? '' : 's'}; per serving ${macrosForModel(draft.totals.perServing)}${draft.totals.unresolved ? ' so far' : ''}.`,
+          `Recipe card shown and opened in the recipe pane (draft ${draft.id}). ${draft.servings} serving${draft.servings === 1 ? '' : 's'}${draft.finishedVolume ? ` (makes ${formatPortion(draft.finishedVolume.quantity, draft.finishedVolume.unit)}, so they can log it by volume)` : ''}; per serving ${macrosForModel(draft.totals.perServing)}${draft.totals.unresolved ? ' so far' : ''}.`,
           staples,
           ...draftIssues(draft),
           'Not logged or saved yet — the athlete chooses how much they ate in the pane.',

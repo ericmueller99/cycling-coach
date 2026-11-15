@@ -3,6 +3,7 @@ import {
   amountPerServing,
   canonicalUnit,
   duplicateMeasureUnits,
+  finishedVolumeOf,
   formatPortion,
   formatQuantity,
   portionGrams,
@@ -105,4 +106,13 @@ describe('formatting', () => {
 it('flags duplicate measures', () => {
   expect(duplicateMeasureUnits([{ unit: 'g', amount: 1 }, { unit: 'grams', amount: 2 }])).toEqual(['grams']);
   expect(duplicateMeasureUnits(crackers.measures)).toEqual([]);
+});
+
+it('reads a recipe volume, and only a volume', () => {
+  expect(finishedVolumeOf(4, 'cups')).toEqual({ quantity: 4, unit: 'cup' });
+  expect(finishedVolumeOf(1.234, 'Litres')).toEqual({ quantity: 1.23, unit: 'l' });
+  expect(finishedVolumeOf(4, 'g')).toBeNull();
+  expect(finishedVolumeOf(6, 'pancakes')).toBeNull();
+  expect(finishedVolumeOf(0, 'cup')).toBeNull();
+  expect(finishedVolumeOf(null, 'cup')).toBeNull();
 });
