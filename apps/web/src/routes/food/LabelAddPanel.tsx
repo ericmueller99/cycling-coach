@@ -89,6 +89,9 @@ export function LabelAddPanel({ onSaved }: { onSaved: (food: Food) => void }) {
  * A nutrition label read from the recipe / meal builder, over it (DECISIONS #109): while it's open its own
  * actions are the only ones, and Cancel or a save lands back on the builder. Both saves create the food (an
  * ingredient or meal item always points at one of the user's foods); only one also adds it.
+ *
+ * Over a Log with AI miss (`log`, DECISIONS #112) there's only the save that adds: a food saved but not added
+ * would leave the miss card saying it isn't in their foods.
  */
 export function LabelAddDialog({
   target,
@@ -96,7 +99,7 @@ export function LabelAddDialog({
   onSaved,
   onClose,
 }: {
-  target: 'recipe' | 'meal';
+  target: 'recipe' | 'meal' | 'log';
   /** The search text — the name when the label doesn't show one. */
   nameHint?: string;
   onSaved: (food: Food, portion: Portion, add: boolean) => void;
@@ -123,9 +126,11 @@ export function LabelAddDialog({
               <DraftPreview draft={review.draft} />
               <span className="grow" />
               {cancel}
-              <Button disabled={busy} onClick={() => save(false)}>
-                Save to my foods only
-              </Button>
+              {target !== 'log' && (
+                <Button disabled={busy} onClick={() => save(false)}>
+                  Save to my foods only
+                </Button>
+              )}
               <Button variant="primary" disabled={busy} onClick={() => save(true)}>
                 Save to my foods &amp; add to {target}
               </Button>

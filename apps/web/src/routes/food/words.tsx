@@ -8,6 +8,8 @@ import { api, unwrap } from '../../lib/api';
 import { findLoggable, fmtKcal } from '../../lib/food';
 import { useFoodMutations, useStapleDetail, useStapleSearch } from '../../lib/foodQueries';
 import { errorMessage } from '../../lib/queries';
+import { emptyDraft, FoodFormDialog } from './FoodForm';
+import { LabelAddDialog } from './LabelAddPanel';
 import { SourceTag } from './SourceTag';
 
 /**
@@ -190,7 +192,10 @@ function UseStaple({ heard, onSaved }: { heard: string; onSaved: (food: Food) =>
   );
 }
 
-/** Something heard that isn't in the user's foods: never guessed, not logged unless they resolve it. */
+/**
+ * Something heard that isn't in the user's foods: never guessed, not logged unless they resolve it. A label
+ * photo or manual entry opens over the log and lands back on it with the line filled (DECISIONS #112).
+ */
 export function WordsMissCard({
   lib,
   find,
@@ -200,7 +205,6 @@ export function WordsMissCard({
   onChange,
   onRemove,
   onFoodSaved,
-  addNew,
 }: {
   lib: FoodLibrary;
   find: Find;
@@ -209,10 +213,14 @@ export function WordsMissCard({
   staplesOn: boolean;
   onChange: (l: Line) => void;
   onRemove: () => void;
-  /** A staple was saved for this line — it becomes a match at the food's usual portion. */
-  onFoodSaved: (food: Food) => void;
-  addNew: { photo?: (() => void) | undefined; manual?: ((name: string) => void) | undefined };
+  /** A food was saved for this line (a staple, a label, by hand) — it becomes a match. */
+  onFoodSaved: (food: Food, how: SavedHow) => void;
 }) {
+  const [adding, setAdding] = useState<'photo' | 'manual' | null>(null);
+  const saved = (how: SavedHow) => (food: Food) => {
+    setAdding(null);
+    onFoodSaved(food, how);
+  };
   return (
     <div className="flex flex-col gap-2 rounded-[12px] border border-dashed border-[#E9B98A] bg-[#FFFBF5] p-3">
       <div className="flex items-center gap-2 text-[13px]">
@@ -223,33 +231,40 @@ export function WordsMissCard({
       </div>
       {line.alternatives.length > 0 && <AltChips line={line} lib={lib} find={find} slot={slot} onChange={onChange} label="Did you mean" />}
       <div className="flex flex-wrap gap-2">
-        {staplesOn && <UseStaple heard={line.heard} onSaved={onFoodSaved} />}
-        {addNew.photo && (
-          <Button size="sm" onClick={addNew.photo}>
-            Add from photo
-          </Button>
-        )}
-        {addNew.manual && (
-          <Button size="sm" onClick={() => addNew.manual!(line.heard)}>
-            Enter manually
-          </Button>
-        )}
+        {staplesOn && <UseStaple heard={line.heard} onSaved={saved('staple')} />}
+        <Button size="sm" onClick={() => setAdding('photo')}>
+          Add from photo
+        </Button>
+        <Button size="sm" onClick={() => setAdding('manual')}>
+          Enter manually
+        </Button>
         <Button size="sm" variant="ghost" onClick={onRemove}>
           Skip
         </Button>
       </div>
+      {adding === 'photo' && <LabelAddDialog target="log" nameHint={line.heard} onClose={() => setAdding(null)} onSaved={saved('label')} />}
+      {adding === 'manual' && <FoodFormDialog title="New food" initial={emptyDraft(line.heard)} panel addTo="log" onClose={() => setAdding(null)} onSaved={saved('manual')} />}
     </div>
   );
 }
 
-/** A miss resolved with a newly saved food: matched at its usual portion. */
-export const lineWithFood = (line: Line, food: Food): Line => ({
-  ...line,
-  match: { kind: 'food', id: food.id, name: food.name },
-  quantity: food.defaultPortion.quantity,
-  unit: food.defaultPortion.unit,
-  why: 'staple · saved to your foods',
-});
+export type SavedHow = 'staple' | 'label' | 'manual';
+const SAVED_WHY: Record<SavedHow, string> = { staple: 'staple', label: 'from the label', manual: 'entered by hand' };
+
+/**
+ * A miss resolved with a newly saved food: what they said when the food can be logged in that unit
+ * ("5 pancakes" stays 5 servings), otherwise its usual portion.
+ */
+export const lineWithFood = (line: Line, food: Food, how: SavedHow): Line => {
+  const fits = unitsFor(foodAsLoggable(food)).includes(line.unit);
+  return {
+    ...line,
+    match: { kind: 'food', id: food.id, name: food.name },
+    quantity: fits ? line.quantity : food.defaultPortion.quantity,
+    unit: fits ? line.unit : food.defaultPortion.unit,
+    why: `${SAVED_WHY[how]} · saved to your foods`,
+  };
+};
 
 // ── Recent phrases (this device) ───────────────────────────────────────────
 

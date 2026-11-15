@@ -20,7 +20,6 @@ export function WordsDialog({
   slot: defaultSlot,
   onClose,
   onEditManually,
-  addNew,
 }: {
   lib: FoodLibrary;
   phrase: string;
@@ -28,7 +27,6 @@ export function WordsDialog({
   slot: string;
   onClose: () => void;
   onEditManually: (slot: string) => void;
-  addNew: { photo: () => void; manual: (name: string) => void };
 }) {
   const id = useId();
   const m = useFoodMutations();
@@ -136,12 +134,11 @@ export function WordsDialog({
             line={l}
             slot={slot}
             staplesOn
-            addNew={addNew}
             onChange={onChange}
             onRemove={onRemove}
-            onFoodSaved={(food) => {
+            onFoodSaved={(food, how) => {
               addFood(food);
-              onChange(lineWithFood(l, food));
+              onChange(lineWithFood(l, food, how));
             }}
           />
         );

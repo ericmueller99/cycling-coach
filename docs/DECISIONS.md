@@ -2833,3 +2833,26 @@ already think about it.
 - *A US cup (236.6 ml)*: the app is Canadian metric everywhere (#33), and logging in the unit the volume was entered in
   is exact either way.
 
+
+## 112. A Log with AI miss is added over the log, not instead of it (Nov 15)
+
+**Decision.** On an item Log with AI couldn't match ("“peanut butter” isn't in your foods"), **Add from photo** and
+**Enter manually** open as a dialog stacked over the log, as #109 does for the builders. They no longer replace it with
+the photo flow and then the food form. The step saves the food and fills that line, and the rider lands back on
+"Check before logging" with everything else as it was. Then **Log N items** logs it all. This applies in Log food's
+AI mode and in the log bar's "Confirm what to log" (`WordsDialog`), because both use `WordsMissCard`, which now owns
+the step.
+- **Why.** Before, "Add from photo" unmounted the log, so the phrase and the checked items were lost. "Save & log" then
+  reopened Log food in Search with only the new food picked. The paid parse was gone, and the rest of the meal had to
+  be logged again by hand.
+- **One save, and it adds.** Over a miss, the label read and the food form show only **Save to my foods & add to log**
+  (`LabelAddDialog` `target: 'log'`, `FoodFormDialog` `addTo`), plus Cancel. A food saved but not added would leave a
+  card saying it isn't in their foods, which is no longer true. Skip covers "not this time".
+- **The amount they said is kept** when the new food can be logged in that unit: "2 protein bars" is 2 servings, not
+  the food's usual 1. Otherwise the line uses the food's default portion, as a staple always did. The line's note says
+  how the food got there ("from the label · saved to your foods").
+- The input bar's camera, which isn't tied to a miss, still opens the photo flow.
+
+**Rejected.** Carrying the AI state (phrase, lines, slot) through the `Flow` union and restoring it after the photo and
+form steps. It's more state to thread through every hop, and any path that forgot it would drop a parse that was
+already paid for.

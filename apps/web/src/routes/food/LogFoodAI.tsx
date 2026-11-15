@@ -45,7 +45,8 @@ export function LogFoodAI({
   staplesOn: boolean;
   onToggleStaples: () => void;
   initialPhrase?: string | undefined;
-  addNew: { photo?: (() => void) | undefined; manual: (name: string) => void };
+  /** The input bar's camera: a new food, not tied to a miss (a miss adds over the log, DECISIONS #112). */
+  addNew: { photo?: (() => void) | undefined };
   onSearchMode: () => void;
   onClose: () => void;
 }) {
@@ -200,12 +201,11 @@ export function LogFoodAI({
             line={l}
             slot={logSlot}
             staplesOn={staplesOn}
-            addNew={addNew}
             onChange={onChange}
             onRemove={onRemove}
-            onFoodSaved={(food) => {
+            onFoodSaved={(food, how) => {
               addFood(food);
-              onChange(lineWithFood(l, food));
+              onChange(lineWithFood(l, food, how));
             }}
           />
         );

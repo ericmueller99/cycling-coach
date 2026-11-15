@@ -16,7 +16,8 @@ import { WordsDialog } from './WordsDialog';
  * The food dialogs and how they hand over to each other: "Enter manually" from Log food opens the
  * food form; "Save & log" goes straight back to Log food with the new food picked; a scanned
  * barcode that's already one of the user's foods opens it for logging. One flow at a time, so Esc and
- * the backdrop only ever close the top one.
+ * the backdrop only ever close the top one. A Log with AI miss is the exception: its label photo or manual
+ * entry opens over the log, not in place of it, so the checked items survive (DECISIONS #112).
  *
  * The first attempt to log shows the food intro in that flow's place, and the flow carries on when
  * the intro ends (DECISIONS #88). Every way to log comes through here.
@@ -145,7 +146,6 @@ export function useFoodFlows({ lib, date, dateLabel, defaultSlot }: { lib: FoodL
             slot={flow.slot}
             onClose={close}
             onEditManually={(slot) => setFlow({ kind: 'log', slot })}
-            addNew={{ photo: () => setFlow({ kind: 'photo', slot: flow.slot }), manual: (name) => setFlow({ kind: 'newFood', draft: emptyDraft(name), slot: flow.slot }) }}
           />
         );
         break;

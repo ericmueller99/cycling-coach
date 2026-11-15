@@ -394,6 +394,8 @@ export function FoodPhotos({ food }: { food: Food }) {
 /**
  * The food form in a dialog: new (manual / reviewed from a source) or editing one of the user's
  * foods. `onSaved(food, log)` — `log` when they chose "Save & log".
+ *
+ * With `addTo`, stacked over something it adds to (a Log with AI miss, DECISIONS #112): one save, which adds.
  */
 export function FoodFormDialog({
   title,
@@ -404,6 +406,8 @@ export function FoodFormDialog({
   onClose,
   onSaved,
   saveAndLog = true,
+  addTo,
+  panel = false,
 }: {
   title: string;
   initial: FoodDraft;
@@ -414,6 +418,10 @@ export function FoodFormDialog({
   onClose: () => void;
   onSaved: (food: Food, log: boolean) => void;
   saveAndLog?: boolean;
+  /** "Save to my foods & add to {addTo}" is the only save; `onSaved(food, true)`. */
+  addTo?: string | undefined;
+  /** Over another dialog (`Dialog`'s `panel`). */
+  panel?: boolean;
 }) {
   const m = useFoodMutations();
   const [draft, setDraft] = useState(initial);
@@ -443,6 +451,7 @@ export function FoodFormDialog({
       title={title}
       width={760}
       tall
+      panel={panel}
       onClose={onClose}
       header={
         editing || canAdjust ? (
@@ -484,7 +493,17 @@ export function FoodFormDialog({
                   <TrashIcon />
                 </Button>
               ))}
-            {!confirmArchive && (
+            {!confirmArchive && addTo && !editing && (
+              <>
+                <Button variant="ghost" onClick={onClose}>
+                  Cancel
+                </Button>
+                <Button variant="primary" disabled={busy} onClick={() => save(true)}>
+                  Save to my foods &amp; add to {addTo}
+                </Button>
+              </>
+            )}
+            {!confirmArchive && !(addTo && !editing) && (
               <>
                 <Button variant={saveAndLog ? 'secondary' : 'primary'} disabled={busy} onClick={() => save(false)}>
                   {editing ? 'Save changes' : 'Save to my foods'}

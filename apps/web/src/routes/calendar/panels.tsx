@@ -210,14 +210,14 @@ function PlannedPanel({ event, rides, dayRides, feedback, onClose, sheet = false
     canDeleteSession(event) &&
     (confirmDelete ? (
       <span className="col-span-2 flex gap-2">
-        <Button size="lg" variant="ghost" className="flex-1" onClick={() => setConfirmDelete(false)}>
+        <Button size="lg" variant="ghost" className="shrink-0 px-5" onClick={() => setConfirmDelete(false)}>
           Keep
         </Button>
         <Button
           size="lg"
           variant="primary"
-          className="flex-1"
-          style={{ background: '#B42318', borderColor: '#B42318' }}
+          className="flex-1 whitespace-nowrap"
+          style={{ background: '#B42318', borderColor: '#B42318', color: '#FFFFFF' }}
           disabled={remove.isPending}
           onClick={() => remove.mutate(event.id, { onSuccess: onClose })}
         >
