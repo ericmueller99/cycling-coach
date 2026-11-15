@@ -20,6 +20,7 @@ import {
   profileSchema,
   savedSearchInputSchema,
   recipeDraftLogSchema,
+  recipeInputSchema,
   mealIdeaFixSchema,
   recipeDraftPatchSchema,
   sendMessageSchema,
@@ -57,6 +58,7 @@ import {
   type ProfilePayload,
   type Proposal,
   type RecipeDraft,
+  type RecipeInput,
   type RecipeDraftLogInput,
   type RecipeDraftPatch,
   type SavedSearch,
@@ -210,6 +212,8 @@ export interface AppServices {
     get(userId: string, id: string): Promise<RecipeDraft | null>;
     patch(userId: string, id: string, patch: RecipeDraftPatch): Promise<RecipeDraft | ServiceFailure>;
     save(userId: string, id: string): Promise<RecipeDraft | ServiceFailure>;
+    /** Save it as finished in the full recipe editor (DECISIONS #108). */
+    saveEdited(userId: string, id: string, input: RecipeInput): Promise<RecipeDraft | ServiceFailure>;
     log(userId: string, id: string, input: RecipeDraftLogInput): Promise<RecipeDraft | ServiceFailure>;
   };
   proposals: {
@@ -579,6 +583,10 @@ export function createApp(deps: AppDeps) {
     })
     .post('/coach-food/recipes/:id/save', async (c) => {
       const r = await services.coachFood.save(c.get('user')!.id, c.req.param('id'));
+      return isFailure(r) ? c.json({ error: r.error }, r.status) : c.json(r);
+    })
+    .post('/coach-food/recipes/:id/save-edited', json(recipeInputSchema), async (c) => {
+      const r = await services.coachFood.saveEdited(c.get('user')!.id, c.req.param('id'), c.req.valid('json'));
       return isFailure(r) ? c.json({ error: r.error }, r.status) : c.json(r);
     })
     .post('/coach-food/recipes/:id/log', json(recipeDraftLogSchema), async (c) => {

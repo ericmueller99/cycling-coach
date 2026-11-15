@@ -1,6 +1,7 @@
 import type { Food, FoodLibrary, IngredientMatch, MealIdea, StapleDetail } from '@cycling-coach/shared';
 import { describe, expect, it, vi } from 'vitest';
-import { applyIdeaFix, matchLines, priceIdea, suggestMatches, type MatchDeps } from './coach-food';
+import { singular } from '@cycling-coach/core';
+import { applyIdeaFix, linesFromRecipe, matchLines, priceIdea, recipeTextLines, suggestMatches, type MatchDeps } from './coach-food';
 
 const food = (id: string, over: Partial<Food>): Food => ({
   id,
@@ -82,6 +83,74 @@ describe('matchLines', () => {
   });
 });
 
+describe('recipeTextLines', () => {
+  const item = (over: Partial<Parameters<typeof recipeTextLines>[1]['items'][number]>) => ({ name: 'x', quantity: null, unit: null, toTaste: false, ref: null, search: '', convQuantity: null, convUnit: null, ...over });
+
+  it('checks ids, converts units, tries staples, keeps to-taste lines unmatched, and passes servings', async () => {
+    const out = await recipeTextLines(deps(), {
+      servings: 6,
+      items: [
+        item({ name: 'chicken thighs', quantity: 300, unit: 'grams', ref: 'f1' }),
+        item({ name: 'eggs', quantity: 100, unit: 'g', ref: 'f2', convQuantity: 2, convUnit: 'large egg' }),
+        item({ name: 'feta', quantity: 60, unit: 'g' }),
+        item({ name: 'zorblax sauce', quantity: 30, unit: 'ml', ref: 'r9' }),
+        item({ name: 'salt', toTaste: true, ref: 'f1' }),
+      ],
+    });
+    expect(out.servings).toBe(6);
+    expect(out.lines[0]).toMatchObject({ quantity: 300, unit: 'g', match: { kind: 'food', foodId: 'chicken' } });
+    expect(out.lines[1]).toMatchObject({ quantity: 2, unit: 'large egg', match: { kind: 'food', foodId: 'egg' } });
+    expect(out.lines[2]!.match).toMatchObject({ kind: 'staple', name: 'Cheese, feta' });
+    expect(out.lines[3]!.match).toBeNull();
+    expect(out.lines[4]).toMatchObject({ name: 'salt', toTaste: true, match: null });
+  });
+
+  it('turns a count into the food’s usual piece when the model didn’t convert it', async () => {
+    const out = await recipeTextLines(deps(), { servings: null, items: [item({ name: 'eggs', quantity: 3, unit: 'eggs', ref: 'f2' })] });
+    expect(out.lines[0]).toMatchObject({ quantity: 3, unit: 'large egg', match: { foodId: 'egg' } });
+  });
+
+  it('gives a line with no amount the matched food’s usual portion', async () => {
+    const out = await recipeTextLines(deps(), { servings: null, items: [item({ name: 'eggs', ref: 'f2' }), item({ name: 'zorblax' })] });
+    expect(out.servings).toBeNull();
+    expect(out.lines[0]).toMatchObject({ quantity: 1, unit: 'large egg', match: { foodId: 'egg' } });
+    expect(out.lines[1]).toMatchObject({ quantity: 1, unit: 'serving', match: null });
+  });
+
+  it('looks staples up with the model’s search first, keeps only covering hits, and offers up to three', async () => {
+    const hit = (ref: string, name: string) => ({ source: 'cnf' as const, ref, name, kcalPer100g: 360 });
+    const byQuery: Record<string, ReturnType<typeof hit>[]> = {
+      flour: [hit('p', 'Potato flour'), hit('b', 'Grains, barley flour')],
+      'wheat flour white all purpose': [hit('w1', 'Grains, wheat flour, white, all purpose, bleached'), hit('x', 'Sweets, sugars, brown'), hit('w2', 'Grains, wheat flour, white, all purpose, unbleached')],
+    };
+    const seen: string[] = [];
+    const out = await recipeTextLines(
+      deps({
+        searchStaples: async (q) => (seen.push(q), { source: 'cnf', results: byQuery[q] ?? [] }),
+        stapleDetail: async (_s, ref) => ({ ...feta, ref, name: Object.values(byQuery).flat().find((h) => h.ref === ref)!.name }),
+      }),
+      { servings: null, items: [item({ name: 'flour', quantity: 1, unit: 'cup', search: 'wheat flour white all purpose' })] },
+    );
+    expect(seen).toEqual(['wheat flour white all purpose', 'flour']); // "flour" is already singular
+    expect(out.lines[0]!.match).toMatchObject({ kind: 'staple', ref: 'w1' });
+    expect(out.lines[0]!.alternatives?.map((a) => a.ref)).toEqual(['w2', 'p']);
+    expect(out.lines[0]).toMatchObject({ quantity: 1, unit: 'cup' });
+  });
+
+  it('singularises for the staple search', () => {
+    expect(singular('blueberries')).toBe('blueberry');
+    expect(singular('cherry tomatoes')).toBe('cherry tomato');
+    expect(singular('carrots')).toBe('carrot');
+    expect(singular('flour glass')).toBe('flour glass');
+  });
+
+  it('rounds servings and ignores nonsense', async () => {
+    expect((await recipeTextLines(deps(), { servings: 5.6, items: [] })).servings).toBe(6);
+    expect((await recipeTextLines(deps(), { servings: 0, items: [] })).servings).toBeNull();
+    expect((await recipeTextLines(deps(), { servings: 999, items: [] })).servings).toBe(200);
+  });
+});
+
 describe('suggestMatches', () => {
   const staples = (names: Record<string, string[]>): MatchDeps['searchStaples'] => async (q) => ({
     source: 'cnf',
@@ -148,5 +217,38 @@ describe('applyIdeaFix', () => {
   it('refuses a line that is matched or missing', () => {
     expect(applyIdeaFix(ideas, { idea: 0, ingredient: 0 }, salmonMatch, foods)).toBeNull();
     expect(applyIdeaFix(ideas, { idea: 3, ingredient: 0 }, salmonMatch, foods)).toBeNull();
+  });
+});
+
+describe('linesFromRecipe', () => {
+  const foods = new Map(library.foods.map((f) => [f.id, f]));
+  const before = [
+    { name: 'Chicken thighs', quantity: 300, unit: 'g', toTaste: false, match: null },
+    { name: 'Salt', quantity: 1, unit: 'tsp', toTaste: true, match: null },
+  ];
+
+  it('rebuilds the draft from what the editor saved: its foods, its names, then to taste', () => {
+    const out = linesFromRecipe(
+      {
+        ingredients: [
+          { foodId: 'chicken', quantity: 250, unit: 'g', label: 'Chicken thighs' },
+          { foodId: 'egg', quantity: 2, unit: 'large egg' },
+        ],
+        toTaste: ['salt', 'Pepper'],
+      },
+      foods,
+      before,
+    );
+    expect(out).toEqual([
+      { name: 'Chicken thighs', quantity: 250, unit: 'g', toTaste: false, match: { kind: 'food', foodId: 'chicken', name: 'Chicken thighs, boneless', source: 'label' } },
+      { name: 'Egg', quantity: 2, unit: 'large egg', toTaste: false, match: { kind: 'food', foodId: 'egg', name: 'Egg', source: 'label' } },
+      // The draft's own to-taste line keeps its amount; a new one isn't counted either way.
+      { name: 'salt', quantity: 1, unit: 'tsp', toTaste: true, match: null },
+      { name: 'Pepper', quantity: 1, unit: 'serving', toTaste: true, match: null },
+    ]);
+  });
+
+  it('drops a food it can’t find', () => {
+    expect(linesFromRecipe({ ingredients: [{ foodId: 'gone', quantity: 1, unit: 'g' }] }, foods, [])).toEqual([]);
   });
 });

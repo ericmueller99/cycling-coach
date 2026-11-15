@@ -98,7 +98,7 @@ Fixtures use made-up ids, names and domains. Never commit `.env`, keys or a real
 | Plans and workouts | `claude-opus-5-5` (router `build`) | effort `medium`. Tools marked `tier: 'build'` move the turn here (DECISIONS #65). The same model as `chat` means no routing |
 | Thread titles | router `small` | effort `low` |
 | Chat recaps | router `small` | effort `low`; `engine.recap`, text only, no tier (DECISIONS #80) |
-| Food: label photos, "log with words" | `claude-haiku-5-5` (router `small`) | `FoodAi` in `packages/coach/src/food.ts`; structured outputs, Zod-validated; never Opus (DECISIONS #33–34) |
+| Food: label photos, "log with words", recipe ingredients typed into the editor | `claude-haiku-5-5` (router `small`) | `FoodAi` in `packages/coach/src/food.ts`; structured outputs, Zod-validated; never Opus (DECISIONS #33–34, #107) |
 | Food: estimates (home-cooked or restaurant) | `claude-sonnet-5-5` (router `estimate`) | effort `medium`; photos and words in, one structured call; `SMALL_MODELS` only, never Opus. A restaurant estimate can web-search published nutrition when the rider asks: at most 3 searches at 1¢ each, plus 2 page fetches; `estimate:smoke` checks it live. "Anything different?" stays on `small` (DECISIONS #94, #104) |
 
 The defaults are `DEFAULT_ROUTER` in `packages/coach/src/router.ts`, not env (DECISIONS #69). `createCore`'s `router` option replaces them.

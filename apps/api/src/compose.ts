@@ -268,6 +268,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     async (userId) => (await getProfile(c, userId))?.timezone ?? 'UTC',
     now,
     spendGuard,
+    { searchStaples: (q, source) => staples.search(q, source), stapleDetail: (source, ref) => staples.detail(source, ref) },
   );
   if (!photos) console.warn('S3_* not set — food label photos are read but not kept.');
   void staples.imported().then((n) => {
@@ -490,6 +491,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
       get: (userId, id) => coachFood.get(userId, id),
       patch: (userId, id, patch) => coachFood.patch(userId, id, patch),
       save: (userId, id) => coachFood.save(userId, id),
+      saveEdited: (userId, id, input) => coachFood.saveEdited(userId, id, input),
       log: (userId, id, input) => coachFood.log(userId, id, input),
     },
 
@@ -552,6 +554,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
       barcode: (userId, code) => foodAi.barcode(userId, code),
       imageUrls: (userId, id) => foodAi.imageUrls(userId, id),
       parse: (userId, input) => foodAi.parse(userId, input),
+      recipeText: (userId, input) => foodAi.recipeText(userId, input),
       adjust: (userId, input) => foodAi.adjust(userId, input),
       logCalories: (userId, input) => food.logCalories(userId, input),
       logEstimate: (userId, input) => food.logEstimate(userId, input),

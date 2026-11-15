@@ -32,4 +32,6 @@ export {
   type IngredientMatchResult,
   type MatchIngredientsInput,
   type ParsePhraseInput,
+  type ReadRecipeTextInput,
+  type RecipeTextReading,
 } from './food';

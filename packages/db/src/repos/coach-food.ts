@@ -66,9 +66,20 @@ export async function updateRecipeDraft(
   return c.recipeDrafts.findOneAndUpdate({ _id: id, userId, recipeId: { $exists: false } }, { $set: { ...set, updatedAt: now } }, { returnDocument: 'after' });
 }
 
-/** Link the saved recipe — only the first save wins, so two clicks can't make two recipes. */
-export async function setRecipeDraftSaved(c: Collections, userId: string, id: ObjectId, recipeId: string, ingredients: RecipeDraftDoc['ingredients'], now: Date) {
-  const res = await c.recipeDrafts.updateOne({ _id: id, userId, recipeId: { $exists: false } }, { $set: { recipeId, ingredients, updatedAt: now } });
+/**
+ * Link the saved recipe — only the first save wins, so two clicks can't make two recipes. Saved from
+ * the full editor, the draft takes the recipe's name, servings and steps too (DECISIONS #108).
+ */
+export async function setRecipeDraftSaved(
+  c: Collections,
+  userId: string,
+  id: ObjectId,
+  recipeId: string,
+  ingredients: RecipeDraftDoc['ingredients'],
+  now: Date,
+  edited?: Pick<RecipeDraftDoc, 'name' | 'servings' | 'steps'>,
+) {
+  const res = await c.recipeDrafts.updateOne({ _id: id, userId, recipeId: { $exists: false } }, { $set: { ...edited, recipeId, ingredients, updatedAt: now } });
   return res.modifiedCount === 1;
 }
 

@@ -1,6 +1,6 @@
 import { computePortion, rankByUse, startingPortion } from '@cycling-coach/core';
 import type { Food, FoodLibrary, Portion, StapleResult } from '@cycling-coach/shared';
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { CameraIcon, SearchIcon } from '../../components/icons';
 import { PortionPicker } from '../../components/PortionPicker';
 import { Button, ErrorNote, Spinner, inputCls } from '../../components/ui';
@@ -99,6 +99,7 @@ export function ItemSearch({
   placeholder,
   footer,
   addNew,
+  seed,
 }: {
   lib: FoodLibrary;
   today: string;
@@ -107,12 +108,23 @@ export function ItemSearch({
   placeholder: string;
   footer?: React.ReactNode;
   addNew?: ItemSearchAddNew | undefined;
+  /** Put a search in from outside (a "Search" button elsewhere); `at` changes each time it's pressed. */
+  seed?: { q: string; at: number } | undefined;
 }) {
   const mobile = useIsMobile();
   const [q, setQ] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
   // One inline card at a time: a picked staple or a label being read.
   const [card, setCard] = useState<{ kind: 'staple'; hit: StapleResult } | { kind: 'label' } | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
+  useEffect(() => {
+    if (!seed) return;
+    setQ(seed.q);
+    setCard(null);
+    setSaved(null);
+    inputRef.current?.focus();
+    inputRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [seed?.at]);
   const results = useMemo(() => {
     if (!q.trim()) return [];
     const pool = libraryItems(lib).filter((i): i is Pickable => i.kind !== 'meal' && kinds.includes(i.kind));
@@ -158,6 +170,7 @@ export function ItemSearch({
         <div className="flex min-w-0 flex-auto items-center gap-2 rounded-[10px] border border-line-strong bg-surface px-3">
           <SearchIcon size={16} className="text-muted" />
           <input
+            ref={inputRef}
             type="search"
             aria-label={placeholder}
             placeholder={placeholder}

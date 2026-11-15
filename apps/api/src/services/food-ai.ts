@@ -16,11 +16,14 @@ import type {
   FoodParseResult,
   PhotoReadInput,
   PhotoReadResult,
+  RecipeTextInput,
+  RecipeTextResult,
 } from '@cycling-coach/shared';
 import type { ServiceFailure as Failure } from '../app';
 import { OpenFoodFactsError, type OpenFoodFacts } from '../providers/openfoodfacts';
 import { userImagePrefix, type PhotoStore } from '../providers/storage/s3';
 import { allowSpend, type SpendDecision, type SpendGuard } from '../lib/spend';
+import { ingredientCatalog, recipeTextLines, type MatchDeps } from './coach-food';
 
 /** The spend guard said no: a 402 with what to show. */
 const refusal = (d: Extract<SpendDecision, { allow: false }>): Failure => ({
@@ -49,6 +52,8 @@ export class FoodAiService {
     private readonly now: () => Date = () => new Date(),
     /** Asked before every model call; a message refuses it (hosted quotas, DECISIONS #57). */
     private readonly spendGuard: SpendGuard = allowSpend,
+    /** For ingredients typed into a recipe that aren't in the user's foods. Null: no staples offered. */
+    private readonly staples: Pick<MatchDeps, 'searchStaples' | 'stapleDetail'> | null = null,
   ) {}
 
   /**
@@ -75,6 +80,28 @@ export class FoodAiService {
     await this.record(userId, 'food_parse', result.usage);
     if (!result.ok) return { error: result.error, status: 502 };
     return resolveWords(result.value, refs, lib, { viewedDate: input.date, slot: input.slot });
+  }
+
+  /**
+   * "1 cup flour 1 cup milk, 1 egg… makes 6" → lines for the recipe editor (DECISIONS #107). One
+   * small-model call reads and matches; ids are checked and misses try a staple. Nothing is saved.
+   */
+  async recipeText(userId: string, input: RecipeTextInput): Promise<RecipeTextResult | Failure> {
+    if (!this.ai) return { error: 'Adding ingredients with AI needs CLAUDE_API_KEY on the server. Add them from your foods instead.', status: 503 };
+    const decision = await this.spendGuard(userId, 'food_parse');
+    if (!decision.allow) return refusal(decision);
+    const library = await this.library(userId);
+    const result = await this.ai.readRecipeText({ catalog: ingredientCatalog(library).foodLines, text: input.text });
+    await this.record(userId, 'food_parse', result.usage);
+    if (!result.ok) return { error: result.error, status: 502 };
+    return recipeTextLines(
+      {
+        library,
+        searchStaples: (q, s) => (this.staples ? this.staples.searchStaples(q, s) : Promise.resolve({ source: s, results: [] })),
+        stapleDetail: (s, r) => (this.staples ? this.staples.stapleDetail(s, r) : Promise.resolve({ error: 'No staples', status: 404 })),
+      },
+      result.value,
+    );
   }
 
   /** "No whipped cream" → how much the form's values move. A proposal: the form applies it, or doesn't. */

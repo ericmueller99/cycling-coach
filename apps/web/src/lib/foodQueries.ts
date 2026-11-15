@@ -351,6 +351,11 @@ export function useRecipeDraftMutations(id: string) {
       mutationFn: async () => unwrap(await api.api['coach-food'].recipes[':id'].save.$post({ param: { id } })),
       onSuccess: (d) => settle(d, true),
     }),
+    /** Save it as finished in the full recipe editor (DECISIONS #108). */
+    saveEdited: useMutation({
+      mutationFn: async (input: RecipeInput) => unwrap(await api.api['coach-food'].recipes[':id']['save-edited'].$post({ param: { id }, json: input })),
+      onSuccess: (d) => settle(d, true),
+    }),
     log: useMutation({
       mutationFn: async (input: RecipeDraftLogInput) => unwrap(await api.api['coach-food'].recipes[':id'].log.$post({ param: { id }, json: input })),
       onSuccess: (d) => settle(d, true),
@@ -367,9 +372,10 @@ export const recipeKeys = {
 };
 
 /** A Library recipe as its page shows it: the recipe, how it reads, and its share link. */
-export function useRecipeDetail(id: string) {
+export function useRecipeDetail(id: string, enabled = true) {
   return useQuery({
     queryKey: recipeKeys.detail(id),
+    enabled,
     queryFn: async () => unwrap(await api.api.food.recipes[':id'].$get({ param: { id } })),
   });
 }

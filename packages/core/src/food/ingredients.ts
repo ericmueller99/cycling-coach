@@ -1,8 +1,8 @@
-import type { DraftIngredient, Food, IngredientLine, IngredientMatch, IngredientSuggestion, Nutrients, RecipeInput } from '@cycling-coach/shared';
+import type { DraftIngredient, Food, IngredientLine, IngredientMatch, IngredientSuggestion, Nutrients, RecipeIngredient, RecipeInput } from '@cycling-coach/shared';
 import { scaleNutrients, sumNutrients, ZERO_NUTRIENTS } from './nutrients';
 import { computePortion } from './portions';
 import { defaultPortionIndex, foodFromStaple } from './reference';
-import { canonicalUnit } from './units';
+import { canonicalUnit, isStandardUnit, roundTo, unitKey } from './units';
 
 /**
  * Pricing the coach's recipes (DECISIONS #41). The coach names ingredients and
@@ -24,10 +24,17 @@ export const stapleWords = (s: string) =>
  * bar" → "Bars, granola"), so an unknown word ("zorblax bar") gets nothing rather than a guess.
  */
 export function stapleCovers(heard: string, name: string): boolean {
-  const have = stapleWords(name);
-  const want = stapleWords(heard);
-  return want.length > 0 && want.every((w) => have.some((h) => h.startsWith(w.replace(/s$/, '')) || w.startsWith(h)));
+  const have = stapleWords(name).map(singular);
+  const want = stapleWords(heard).map(singular);
+  return want.length > 0 && want.every((w) => have.some((h) => h.startsWith(w) || w.startsWith(h)));
 }
+
+/** "blueberries" → "blueberry", "tomatoes" → "tomato", "carrots" → "carrot"; "glass" stays. Word by word. */
+export const singular = (words: string) =>
+  words
+    .split(' ')
+    .map((w) => (/ies$/.test(w) ? `${w.slice(0, -3)}y` : /oes$/.test(w) ? w.slice(0, -2) : /[^s]s$/.test(w) ? w.slice(0, -1) : w))
+    .join(' ');
 
 /** What a match is priced from: the food, or the staple as the food it would become. */
 function pricedItem(match: IngredientMatch, foodsById: ReadonlyMap<string, Food>) {
@@ -108,4 +115,35 @@ export function draftToRecipeInput(
     ...(toTaste.length ? { toTaste } : {}),
     ...(draft.steps.length ? { steps: draft.steps } : {}),
   };
+}
+
+/**
+ * Ingredients typed into the recipe editor, merged into the ones it has (DECISIONS #107). A food
+ * already in the recipe takes the new amount and unit in place; anything else is added at the end. When
+ * the same food is typed twice, the last amount wins.
+ */
+export function mergeIngredients(existing: readonly RecipeIngredient[], incoming: readonly RecipeIngredient[]): RecipeIngredient[] {
+  const out = [...existing];
+  for (const ing of incoming) {
+    const at = out.findIndex((x) => x.foodId === ing.foodId);
+    if (at >= 0) out[at] = { ...out[at]!, quantity: ing.quantity, unit: ing.unit };
+    else out.push(ing);
+  }
+  return out;
+}
+
+/**
+ * A typed amount in a unit the food can measure: as typed when it can; a count ("3 eggs", "2 carrots")
+ * as that many of the food's usual piece ("3 large egg", "2 medium"); otherwise null.
+ */
+export function fitPortion(
+  item: Parameters<typeof computePortion>[0] & { defaultPortion: { quantity: number; unit: string } },
+  quantity: number,
+  unit: string,
+): { quantity: number; unit: string } | null {
+  if (computePortion(item, quantity, unit)) return { quantity, unit };
+  const usual = item.defaultPortion;
+  if (isStandardUnit(unitKey(unit)) || isStandardUnit(unitKey(usual.unit))) return null;
+  const counted = { quantity: roundTo(quantity * usual.quantity, 3), unit: usual.unit };
+  return computePortion(item, counted.quantity, counted.unit) ? counted : null;
 }

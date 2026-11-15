@@ -1,15 +1,17 @@
-import type { CallUsage, FoodAi, IngredientMatchResult, NewMealIdeas, NewRecipeDraft } from '@cycling-coach/coach';
+import type { CallUsage, FoodAi, IngredientMatchResult, NewMealIdeas, NewRecipeDraft, RecipeTextReading } from '@cycling-coach/coach';
 import {
   buildCatalog,
   canonicalUnit,
   computePortion,
   defaultPortionIndex,
   draftToRecipeInput,
+  fitPortion,
   foodFromStaple,
   perServingOf,
   priceLines,
   rankByText,
   scaleLines,
+  singular,
   stapleCovers,
   stapleWords,
 } from '@cycling-coach/core';
@@ -44,6 +46,9 @@ import type {
   RecipeDraft,
   RecipeDraftLogInput,
   RecipeDraftPatch,
+  RecipeInput,
+  RecipeTextResult,
+  StapleMatch,
   StapleDetail,
   StapleSearchPayload,
   StapleSource,
@@ -63,28 +68,33 @@ export interface MatchDeps {
   stapleDetail(source: StapleSource, ref: string): Promise<StapleDetail | Failure>;
 }
 
-/**
- * The coach's ingredient lines → matches. The small model picks from the user's foods
- * by short id; ids are checked here. A miss tries the top Canadian staple, used only when its name
- * covers every word of the ingredient (same rule as Log with AI, DECISIONS #40). "To taste" lines
- * aren't matched. Nothing is saved.
- */
-export async function matchLines(deps: MatchDeps, items: readonly IngredientLine[]): Promise<Line[]> {
-  const { lines, refs } = buildCatalog(deps.library);
-  const foodsById = new Map(deps.library.foods.map((f) => [f.id, f]));
+/** The food lines of the catalog a recipe can be matched against, with the lookups to check what comes back. */
+export function ingredientCatalog(library: FoodLibrary) {
+  const { lines, refs } = buildCatalog(library);
+  const foodsById = new Map(library.foods.map((f) => [f.id, f]));
   // A restaurant estimate is a whole meal and a guess: a recipe would lose the Estimate tag.
   const foodLines = lines.filter((l) => {
     const ref = refs.get(l.id);
     return ref?.kind === 'food' && foodsById.get(ref.id)?.source !== 'estimate';
   });
-  const wanted = items.map((it, i) => ({ it, i })).filter(({ it }) => !it.toTaste);
+  return { foodLines, refs, foodsById };
+}
 
-  const byIndex = new Map<number, IngredientMatchResult['items'][number]>();
-  if (deps.matchWithAi && foodLines.length && wanted.length) {
-    const res = await deps.matchWithAi({ catalog: foodLines, items: wanted.map(({ it }) => ({ name: it.name, quantity: it.quantity, unit: it.unit })) });
-    if (res.ok) res.value.items.forEach((m) => { const w = wanted[m.index]; if (w) byIndex.set(w.i, m); });
-  }
+/** What the model said for one line: a catalog id, and an amount only when it converted the unit. */
+export type ModelMatch = { ref: string | null; quantity: number | null; unit: string | null };
 
+/**
+ * Lines plus what the model matched (by line index) → checked matches. An id that isn't one of their
+ * foods counts as no match. A miss tries the top Canadian staple, used only when its name covers every
+ * word of the ingredient (same rule as Log with AI, DECISIONS #40). "To taste" lines aren't matched.
+ * Nothing is saved.
+ */
+export async function resolveLines(
+  deps: Pick<MatchDeps, 'library' | 'searchStaples' | 'stapleDetail'>,
+  items: readonly IngredientLine[],
+  byIndex: ReadonlyMap<number, ModelMatch>,
+): Promise<Line[]> {
+  const { refs, foodsById } = ingredientCatalog(deps.library);
   const details = new Map<string, Promise<StapleDetail | null>>();
   const stapleFor = async (name: string): Promise<IngredientMatch | null> => {
     const q = stapleWords(name).join(' ') || name;
@@ -103,9 +113,9 @@ export async function matchLines(deps: MatchDeps, items: readonly IngredientLine
       const m = byIndex.get(i);
       const ref = m?.ref ? refs.get(m.ref) : undefined;
       const food = ref?.kind === 'food' ? foodsById.get(ref.id) : undefined;
-      if (food) {
+      if (food && food.source !== 'estimate') {
         let { quantity, unit } = it;
-        // The model converts only when the coach's unit can't be measured for this food.
+        // The model converts only when the line's unit can't be measured for this food.
         if (!computePortion(food, quantity, canonicalUnit(unit)) && m?.quantity && m.unit && computePortion(food, m.quantity, canonicalUnit(m.unit))) {
           quantity = m.quantity;
           unit = m.unit;
@@ -115,6 +125,89 @@ export async function matchLines(deps: MatchDeps, items: readonly IngredientLine
       return { ...it, match: await stapleFor(it.name).catch(() => null) };
     }),
   );
+}
+
+/**
+ * The coach's ingredient lines → matches. The small model picks from the user's foods
+ * by short id; `resolveLines` checks them and tries staples for the rest.
+ */
+export async function matchLines(deps: MatchDeps, items: readonly IngredientLine[]): Promise<Line[]> {
+  const { foodLines } = ingredientCatalog(deps.library);
+  const wanted = items.map((it, i) => ({ it, i })).filter(({ it }) => !it.toTaste);
+
+  const byIndex = new Map<number, ModelMatch>();
+  if (deps.matchWithAi && foodLines.length && wanted.length) {
+    const res = await deps.matchWithAi({ catalog: foodLines, items: wanted.map(({ it }) => ({ name: it.name, quantity: it.quantity, unit: it.unit })) });
+    if (res.ok) res.value.items.forEach((m) => { const w = wanted[m.index]; if (w) byIndex.set(w.i, m); });
+  }
+  return resolveLines(deps, items, byIndex);
+}
+
+/** A recipe has at most 60 ingredients. */
+const MAX_TEXT_LINES = 60;
+const MAX_STAPLE_CHOICES = 3;
+
+/**
+ * Staples for a typed ingredient that isn't in their foods: the model's CNF-style search first ("wheat
+ * flour white all purpose" — a bare "flour" ranks potato flour first), then the words typed, singular and as typed. Only hits
+ * whose name covers every word of the ingredient (DECISIONS #40), best first, at most three.
+ */
+async function stapleChoices(deps: Pick<MatchDeps, 'searchStaples' | 'stapleDetail'>, name: string, search: string): Promise<StapleMatch[]> {
+  const words = stapleWords(name).join(' ') || name;
+  // The file's names are singular, and its search matches word starts: "blueberries" misses "Blueberry, raw".
+  const queries = [...new Set([search.trim(), singular(words), words].filter((q) => q.length >= 2))];
+  const hits: StapleSearchPayload['results'] = [];
+  for (const q of queries) {
+    const found = await deps.searchStaples(q.slice(0, 80), 'cnf').catch(() => ({ results: [] as StapleSearchPayload['results'] }));
+    for (const h of found.results) if (stapleCovers(name, h.name) && !hits.some((x) => x.source === h.source && x.ref === h.ref)) hits.push(h);
+    if (hits.length >= MAX_STAPLE_CHOICES) break;
+  }
+  const details = await Promise.all(hits.slice(0, MAX_STAPLE_CHOICES).map((h) => deps.stapleDetail(h.source, h.ref).catch(() => null)));
+  return details.flatMap((d) => (d && !('error' in d) ? [{ kind: 'staple' as const, source: d.source, ref: d.ref, name: d.name, detail: d }] : []));
+}
+
+/**
+ * What the model read from typed recipe ingredients → checked lines (DECISIONS #107). Ids are checked
+ * and misses try a staple, as for the coach's recipes. A line with no amount takes the matched food's
+ * usual portion. Nothing is saved.
+ */
+export async function recipeTextLines(deps: Pick<MatchDeps, 'library' | 'searchStaples' | 'stapleDetail'>, reading: RecipeTextReading): Promise<RecipeTextResult> {
+  const read = reading.items
+    .map((it) => ({ ...it, name: it.name.trim().slice(0, 80) }))
+    .filter((it) => it.name)
+    .slice(0, MAX_TEXT_LINES);
+  const said = read.map((it) => it.quantity != null && it.quantity > 0 && it.quantity <= 10_000);
+  const items: IngredientLine[] = read.map((it, i) => ({
+    name: it.name,
+    quantity: said[i] ? it.quantity! : 1,
+    unit: said[i] && it.unit?.trim() ? canonicalUnit(it.unit).slice(0, 30) : 'serving',
+    toTaste: it.toTaste,
+  }));
+  const byIndex = new Map(read.map((it, i) => [i, { ref: it.ref, quantity: it.convQuantity, unit: it.convUnit }] as const));
+  // Their foods only here; staples are looked up below with the model's search.
+  const resolved = await resolveLines({ ...deps, searchStaples: async (_q, source) => ({ source, results: [] }) }, items, byIndex);
+  const lines = await Promise.all(
+    resolved.map(async (l, i): Promise<RecipeTextResult['lines'][number]> => {
+      if (l.toTaste || l.match) return l;
+      const [first, ...rest] = await stapleChoices(deps, l.name, read[i]!.search);
+      return first ? { ...l, match: first, ...(rest.length ? { alternatives: rest } : {}) } : l;
+    }),
+  );
+  const foodsById = new Map(deps.library.foods.map((f) => [f.id, f]));
+  const usual = (m: IngredientMatch) =>
+    m.kind === 'food' ? foodsById.get(m.foodId)?.defaultPortion : foodFromStaple(m.detail, { name: m.name, defaultIndex: defaultPortionIndex(m.detail.portions) }).defaultPortion;
+  const servings = reading.servings != null && reading.servings >= 1 ? Math.min(200, Math.round(reading.servings)) : null;
+  return {
+    servings,
+    lines: lines.map((l, i) => {
+      const portion = !said[i] && l.match ? usual(l.match) : undefined;
+      if (portion) return { ...l, quantity: portion.quantity, unit: portion.unit };
+      // "3 eggs" for a food measured in "large egg" → 3 large egg. Staples are fitted when they're picked.
+      const food = l.match?.kind === 'food' ? foodsById.get(l.match.foodId) : undefined;
+      const fit = food ? fitPortion(food, l.quantity, l.unit) : null;
+      return fit ? { ...l, ...fit } : l;
+    }),
+  };
 }
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z]+/g, ' ').trim();
@@ -181,6 +274,24 @@ export function applyIdeaFix(ideas: readonly MealIdea[], at: { idea: number; ing
     });
     return priceIdea({ ...idea, ingredients }, foods);
   });
+}
+
+/**
+ * A draft's lines once the full recipe editor saved it (DECISIONS #108): the recipe's ingredients as
+ * matches to the user's foods, named as the recipe names them, then its to-taste lines. A to-taste line
+ * the draft had keeps its amount; a new one is "1 serving", which is never counted.
+ */
+export function linesFromRecipe(recipe: Pick<RecipeInput, 'ingredients' | 'toTaste'>, foods: ReadonlyMap<string, Food>, before: readonly Line[]): Line[] {
+  const counted = recipe.ingredients.flatMap((i): Line[] => {
+    const f = foods.get(i.foodId);
+    if (!f) return [];
+    return [{ name: i.label ?? f.name, quantity: i.quantity, unit: i.unit, toTaste: false, match: { kind: 'food', foodId: f.id, name: f.name, source: f.source } }];
+  });
+  const toTaste = (recipe.toTaste ?? []).map((name): Line => {
+    const had = before.find((l) => l.toTaste && norm(l.name) === norm(name));
+    return had ? { ...had, name } : { name, quantity: 1, unit: 'serving', toTaste: true, match: null };
+  });
+  return [...counted, ...toTaste];
 }
 
 /**
@@ -451,6 +562,44 @@ export class CoachFoodService {
     const p = this.doSave(userId, id).finally(() => this.saving.delete(key));
     this.saving.set(key, p);
     return p;
+  }
+
+  /**
+   * Save it as the user finished it in the full recipe editor (DECISIONS #108): the recipe is what they
+   * saved, staples already being their foods by then, and the draft is rebuilt from it so the chat card and
+   * the pane agree with it. Shares `save`'s lock, so the two can't both make a recipe.
+   */
+  saveEdited(userId: string, id: string, input: RecipeInput): Promise<RecipeDraft | Failure> {
+    const key = `${userId}:${id}`;
+    const running = this.saving.get(key);
+    if (running) return running.then((d) => ('error' in d ? d : { error: 'This recipe is already saved — edit it in Library › Recipes.', status: 409 as const }));
+    const p = this.doSaveEdited(userId, id, input).finally(() => this.saving.delete(key));
+    this.saving.set(key, p);
+    return p;
+  }
+
+  private async doSaveEdited(userId: string, id: string, input: RecipeInput): Promise<RecipeDraft | Failure> {
+    const doc = await getRecipeDraft(this.c, userId, id);
+    if (!doc?._id) return { error: 'Recipe not found.', status: 404 };
+    if (doc.recipeId) return { error: 'This recipe is already saved — edit it in Library › Recipes.', status: 409 };
+    const lib = await this.food.library(userId);
+    const byId = new Map(lib.foods.filter((f) => !f.archived).map((f) => [f.id, f]));
+    const missing = input.ingredients.filter((i) => !byId.has(i.foodId));
+    if (missing.length) return { error: 'An ingredient is no longer in your foods. Pick it again.', status: 400 };
+    const recipe = await this.food.createRecipe(userId, {
+      ...input,
+      // The coach's description and time come along unless the editor sent its own.
+      ...(!input.description && doc.description ? { description: doc.description.slice(0, 300) } : {}),
+      ...(!input.minutes && doc.minutes ? { minutes: doc.minutes } : {}),
+    });
+    const ingredients = linesFromRecipe(recipe, byId, doc.ingredients);
+    const won = await setRecipeDraftSaved(this.c, userId, doc._id, recipe.id, ingredients, this.now(), { name: recipe.name, servings: recipe.servings, steps: recipe.steps ?? [] });
+    if (!won) {
+      await this.food.archiveRecipe(userId, recipe.id);
+      return { error: 'This recipe is already saved — edit it in Library › Recipes.', status: 409 };
+    }
+    const after = await getRecipeDraft(this.c, userId, id);
+    return this.view(userId, after!);
   }
 
   private async doSave(userId: string, id: string): Promise<RecipeDraft | Failure> {

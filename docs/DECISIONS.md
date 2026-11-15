@@ -2683,3 +2683,68 @@ high, not only at the most likely. The macros move with the kcal.
   back in step when it's next moved. Per-item sliders would mean four more controls for a guess.
 - **Confidence is read off the most likely** (`EstimateTotals.likely`), so sliding doesn't change the label.
 - `lean` is optional and has no default (rule 1b: `caloriesEditSchema` carries items). Older entries read as 0.
+
+## 107. Recipe ingredients can be typed or pasted, and matched with AI (Nov 14)
+
+**Decision.** The recipe editor (new or edit) has an **Add with AI** box above its ingredients. The rider types or
+pastes something like "1 cup flour 1 cup milk, 1 egg, 1 tsp baking powder, pinch of salt, makes 6 pancakes", and the
+open recipe fills in.
+- **One small-model call reads and matches** (`FoodAi.readRecipeText`, router `small`, effort low). It splits run-on
+  text, keeps the amounts as written and marks seasonings as to taste. It matches each line against the rider's foods
+  (the cached catalog, as in #33–34 and #41), gives a CNF-style search phrase for each line it can't match, and reads the
+  servings ("makes 6", "serves 4"). The server checks every id. Nutrition never comes from the model.
+- **Matches go straight into the unsaved form.** A line that matches one of their foods is added at its amount, and
+  the recipe isn't written until Save. When a food is already in the recipe, its amount and unit are replaced, not
+  added to (`core.mergeIngredients`), so retyping a line corrects it. Servings set Makes. To-taste lines become the
+  recipe's `toTaste`, which the editor now keeps and shows.
+- **Staples wait to be clicked** (rule 1a). A line that isn't in their foods gets a card with the best covering CNF
+  staple and up to two others ("Or: …"), or Search and Skip. A staple becomes one of their foods only when they click
+  it, or **Use all N staples**.
+- **The model's search phrase finds the staple.** The CNF search matches word starts, so "flour" ranks potato flour
+  first, "milk" dry milk powder and "sugar" sugar-apple. A phrase in the file's own words ("wheat flour white all
+  purpose", "milk fluid partly skimmed 2%") finds the everyday item. The server tries that phrase, then the typed
+  words in the singular, then as typed. Each hit must still cover every word typed (#40).
+- **`stapleCovers` compares singular forms.** The file's names are singular, so "blueberries" never covered
+  "Blueberry, raw" and fell through to a baby food. This also improves Log with AI and the coach's recipes.
+- **Counts become the food's usual piece** (`core.fitPortion`): "3 eggs" for a food measured in "large egg" is 3 large
+  egg, and "2 carrots" is 2 medium. A unit the food can't measure that isn't a count leaves a staple at its usual
+  portion. A food match keeps the unit, and the editor flags it.
+- **Spend and records:** the spend guard asks `food_parse`, and the call is recorded as `food_parse`: one request, one
+  row, like Log with AI.
+
+**Rejected.** A review panel before anything is added (the rider wanted it straight in). Adding to an existing
+amount (retyping is the natural way to fix a line). A second model call to pick among staple candidates (the search
+phrase was enough in testing, and the choices cover the rest). Filling the name and steps from a pasted recipe (only
+servings, for now).
+
+**Known limits.** A staple's name must contain every word typed, so "cherry tomatoes" and "rolled oats" get no staple
+(the file has no "cherry" tomato, and lists "Grains, oats, dry"). Search covers them. Rice comes up cooked unless the
+text says otherwise.
+
+## 108. A coach recipe is finished in the full editor; save comes before log (Nov 14)
+
+**Decision.** The coach's recipe pane (#41, #46) is for reading and quick fixes. Real editing happens in the Library's
+recipe editor, and saving no longer means logging.
+- **Open in editor / Finish in editor.** The pane's inline Edit mode is gone. A button opens `RecipeEditor` with the
+  draft (`draft` prop): name, servings, steps and to-taste come over, lines matched to the rider's foods become
+  ingredients (with the coach's wording as `label`), and staple and unmatched lines start as #107's cards to use,
+  search or skip. A staple already saved as one of their foods goes straight in. Staples still become foods only on a
+  click (rule 1a). Highlighted problem lines keep their quick fixes in the pane.
+- **`POST /coach-food/recipes/:id/save-edited`** takes the editor's `RecipeInput`, creates the recipe, and rebuilds the
+  draft from it (`linesFromRecipe`: its foods and labels, then to-taste), with its name, servings and steps, so the chat
+  card and pane agree with what was saved. It shares `save`'s per-draft lock, and only the first link wins. The coach's
+  description and time come along.
+- **Save first, log optional.** The pane's footer is **Save to recipes** and **Log it…**. Log it… opens the old "How much
+  did you eat?" block, and logging an unsaved recipe still saves it. With unresolved lines, the footer says how many
+  and offers **Finish in editor**; nothing can be saved, logged or cooked until each line is counted or dropped.
+- **Once saved, the pane shows the Library recipe** (`RecipeBody` from `useRecipeDetail`), and Edit opens the editor on
+  it, so later edits show in the pane.
+- **Cook only when complete, with a way back.** "Full screen" is now **Cook**, shown only once every line is resolved.
+  Cook mode has a **← Back** button and is portalled to the body: opened from the pane, the coach page's header had
+  stacked over it and hidden its close button.
+- **`PortionRow` on phones:** the name has its own line (no more "Garlic, r…") with amount, unit, kcal and remove
+  under it, and a recipe's `label` leads with the food's name beneath. This applies to the meal editor too.
+
+**Rejected.** A full-page draft route: it needs add, rename and steps on the draft API, which the editor already
+does for recipes. Keeping the inline edit mode beside the editor: two ways to do one thing in a 420 px column. Saving
+staples to the rider's foods when the editor opens (rule 1a).

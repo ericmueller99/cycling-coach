@@ -23,6 +23,8 @@ export type IngredientMatch =
   | { kind: 'food'; foodId: string; name: string; source: FoodSource }
   | { kind: 'staple'; source: StapleDetail['source']; ref: string; name: string; detail: StapleDetail };
 
+export type StapleMatch = Extract<IngredientMatch, { kind: 'staple' }>;
+
 /** A match offered for an unmatched line in the Details pane — the user's foods first, then CNF staples. */
 export type IngredientSuggestion =
   | { kind: 'food'; foodId: string; name: string; source: FoodSource }
@@ -38,6 +40,23 @@ export interface DraftIngredient extends IngredientLine {
   suggestions?: IngredientSuggestion[] | undefined;
   /** `unmatched`: not in the user's foods and no staple fits; `unit`: matched, but that unit doesn't fit the food. */
   problem?: 'unmatched' | 'unit' | undefined;
+}
+
+/** Ingredients typed or pasted into the recipe editor (DECISIONS #107). */
+export const recipeTextInputSchema = z.object({
+  text: z.string().trim().min(2).max(2000),
+});
+export type RecipeTextInput = z.infer<typeof recipeTextInputSchema>;
+
+/**
+ * What the typed ingredients came to. A proposal: the editor puts `food` matches straight into its
+ * unsaved list; a staple becomes one of the user's foods only when they click it.
+ */
+export interface RecipeTextResult {
+  /** "makes 6 pancakes" → 6; null when the text didn't say. */
+  servings: number | null;
+  /** In the order typed. "To taste" lines aren't matched. */
+  lines: (IngredientLine & { match: IngredientMatch | null; alternatives?: StapleMatch[] | undefined })[];
 }
 
 export interface MealIdea {

@@ -21,6 +21,7 @@ import {
   recipeInputSchema,
   recipePatchSchema,
   foodParseInputSchema,
+  recipeTextInputSchema,
   photoReadInputSchema,
   stapleQuerySchema,
   stapleSources,
@@ -37,6 +38,8 @@ import {
   type FoodAdjustment,
   type FoodParseInput,
   type FoodParseResult,
+  type RecipeTextInput,
+  type RecipeTextResult,
   type PhotoReadInput,
   type PhotoReadResult,
   type BodyScan,
@@ -113,6 +116,8 @@ export interface FoodServices {
   barcode(userId: string, code: string): Promise<BarcodeLookup | ServiceFailure>;
   /** "Log with words": a draft to confirm, matched to the user's foods. Nothing is logged. */
   parse(userId: string, input: FoodParseInput): Promise<FoodParseResult | ServiceFailure>;
+  /** Ingredients typed into the recipe editor, matched to the user's foods or staples. Nothing is saved. */
+  recipeText(userId: string, input: RecipeTextInput): Promise<RecipeTextResult | ServiceFailure>;
   /** "Adjust with AI": how much a food's values move. A proposal; nothing is saved. */
   adjust(userId: string, input: FoodAdjustInput): Promise<FoodAdjustment | ServiceFailure>;
   /** Numbers the user knows, with no food behind them. */
@@ -199,6 +204,10 @@ export function foodRoutes(food: FoodServices) {
       })
       .post('/parse', json(foodParseInputSchema), async (c) => {
         const r = await food.parse(c.get('user')!.id, c.req.valid('json'));
+        return isFailure(r) ? c.json(refusal(r), r.status) : c.json(r);
+      })
+      .post('/recipe-text', json(recipeTextInputSchema), async (c) => {
+        const r = await food.recipeText(c.get('user')!.id, c.req.valid('json'));
         return isFailure(r) ? c.json(refusal(r), r.status) : c.json(r);
       })
       .post('/adjust', json(foodAdjustInputSchema), async (c) => {

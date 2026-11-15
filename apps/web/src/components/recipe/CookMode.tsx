@@ -1,7 +1,8 @@
 import { formatPortion } from '@cycling-coach/core';
 import type { RecipeView } from '@cycling-coach/shared';
 import { useEffect, useState } from 'react';
-import { CheckIcon, XIcon } from '../icons';
+import { createPortal } from 'react-dom';
+import { CheckIcon, ChevronLeft } from '../icons';
 import { ServingsPicker } from '../ServingsPicker';
 import { linesFor, RecipeMeta } from './RecipeBody';
 import { StepText } from './StepText';
@@ -109,7 +110,8 @@ export function CookMode({
   const lines = linesFor(view, servings);
   const current = view.steps.findIndex((_, i) => !ticks.steps.includes(i));
 
-  return (
+  // On the body, so a page or pane it's opened from can't stack over it (its header hid the way out).
+  return createPortal(
     <div
       role="dialog"
       aria-modal="true"
@@ -118,15 +120,16 @@ export function CookMode({
     >
       <div className="sticky top-0 z-10 border-b border-line bg-bg/95 backdrop-blur">
         <div className="mx-auto flex max-w-[720px] items-center gap-3 px-4 py-3">
-          <h1 className="m-0 min-w-0 flex-auto text-lg leading-snug font-bold">{view.name}</h1>
+          {/* A plain way back to the recipe it came from (DECISIONS #108); Escape works too. */}
           <button
             type="button"
-            aria-label="Close cook mode"
+            aria-label="Back to recipe"
             onClick={onClose}
-            className="flex h-11 w-11 flex-none items-center justify-center rounded-full border border-line-strong bg-surface text-ink"
+            className="flex h-11 flex-none items-center gap-1 rounded-full border border-line-strong bg-surface pr-4 pl-2.5 text-[15px] font-medium text-ink"
           >
-            <XIcon size={18} />
+            <ChevronLeft size={18} /> Back
           </button>
+          <h1 className="m-0 min-w-0 flex-auto text-lg leading-snug font-bold">{view.name}</h1>
         </div>
       </div>
 
@@ -215,6 +218,7 @@ export function CookMode({
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

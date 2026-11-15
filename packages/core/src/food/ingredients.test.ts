@@ -1,6 +1,6 @@
 import type { Food, IngredientLine, IngredientMatch, StapleDetail } from '@cycling-coach/shared';
 import { describe, expect, it } from 'vitest';
-import { draftToRecipeInput, perServingOf, priceLines, stapleCovers } from './ingredients';
+import { draftToRecipeInput, fitPortion, mergeIngredients, perServingOf, priceLines, stapleCovers } from './ingredients';
 
 const rice: Food = {
   id: 'rice',
@@ -33,6 +33,13 @@ describe('stapleCovers', () => {
     expect(stapleCovers('Feta cheese', 'Cheese, feta')).toBe(true);
     expect(stapleCovers('zorblax bar', 'Bars, granola')).toBe(false);
     expect(stapleCovers('the', 'Anything')).toBe(false);
+  });
+
+  it('compares singular forms: the file names foods in the singular', () => {
+    expect(stapleCovers('blueberries', 'Blueberry, raw')).toBe(true);
+    expect(stapleCovers('tomatoes', 'Tomato, red, ripe, raw')).toBe(true);
+    expect(stapleCovers('granola bar', 'Bars, granola')).toBe(true);
+    expect(stapleCovers('blueberries', 'Blackberry, raw')).toBe(false);
   });
 });
 
@@ -105,5 +112,39 @@ describe('draftToRecipeInput', () => {
     expect(input.minutes).toBe(30);
     expect(input.toTaste).toEqual(['Oregano']);
     expect(input.steps).toEqual(['Cook the rice.']);
+  });
+});
+
+describe('mergeIngredients', () => {
+  const flour = { foodId: 'flour', quantity: 1, unit: 'cup', label: 'Flour' };
+  const milk = { foodId: 'milk', quantity: 250, unit: 'ml' };
+
+  it('adds new foods at the end', () => {
+    expect(mergeIngredients([flour], [milk])).toEqual([flour, milk]);
+  });
+
+  it('replaces the amount of a food already there, in place, keeping its label', () => {
+    expect(mergeIngredients([flour, milk], [{ foodId: 'flour', quantity: 2, unit: 'cups' }])).toEqual([{ ...flour, quantity: 2, unit: 'cups' }, milk]);
+  });
+
+  it('keeps the last amount when a food is typed twice', () => {
+    expect(mergeIngredients([], [milk, { foodId: 'milk', quantity: 1, unit: 'cup' }])).toEqual([{ ...milk, quantity: 1, unit: 'cup' }]);
+  });
+});
+
+describe('fitPortion', () => {
+  const egg = { ...rice, measures: [{ unit: 'g', amount: 50 }, { unit: 'large egg', amount: 1 }], defaultPortion: { quantity: 1, unit: 'large egg' } };
+
+  it('keeps an amount the food can measure', () => {
+    expect(fitPortion(egg, 100, 'g')).toEqual({ quantity: 100, unit: 'g' });
+  });
+
+  it('turns a count into that many of the usual piece', () => {
+    expect(fitPortion(egg, 3, 'egg')).toEqual({ quantity: 3, unit: 'large egg' });
+  });
+
+  it('gives up on a standard unit it can’t measure, or a count when the usual portion is a weight', () => {
+    expect(fitPortion(egg, 1, 'cup')).toBeNull();
+    expect(fitPortion(rice, 2, 'handful')).toBeNull();
   });
 });
