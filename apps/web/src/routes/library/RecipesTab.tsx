@@ -5,7 +5,7 @@ import { useMemo, useState } from 'react';
 import { PlusIcon } from '../../components/icons';
 import { MacroBar } from '../../components/MacroBar';
 import { Button, Card } from '../../components/ui';
-import { fmtG, fmtKcal, itemUsage } from '../../lib/food';
+import { fmtG, fmtKcal, ingredientName, itemUsage, recipesUsedIn } from '../../lib/food';
 import type { useFoodFlows } from '../food/flows';
 import { Empty, SearchBox } from './shared';
 
@@ -23,9 +23,8 @@ export function RecipesTab({ lib, flows, slot, today: _today, onEdit }: { lib: F
   const [sort, setSort] = useState<Sort>('logged');
   const recipes = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    const foodName = (id: string) => lib.foods.find((f) => f.id === id)?.name ?? '';
     const list = lib.recipes.filter(
-      (r) => !r.archived && (!needle || r.name.toLowerCase().includes(needle) || r.ingredients.some((i) => foodName(i.foodId).toLowerCase().includes(needle))),
+      (r) => !r.archived && (!needle || r.name.toLowerCase().includes(needle) || r.ingredients.some((i) => ingredientName(lib, i).toLowerCase().includes(needle))),
     );
     const use = (r: Recipe) => itemUsage(lib, { kind: 'recipe', id: r.id });
     if (sort === 'az') list.sort((a, b) => a.name.localeCompare(b.name));
@@ -62,6 +61,7 @@ export function RecipesTab({ lib, flows, slot, today: _today, onEdit }: { lib: F
         <div className="grid gap-3.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 340px), 1fr))' }}>
           {recipes.map((r) => {
             const usage = itemUsage(lib, { kind: 'recipe', id: r.id });
+            const usedIn = recipesUsedIn(lib, r.id);
             const per = r.totals.perServing;
             const split = macroSplit(per);
             return (
@@ -78,6 +78,7 @@ export function RecipesTab({ lib, flows, slot, today: _today, onEdit }: { lib: F
                       {usage ? ` · logged ${usage.count}×` : ''}
                       {r.totals.problems.length ? ' · needs a look' : ''}
                     </div>
+                    {usedIn.length > 0 && <div className="text-xs text-muted">Used in {usedIn.map((u) => u.name).join(', ')}</div>}
                   </div>
                   <div className="text-right">
                     <div className="font-mono text-[20px] leading-tight font-semibold">{fmtKcal(per.kcal)}</div>
@@ -90,8 +91,12 @@ export function RecipesTab({ lib, flows, slot, today: _today, onEdit }: { lib: F
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                   {r.ingredients.map((i, n) => (
-                    <span key={`${i.foodId}-${n}`} className="rounded-full bg-surface-2 px-2.5 py-0.5 text-xs">
-                      {i.label ?? lib.foods.find((f) => f.id === i.foodId)?.name ?? 'Missing food'} {formatPortion(i.quantity, i.unit)}
+                    <span
+                      key={`${i.foodId ?? i.recipeId}-${n}`}
+                      title={i.recipeId ? 'A recipe of yours' : undefined}
+                      className={`rounded-full px-2.5 py-0.5 text-xs ${i.recipeId ? 'border border-line-strong bg-surface font-medium' : 'bg-surface-2'}`}
+                    >
+                      {ingredientName(lib, i)} {formatPortion(i.quantity, i.unit)}
                     </span>
                   ))}
                 </div>

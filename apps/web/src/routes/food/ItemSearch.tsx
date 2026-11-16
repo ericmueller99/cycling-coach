@@ -97,10 +97,13 @@ export function ItemSearch({
   footer,
   addNew,
   seed,
+  exclude,
 }: {
   lib: FoodLibrary;
   today: string;
   kinds: ('food' | 'recipe')[];
+  /** Ids that can't be picked here: a recipe can't use itself, or a recipe that uses it (DECISIONS #113). */
+  exclude?: ReadonlySet<string> | undefined;
   onPick: (item: Pickable, portion: Portion) => void;
   placeholder: string;
   footer?: React.ReactNode;
@@ -124,9 +127,9 @@ export function ItemSearch({
   }, [seed?.at]);
   const results = useMemo(() => {
     if (!q.trim()) return [];
-    const pool = libraryItems(lib).filter((i): i is Pickable => i.kind !== 'meal' && kinds.includes(i.kind));
+    const pool = libraryItems(lib).filter((i): i is Pickable => i.kind !== 'meal' && kinds.includes(i.kind) && !exclude?.has(i.id));
     return rankByUse(pool, q, (i) => itemUsage(lib, i), today).slice(0, 8);
-  }, [lib, q, kinds, today]);
+  }, [lib, q, kinds, today, exclude]);
 
   const query = q.trim();
   const staples = useIncludeStaples({

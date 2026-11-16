@@ -1,5 +1,5 @@
-import { canonicalUnit, foodAsLoggable, formatPortion, mergeIngredients, recipeTotals, roundTo } from '@cycling-coach/core';
-import type { Food, FoodLibrary, Recipe, RecipeDraft, RecipeIngredient, RecipeInput } from '@cycling-coach/shared';
+import { canonicalUnit, foodAsLoggable, formatPortion, mergeIngredients, recipeAsLoggable, recipesUsing, recipeTotals, roundTo } from '@cycling-coach/core';
+import type { Food, FoodLibrary, Recipe, RecipeDraft, RecipeIngredient, RecipeInput, RecipeProblem } from '@cycling-coach/shared';
 import { useId, useMemo, useState } from 'react';
 import { Dialog } from '../../components/Dialog';
 import { TrashIcon, XIcon } from '../../components/icons';
@@ -12,7 +12,7 @@ import { PortionRow } from './PortionRow';
 import { RecipeTextAdd, type Pending } from './RecipeTextAdd';
 
 /**
- * Recipe builder: ingredients from the user's foods at any amount and unit, makes
+ * Recipe builder: ingredients from the user's foods (or their other recipes, DECISIONS #113) at any amount and unit, makes
  * N servings, optional finished weight and total volume so a batch can be logged by the gram or the cup. Totals are computed
  * from the foods as they are now, so editing an ingredient food updates the recipe. Ingredients can
  * also be typed or pasted and matched with AI (`RecipeTextAdd`, DECISIONS #107).
@@ -95,7 +95,11 @@ export function RecipeEditor({
   const [extraFoods, setExtraFoods] = useState<Food[]>([]);
 
   const foodsById = useMemo(() => new Map([...lib.foods, ...extraFoods].map((f) => [f.id, f])), [lib.foods, extraFoods]);
-  const totals = useMemo(() => recipeTotals({ ingredients, servings }, foodsById), [ingredients, servings, foodsById]);
+  // Recipes used as ingredients (DECISIONS #113), archived ones too, so an old line still prices.
+  const recipesById = useMemo(() => new Map(lib.recipes.map((r) => [r.id, r])), [lib.recipes]);
+  /** This recipe and every recipe that uses it: picking one would make it contain itself. */
+  const cantUse = useMemo(() => (recipe ? recipesUsing(recipe.id, lib.recipes) : undefined), [recipe, lib.recipes]);
+  const totals = useMemo(() => recipeTotals({ ingredients, servings, id: recipe?.id }, foodsById, recipesById), [ingredients, servings, foodsById, recipesById, recipe?.id]);
   const finishedG = Number(finished) > 0 ? Number(finished) : undefined;
   const totalG = finishedG ?? totals.rawGrams;
   const finishedVol = Number(volume) > 0 ? { quantity: Number(volume), unit: volumeUnit } : undefined;
@@ -197,12 +201,14 @@ export function RecipeEditor({
               />
             </div>
             {ingredients.map((ing, i) => {
-              const food = foodsById.get(ing.foodId);
+              const sub = ing.recipeId ? recipesById.get(ing.recipeId) : undefined;
+              const food = ing.foodId ? foodsById.get(ing.foodId) : undefined;
               return (
                 <PortionRow
-                  key={`${ing.foodId}:${i}`}
-                  item={food ? foodAsLoggable(food) : undefined}
-                  name="Missing food"
+                  key={`${ing.foodId ?? ing.recipeId}:${i}`}
+                  item={sub ? recipeAsLoggable(sub) : food ? foodAsLoggable(food) : undefined}
+                  name={ing.recipeId ? 'Missing recipe' : 'Missing food'}
+                  missing={ing.recipeId ? 'No longer in your recipes' : undefined}
                   label={ing.label}
                   portion={{ quantity: ing.quantity, unit: ing.unit }}
                   onChange={(p) => setIngredients(ingredients.map((x, j) => (j === i ? { ...x, ...p } : x)))}
@@ -228,10 +234,11 @@ export function RecipeEditor({
           <ItemSearch
             lib={lib}
             today={today}
-            kinds={['food']}
-            placeholder="Add ingredient from your foods…"
+            kinds={['food', 'recipe']}
+            exclude={cantUse}
+            placeholder="Add an ingredient from your foods or recipes…"
             seed={seed}
-            onPick={(item, p) => setIngredients([...ingredients, { foodId: item.id, quantity: p.quantity, unit: p.unit }])}
+            onPick={(item, p) => setIngredients([...ingredients, { ...(item.kind === 'recipe' ? { recipeId: item.id } : { foodId: item.id }), quantity: p.quantity, unit: p.unit }])}
             addNew={{
               target: 'recipe',
               onSaved: (food, p, add) => {
@@ -299,9 +306,21 @@ export function RecipeEditor({
           </div>
           {finishedG && <div className="text-xs text-muted">1 serving ≈ {fmtG(roundTo(finishedG / servings, 1))} g of the finished batch.</div>}
           {finishedVol && <div className="text-xs text-muted">1 serving ≈ {formatPortion(roundTo(finishedVol.quantity / servings, 2), finishedVol.unit)} of the finished batch.</div>}
-          {totals.problems.length > 0 && <div className="text-xs text-danger">{totals.problems.length} ingredient(s) can't be counted — check their units.</div>}
+          {totals.problems.length > 0 && <div className="text-xs text-danger">{problemNote(totals.problems)}</div>}
         </aside>
       </div>
     </Dialog>
   );
+}
+
+/** Why the numbers are short, in a line. */
+function problemNote(problems: readonly RecipeProblem[]): string {
+  const partly = problems.filter((p) => p.reason === 'incomplete').length;
+  const not = problems.length - partly;
+  return [
+    not ? `${not} ingredient${not === 1 ? '' : 's'} can't be counted — check ${not === 1 ? 'its unit' : 'their units'}.` : '',
+    partly ? `${partly === 1 ? 'A recipe' : `${partly} recipes`} used here ${partly === 1 ? 'has' : 'have'} ingredients that can't be counted.` : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
 }

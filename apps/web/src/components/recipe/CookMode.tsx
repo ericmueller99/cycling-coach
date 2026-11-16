@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CheckIcon, ChevronLeft } from '../icons';
 import { ServingsPicker } from '../ServingsPicker';
-import { linesFor, RecipeMeta } from './RecipeBody';
+import { linesFor, RecipeMeta, SubRecipe } from './RecipeBody';
 import { StepText } from './StepText';
 
 /**
@@ -164,6 +164,7 @@ export function CookMode({
                     <span className="w-[92px] flex-none font-mono text-[15px] font-semibold">{formatPortion(l.quantity, l.unit)}</span>
                     <span className="min-w-0">{l.label}</span>
                   </button>
+                  {l.recipe && <SubRecipe line={l} factor={servings / view.servings} />}
                 </li>
               );
             })}

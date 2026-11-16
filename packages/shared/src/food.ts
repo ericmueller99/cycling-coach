@@ -132,14 +132,24 @@ export interface Food extends Omit<FoodInput, 'images'> {
 
 // ── Recipes & meals ───────────────────────────────────────────────────────
 
-export const recipeIngredientSchema = z.object({
-  foodId: z.string().min(1),
-  quantity: z.number().positive().max(100_000),
-  unit: foodUnitSchema,
-  /** How the recipe names it ("chicken thighs") when that's friendlier than the food's name. */
-  label: z.string().trim().min(1).max(80).optional(),
-});
+/**
+ * One line of a recipe: a food, or another of the user's recipes used as an ingredient ("½ of the pizza
+ * dough", DECISIONS #113). Exactly one of `foodId` and `recipeId`.
+ */
+export const recipeIngredientSchema = z
+  .object({
+    foodId: z.string().min(1).optional(),
+    recipeId: z.string().min(1).optional(),
+    quantity: z.number().positive().max(100_000),
+    unit: foodUnitSchema,
+    /** How the recipe names it ("chicken thighs") when that's friendlier than the food's or recipe's name. */
+    label: z.string().trim().min(1).max(80).optional(),
+  })
+  .refine((v) => (v.foodId ? 1 : 0) + (v.recipeId ? 1 : 0) === 1, { message: 'Each ingredient is a food or a recipe.' });
 export type RecipeIngredient = z.infer<typeof recipeIngredientSchema>;
+
+/** How deep recipes can sit inside recipes: a pizza (0) → its dough (1) → … (3). */
+export const MAX_RECIPE_DEPTH = 3;
 
 /** How much a whole recipe makes by volume ("makes 4 cups", DECISIONS #111). Counts are servings, so volume units only. */
 export const finishedVolumeSchema = z.object({
@@ -186,6 +196,11 @@ export interface RecipeViewLine {
   unit: string;
   /** For the whole recipe, when it could be counted. */
   kcal?: number | undefined;
+  /**
+   * When the line is another recipe (DECISIONS #113): that recipe's own view, and what share of it this
+   * line uses (½ = half the batch), so it can be cooked from the same page.
+   */
+  recipe?: { view: RecipeView; fraction?: number | undefined } | undefined;
 }
 export interface RecipeView {
   name: string;
@@ -221,14 +236,24 @@ export interface SharedRecipe {
   updatedAt: string;
 }
 
-/** Computed from the current ingredient foods every time it's read. */
+export interface RecipeProblem {
+  foodId?: string | undefined;
+  recipeId?: string | undefined;
+  reason: 'missing' | 'unit' | 'cycle' | 'depth' | 'incomplete';
+}
+
+/** Computed from the current ingredient foods (and recipes) every time it's read. */
 export interface RecipeTotals {
   total: Nutrients;
   perServing: Nutrients;
   /** Sum of ingredient weights, when every ingredient has one. */
   rawGrams?: number | undefined;
-  /** Ingredients that couldn't be counted (food missing, or a unit it doesn't have). */
-  problems: { foodId: string; reason: 'missing' | 'unit' }[];
+  /**
+   * Ingredients that couldn't be counted, or only partly: the food or recipe is missing, the unit doesn't fit,
+   * a recipe would contain itself (`cycle`) or sits too deep (`depth`), or a recipe used here has gaps of its
+   * own (`incomplete`, counted as far as it goes).
+   */
+  problems: RecipeProblem[];
 }
 
 export interface Recipe extends RecipeInput {

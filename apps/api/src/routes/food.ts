@@ -90,7 +90,7 @@ export interface FoodServices {
   updateFood(userId: string, id: string, patch: FoodPatch): Promise<Food | ServiceFailure>;
   archiveFood(userId: string, id: string): Promise<boolean>;
   createRecipe(userId: string, input: RecipeInput): Promise<Recipe>;
-  updateRecipe(userId: string, id: string, patch: RecipePatch): Promise<Recipe | null>;
+  updateRecipe(userId: string, id: string, patch: RecipePatch): Promise<Recipe | ServiceFailure | null>;
   archiveRecipe(userId: string, id: string): Promise<boolean>;
   /** The Library recipe page (DECISIONS #47): the recipe, how it reads, and its share link. */
   recipe(userId: string, id: string): Promise<RecipeDetail | null>;
@@ -234,7 +234,8 @@ export function foodRoutes(food: FoodServices) {
       )
       .patch('/recipes/:id', json(recipePatchSchema), async (c) => {
         const r = await food.updateRecipe(c.get('user')!.id, c.req.param('id'), c.req.valid('json'));
-        return r ? c.json(r) : c.json(notFound, 404);
+        if (!r) return c.json(notFound, 404);
+        return isFailure(r) ? c.json({ error: r.error }, r.status) : c.json(r);
       })
       .delete('/recipes/:id', async (c) =>
         (await food.archiveRecipe(c.get('user')!.id, c.req.param('id'))) ? c.json({ ok: true }) : c.json(notFound, 404),

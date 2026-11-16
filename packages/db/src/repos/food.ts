@@ -128,6 +128,13 @@ export async function getRecipe(c: Collections, userId: string, id: string): Pro
   return doc ? toRecipe(doc) : null;
 }
 
+/** The user's recipes with these ids, archived ones included (recipes used inside recipes, DECISIONS #113). */
+export async function getRecipesByIds(c: Collections, userId: string, ids: readonly string[]): Promise<StoredRecipe[]> {
+  const oids = ids.map(oid).filter((x) => x != null);
+  if (!oids.length) return [];
+  return (await c.recipes.find({ userId, _id: { $in: oids } }).toArray()).map(toRecipe);
+}
+
 export async function createRecipe(c: Collections, userId: string, input: RecipeInput, now: Date): Promise<StoredRecipe> {
   const doc: RecipeDoc = { ...compact(input), aliases: input.aliases, userId, createdAt: now, updatedAt: now };
   const res = await c.recipes.insertOne(doc);

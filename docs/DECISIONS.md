@@ -2856,3 +2856,36 @@ the step.
 **Rejected.** Carrying the AI state (phrase, lines, slot) through the `Flow` union and restoring it after the photo and
 form steps. It's more state to thread through every hop, and any path that forgot it would drop a parse that was
 already paid for.
+
+## 113. A recipe can use another recipe as an ingredient (Nov 16)
+
+**Decision.** A recipe line is a food **or** another of the user's recipes: `recipeIngredientSchema` takes exactly one
+of `foodId` and `recipeId`. A "Pizza dough" is made once and used by every pizza ("2 servings of Pizza dough", or
+"300 g" when the dough has a finished weight, or "1 cup" of a sauce that makes a volume, #111). Old recipes are
+unchanged; there's no migration.
+- **Priced live, all the way down.** `core.recipeTotals(recipe, foods, recipes)` prices a recipe line through
+  `recipeAsLoggable` of the sub-recipe, whose totals are computed the same way. Fixing the dough fixes every pizza; the
+  log stays a snapshot (#36). An archived base recipe still counts, as an archived food does.
+- **No loops, and a depth cap.** A recipe that would contain itself is never counted (`cycle`), nor one more than
+  `MAX_RECIPE_DEPTH` (3) levels down (`depth`). A base recipe with gaps of its own makes the line `incomplete`: it
+  counts what it can, and the numbers are a floor. The API refuses an edit that would make a loop (400), and the
+  editor's picker doesn't offer this recipe or any recipe that uses it (`core.recipesUsing`). A new recipe can't loop,
+  since nothing points to it yet.
+- **Loading.** `recipeContext` (`services/recipe-pricing.ts`) walks the sub-recipes one query per level
+  (`core.loadRecipeClosure`, `db.getRecipesByIds`), then fetches every food once. The food service, logging and the
+  recipe page and share link all use it. The library payload already has every recipe.
+- **Read and cooked in one place.** A recipe line's `RecipeViewLine` carries the sub-recipe's own view and the share
+  used (`fraction`). The recipe page, cook mode and share link show "Make ¼ of the recipe" with its amounts scaled to
+  that share (and to "Cooking for N") and its method, folded under the line. The share link still carries no ids
+  (#48).
+- **Library.** Recipes appear in the editor's ingredient search (tagged Recipe). A base recipe's card says "Used in …".
+- **Not in this change.** The coach and the AI readers (`build_recipe`, typed recipe text) still match lines to foods
+  only, so "½ pizza dough" typed into the editor isn't matched to the recipe. A coach draft finished in the editor keeps
+  a recipe line in the saved recipe, but the draft's own lines leave it out. Copying a shared recipe into another
+  account (#48's "later") would need to copy its sub-recipes too.
+
+**Rejected.**
+- *A Meal of the dough plus toppings*: meals already hold recipes and foods, but have no servings, steps, cook mode or
+  share link, and log as separate entries.
+- *Saving the dough as a food*: a snapshot of its nutrients. Edits wouldn't flow through and its method would be lost.
+- *Flattening the dough's ingredients into the pizza when it's added*: the same copy-everywhere problem.

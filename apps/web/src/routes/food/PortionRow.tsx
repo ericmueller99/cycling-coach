@@ -18,9 +18,12 @@ export function PortionRow({
   portion,
   onChange,
   onRemove,
+  missing = 'No longer in your foods',
 }: {
   item: Loggable | undefined;
   name: string;
+  /** What to say when the item is gone. */
+  missing?: string | undefined;
   label?: string | undefined;
   portion: Portion;
   onChange: (p: Portion) => void;
@@ -38,7 +41,7 @@ export function PortionRow({
           {item && <SourceTag source={item.source} />}
         </div>
         {sub && <div className="truncate text-xs text-muted mobile:whitespace-normal">{sub}</div>}
-        {!item && <div className="text-xs text-danger">No longer in your foods</div>}
+        {!item && <div className="text-xs text-danger">{missing}</div>}
         {item && !priced && <div className="text-xs text-danger">Can't be measured in {portion.unit}</div>}
       </div>
       <input

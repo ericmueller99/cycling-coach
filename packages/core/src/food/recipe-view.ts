@@ -1,6 +1,6 @@
 import type { DraftIngredient, Food, Nutrients, Recipe, RecipeInput, RecipeView, RecipeViewLine } from '@cycling-coach/shared';
 import { computePortion } from './portions';
-import { recipeTotals } from './recipes';
+import { recipeLine, recipeTotals, type RecipeSource } from './recipes';
 import { canonicalUnit, isMassUnit, isVolumeUnit, roundTo } from './units';
 
 /**
@@ -9,14 +9,40 @@ import { canonicalUnit, isMassUnit, isVolumeUnit, roundTo } from './units';
  * touching the saved recipe. Pure.
  */
 
-/** A saved recipe as it reads — the recipe's own names where it has them, its foods' otherwise. */
+type ViewRecipe = Pick<RecipeInput, 'name' | 'servings' | 'ingredients' | 'steps' | 'notes' | 'description' | 'minutes' | 'toTaste'> & { id?: string | undefined };
+
+/**
+ * A saved recipe as it reads — the recipe's own names where it has them, its foods' otherwise. A line
+ * that is another recipe (DECISIONS #113) carries that recipe's own view, so it can be cooked from here.
+ */
 export function recipeView(
-  recipe: Pick<RecipeInput, 'name' | 'servings' | 'ingredients' | 'steps' | 'notes' | 'description' | 'minutes' | 'toTaste'> & Partial<Pick<Recipe, 'totals'>>,
+  recipe: ViewRecipe & Partial<Pick<Recipe, 'totals'>>,
   foodsById: ReadonlyMap<string, Food>,
+  recipesById: ReadonlyMap<string, RecipeSource & ViewRecipe> = new Map(),
+  path: readonly string[] = recipe.id ? [recipe.id] : [],
 ): RecipeView {
-  const totals = recipe.totals ?? recipeTotals(recipe, foodsById);
+  const totals = recipe.totals ?? recipeTotals(recipe, foodsById, recipesById);
   const ingredients = recipe.ingredients.map((ing): RecipeViewLine => {
-    const food = foodsById.get(ing.foodId);
+    if (ing.recipeId) {
+      const sub = recipesById.get(ing.recipeId);
+      const line = sub ? recipeLine(path, ing, foodsById, recipesById) : null;
+      const priced = line && !('problem' in line) ? line : null;
+      return {
+        label: ing.label ?? sub?.name ?? 'Unknown recipe',
+        quantity: ing.quantity,
+        unit: ing.unit,
+        ...(priced?.portion ? { kcal: Math.round(priced.portion.nutrients.kcal) } : {}),
+        ...(sub && priced
+          ? {
+              recipe: {
+                view: recipeView({ ...sub, totals: priced.totals }, foodsById, recipesById, [...path, sub.id]),
+                ...(priced.portion ? { fraction: roundTo(priced.portion.servings / sub.servings, 4) } : {}),
+              },
+            }
+          : {}),
+      };
+    }
+    const food = ing.foodId ? foodsById.get(ing.foodId) : undefined;
     const p = food && computePortion(food, ing.quantity, ing.unit);
     return {
       label: ing.label ?? food?.name ?? 'Unknown ingredient',

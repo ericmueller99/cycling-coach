@@ -285,7 +285,8 @@ export function applyIdeaFix(ideas: readonly MealIdea[], at: { idea: number; ing
  */
 export function linesFromRecipe(recipe: Pick<RecipeInput, 'ingredients' | 'toTaste'>, foods: ReadonlyMap<string, Food>, before: readonly Line[]): Line[] {
   const counted = recipe.ingredients.flatMap((i): Line[] => {
-    const f = foods.get(i.foodId);
+    // A recipe used as an ingredient (DECISIONS #113) has no line in a draft; the saved recipe shows it.
+    const f = i.foodId ? foods.get(i.foodId) : undefined;
     if (!f) return [];
     return [{ name: i.label ?? f.name, quantity: i.quantity, unit: i.unit, toTaste: false, match: { kind: 'food', foodId: f.id, name: f.name, source: f.source } }];
   });
@@ -592,7 +593,8 @@ export class CoachFoodService {
     if (doc.recipeId) return { error: 'This recipe is already saved — edit it in Library › Recipes.', status: 409 };
     const lib = await this.food.library(userId);
     const byId = new Map(lib.foods.filter((f) => !f.archived).map((f) => [f.id, f]));
-    const missing = input.ingredients.filter((i) => !byId.has(i.foodId));
+    const recipes = new Set(lib.recipes.filter((r) => !r.archived).map((r) => r.id));
+    const missing = input.ingredients.filter((i) => (i.recipeId ? !recipes.has(i.recipeId) : !byId.has(i.foodId ?? '')));
     if (missing.length) return { error: 'An ingredient is no longer in your foods. Pick it again.', status: 400 };
     const recipe = await this.food.createRecipe(userId, {
       ...input,

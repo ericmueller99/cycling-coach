@@ -14,7 +14,7 @@ import {
   mealTotal,
   normalizeBarcode,
   recipeAsLoggable,
-  recipeTotals,
+  wouldCycle,
   scaleNutrients,
   scaleRange,
   todayIn,
@@ -31,11 +31,10 @@ import {
   getFood,
   foodIntroSeen,
   getFoodSettings,
-  getFoodsByIds,
   getLogEntry,
   getMeal,
   getProfile,
-  getRecipe,
+  getRecipesByIds,
   insertLogEntries,
   listFoods,
   listLog,
@@ -81,6 +80,7 @@ import type {
   RecipePatch,
 } from '@cycling-coach/shared';
 import type { ServiceFailure as Failure } from '../app';
+import { recipeContext, withTotals } from './recipe-pricing';
 import { userImagePrefix, type PhotoStore } from '../providers/storage/s3';
 
 /** How far back "usual portion" and search ranking look. */
@@ -120,7 +120,8 @@ export class FoodService {
       foodIntroSeen(this.c, userId),
     ]);
     const foodsById = new Map(foods.map((f) => [f.id, f]));
-    const recipes = stored.map((r) => withTotals(r, foodsById));
+    const storedById = new Map(stored.map((r) => [r.id, r]));
+    const recipes = stored.map((r) => withTotals(r, foodsById, storedById));
     const recipesById = new Map(recipes.map((r) => [r.id, r]));
     const lookup = loggableLookup(foodsById, recipesById);
     return {
@@ -206,15 +207,20 @@ export class FoodService {
   // ── Recipes & meals ───────────────────────────────────────────────────
 
   private async recipeView(userId: string, r: StoredRecipe): Promise<Recipe> {
-    const foods = await getFoodsByIds(this.c, userId, r.ingredients.map((i) => i.foodId));
-    return withTotals(r, new Map(foods.map((f) => [f.id, f])));
+    const { foodsById, recipesById } = await recipeContext(this.c, userId, [r]);
+    return withTotals(r, foodsById, recipesById);
   }
 
+  /** A new recipe can't contain itself — nothing points to it yet — so only edits are checked for loops. */
   async createRecipe(userId: string, input: RecipeInput): Promise<Recipe> {
     return this.recipeView(userId, await createRecipe(this.c, userId, normalizeRecipe(input), this.now()));
   }
 
-  async updateRecipe(userId: string, id: string, patch: RecipePatch): Promise<Recipe | null> {
+  async updateRecipe(userId: string, id: string, patch: RecipePatch): Promise<Recipe | Failure | null> {
+    if (patch.ingredients?.some((i) => i.recipeId)) {
+      const { recipesById } = await recipeContext(this.c, userId, [{ ingredients: patch.ingredients }]);
+      if (wouldCycle(id, patch.ingredients, recipesById)) return bad("A recipe can't use itself, or a recipe that uses it.");
+    }
     const r = await updateRecipe(this.c, userId, id, patch.ingredients ? { ...patch, ingredients: normalizeRecipe({ ingredients: patch.ingredients }).ingredients } : patch, this.now());
     return r ? this.recipeView(userId, r) : null;
   }
@@ -244,14 +250,15 @@ export class FoodService {
   /** Loggables for a set of refs, with recipes computed from their current ingredient foods. */
   private async lookupFor(userId: string, refs: readonly { kind: LoggableKind; refId: string }[]) {
     const recipeIds = [...new Set(refs.filter((r) => r.kind === 'recipe').map((r) => r.refId))];
-    const recipes = (await Promise.all(recipeIds.map((id) => getRecipe(this.c, userId, id)))).filter((r) => r != null);
-    const foodIds = [
-      ...refs.filter((r) => r.kind === 'food').map((r) => r.refId),
-      ...recipes.flatMap((r) => r.ingredients.map((i) => i.foodId)),
-    ];
-    const foods = await getFoodsByIds(this.c, userId, [...new Set(foodIds)]);
-    const foodsById = new Map(foods.map((f) => [f.id, f]));
-    const recipesById = new Map(recipes.map((r) => [r.id, withTotals(r, foodsById)]));
+    const recipes = await getRecipesByIds(this.c, userId, recipeIds);
+    const { foodsById, recipesById: used } = await recipeContext(
+      this.c,
+      userId,
+      recipes,
+      refs.filter((r) => r.kind === 'food').map((r) => r.refId),
+    );
+    const all = new Map([...used, ...recipes.map((r) => [r.id, r] as const)]);
+    const recipesById = new Map(recipes.map((r) => [r.id, withTotals(r, foodsById, all)]));
     return loggableLookup(foodsById, recipesById);
   }
 
@@ -464,9 +471,6 @@ export class FoodService {
   }
 }
 
-function withTotals(r: StoredRecipe, foodsById: ReadonlyMap<string, Food>): Recipe {
-  return { ...r, totals: recipeTotals(r, foodsById) };
-}
 
 function withMealTotal(m: StoredMeal, lookup: (kind: LoggableKind, id: string) => Loggable | undefined): Meal {
   return { ...m, total: mealTotal(m.items, lookup) };

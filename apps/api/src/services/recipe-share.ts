@@ -1,8 +1,9 @@
 import { randomBytes } from 'node:crypto';
-import { recipeTotals, recipeView } from '@cycling-coach/core';
-import { createShare, getActiveShare, getFoodsByIds, getRecipe, getShareByToken, revokeShares, userFirstName, type Collections, type RecipeShareDoc } from '@cycling-coach/db';
+import { recipeView } from '@cycling-coach/core';
+import { createShare, getActiveShare, getRecipe, getShareByToken, revokeShares, userFirstName, type Collections, type RecipeShareDoc } from '@cycling-coach/db';
 import type { RecipeDetail, RecipeShare, SharedRecipe } from '@cycling-coach/shared';
 import type { ServiceFailure as Failure } from '../app';
+import { recipeContext, withTotals } from './recipe-pricing';
 
 /**
  * Recipe pages and share links (DECISIONS #47–48). A link is live — it always shows the recipe as
@@ -32,10 +33,9 @@ export class RecipeShareService {
   private async viewOf(userId: string, recipeId: string) {
     const recipe = await getRecipe(this.c, userId, recipeId);
     if (!recipe) return null;
-    const foods = await getFoodsByIds(this.c, userId, recipe.ingredients.map((i) => i.foodId));
-    const byId = new Map(foods.map((f) => [f.id, f]));
-    const withTotals = { ...recipe, totals: recipeTotals(recipe, byId) };
-    return { recipe: withTotals, view: recipeView(withTotals, byId) };
+    const { foodsById, recipesById } = await recipeContext(this.c, userId, [recipe]);
+    const priced = withTotals(recipe, foodsById, recipesById);
+    return { recipe: priced, view: recipeView(priced, foodsById, recipesById) };
   }
 
   /** The Library recipe page: the recipe, how it reads, and its link if it has one. */

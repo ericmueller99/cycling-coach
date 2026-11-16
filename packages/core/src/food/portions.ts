@@ -53,7 +53,7 @@ export const foodAsLoggable = (f: Food): Loggable => ({
  * A recipe's reference serving is one serving; with a finished weight it can be logged in grams too,
  * and with a total volume by the cup (or any volume unit), which then starts as the default portion.
  */
-export function recipeAsLoggable(r: Recipe): Loggable {
+export function recipeAsLoggable(r: Pick<Recipe, 'id' | 'name' | 'servings' | 'finishedGrams' | 'finishedVolume' | 'totals'>): Loggable {
   const perG = r.finishedGrams ? r.finishedGrams / r.servings : undefined;
   const vol = r.finishedVolume;
   const perVol = vol ? vol.quantity / r.servings : undefined;

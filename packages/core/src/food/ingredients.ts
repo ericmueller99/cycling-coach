@@ -120,14 +120,14 @@ export function draftToRecipeInput(
 }
 
 /**
- * Ingredients typed into the recipe editor, merged into the ones it has (DECISIONS #107). A food
+ * Ingredients typed into the recipe editor, merged into the ones it has (DECISIONS #107). A food (or recipe)
  * already in the recipe takes the new amount and unit in place; anything else is added at the end. When
  * the same food is typed twice, the last amount wins.
  */
 export function mergeIngredients(existing: readonly RecipeIngredient[], incoming: readonly RecipeIngredient[]): RecipeIngredient[] {
   const out = [...existing];
   for (const ing of incoming) {
-    const at = out.findIndex((x) => x.foodId === ing.foodId);
+    const at = out.findIndex((x) => (ing.foodId ? x.foodId === ing.foodId : x.recipeId === ing.recipeId));
     if (at >= 0) out[at] = { ...out[at]!, quantity: ing.quantity, unit: ing.unit };
     else out.push(ing);
   }

@@ -5,7 +5,7 @@ import {
   usageKey,
   type Loggable,
 } from '@cycling-coach/core';
-import type { CaloriesLogInput, Food, FoodLibrary, FoodLogEntry, FoodSource, Meal, NutrientKey, Nutrients, Recipe } from '@cycling-coach/shared';
+import type { CaloriesLogInput, Food, FoodLibrary, FoodLogEntry, FoodSource, Meal, NutrientKey, Nutrients, Recipe, RecipeIngredient } from '@cycling-coach/shared';
 
 /** Estimates and what needs checking. */
 export const AMBER = { bg: '#FEF0C7', fg: '#B54708' } as const;
@@ -100,6 +100,18 @@ export function libraryItems(lib: FoodLibrary): LibraryItem[] {
       .map((r): LibraryItem => ({ kind: 'recipe', id: r.id, name: r.name, aliases: r.aliases, recipe: r, loggable: recipeAsLoggable(r) })),
     ...lib.meals.filter((m) => !m.archived).map((m): LibraryItem => ({ kind: 'meal', id: m.id, name: m.name, aliases: m.aliases, meal: m })),
   ];
+}
+
+/** How a recipe line reads: the recipe's own name for it, else its food's or recipe's (DECISIONS #113). */
+export function ingredientName(lib: Pick<FoodLibrary, 'foods' | 'recipes'>, ing: RecipeIngredient): string {
+  if (ing.label) return ing.label;
+  if (ing.recipeId) return lib.recipes.find((r) => r.id === ing.recipeId)?.name ?? 'Missing recipe';
+  return lib.foods.find((f) => f.id === ing.foodId)?.name ?? 'Missing food';
+}
+
+/** The recipes that use this one as an ingredient — "Used in" on a base recipe. */
+export function recipesUsedIn(lib: Pick<FoodLibrary, 'recipes'>, recipeId: string): Recipe[] {
+  return lib.recipes.filter((r) => !r.archived && r.ingredients.some((i) => i.recipeId === recipeId));
 }
 
 export const itemUsage = (lib: FoodLibrary, item: Pick<LibraryItem, 'kind' | 'id'>) => lib.usage[usageKey(item.kind, item.id)];

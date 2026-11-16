@@ -1,5 +1,5 @@
-import { formatPortion, scaleLines } from '@cycling-coach/core';
-import type { RecipeView } from '@cycling-coach/shared';
+import { formatPortion, formatQuantity, scaleLines } from '@cycling-coach/core';
+import type { RecipeView, RecipeViewLine } from '@cycling-coach/shared';
 import { fmtG, fmtKcal } from '../../lib/food';
 import { ClockIcon } from '../icons';
 import { ServingsPicker } from '../ServingsPicker';
@@ -13,6 +13,53 @@ import { StepText } from './StepText';
 
 /** The amounts for `servings` instead of the recipe's own count. */
 export const linesFor = (view: RecipeView, servings: number) => scaleLines(view.ingredients, view.servings, servings);
+
+/** How much of a base recipe a line uses: "¼ of the recipe", "the whole recipe", "2× the recipe". */
+export function batchShare(fraction: number): string {
+  if (Math.abs(fraction - 1) < 0.005) return 'the whole recipe';
+  return fraction < 1 ? `${formatQuantity(fraction)} of the recipe` : `${formatQuantity(fraction)}× the recipe`;
+}
+
+/**
+ * A base recipe used as an ingredient (DECISIONS #113), opened in place: what to make of it — its
+ * amounts for the share this line uses — and its method, so the whole dish cooks from one page.
+ * `factor` is how much the outer recipe is scaled ("Cooking for N").
+ */
+export function SubRecipe({ line, factor }: { line: RecipeViewLine; factor: number }) {
+  if (!line.recipe) return null;
+  const { view, fraction } = line.recipe;
+  const share = fraction != null ? fraction * factor : null;
+  const lines = share != null ? scaleLines(view.ingredients, view.servings, view.servings * share) : view.ingredients;
+  return (
+    <details className="group mt-1.5 rounded-lg bg-surface-alt px-3 py-2 text-[14px]">
+      <summary className="cursor-pointer text-[13px] text-muted marker:text-muted">
+        Make {share != null ? batchShare(share) : 'it'}
+        {share == null && <span> · amounts for the recipe as saved ({view.servings} servings)</span>}
+      </summary>
+      <ul className="m-0 mt-2 flex list-none flex-col gap-1 p-0">
+        {lines.map((l, i) => (
+          <li key={i}>
+            <div className="flex items-baseline gap-3">
+              <span className="w-[76px] flex-none font-mono text-[13px] font-semibold">{formatPortion(l.quantity, l.unit)}</span>
+              <span className="min-w-0">{l.label}</span>
+            </div>
+            {l.recipe && <SubRecipe line={l} factor={share ?? 1} />}
+          </li>
+        ))}
+      </ul>
+      {view.toTaste.length > 0 && <div className="mt-1.5 text-[13px] text-muted">To taste: {view.toTaste.join(', ')}</div>}
+      {view.steps.length > 0 && (
+        <ol className="m-0 mt-2.5 flex list-decimal flex-col gap-1.5 pl-5 text-[14px] leading-relaxed [&_strong]:font-semibold">
+          {view.steps.map((st, i) => (
+            <li key={i}>
+              <StepText text={st} />
+            </li>
+          ))}
+        </ol>
+      )}
+    </details>
+  );
+}
 
 export function RecipeMeta({ view }: { view: RecipeView }) {
   const per = view.perServing;
@@ -52,9 +99,15 @@ export function RecipeBody({ view, servings, onServings }: { view: RecipeView; s
         {scaled && <div className="text-xs text-muted">Amounts for {servings} — the recipe makes {view.servings}.</div>}
         <ul className="m-0 flex list-none flex-col divide-y divide-divider rounded-[12px] border border-line bg-surface p-0">
           {lines.map((l, i) => (
-            <li key={i} className="flex items-baseline gap-3 px-3.5 py-2.5">
-              <span className="w-[84px] flex-none font-mono text-[14px] font-semibold">{formatPortion(l.quantity, l.unit)}</span>
-              <span className="min-w-0 text-[15px]">{l.label}</span>
+            <li key={i} className="px-3.5 py-2.5">
+              <div className="flex items-baseline gap-3">
+                <span className="w-[84px] flex-none font-mono text-[14px] font-semibold">{formatPortion(l.quantity, l.unit)}</span>
+                <span className="min-w-0 text-[15px]">
+                  {l.label}
+                  {l.recipe && <span className="ml-1.5 rounded-full border border-line px-1.5 py-px align-middle text-[11px] text-muted">recipe</span>}
+                </span>
+              </div>
+              {l.recipe && <SubRecipe line={l} factor={servings / view.servings} />}
             </li>
           ))}
         </ul>
