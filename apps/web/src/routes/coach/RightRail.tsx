@@ -4,6 +4,7 @@ import { Link } from '@tanstack/react-router';
 import { useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight, FlagIcon, TrashIcon } from '../../components/icons';
 import { Button, Card, ProgressBar, SectionLabel, SessionTag, StatTile } from '../../components/ui';
+import { ChainAlerts } from '../../components/ChainAlert';
 import { ZwiftWeightAlert } from '../../components/ZwiftWeightAlert';
 import { useExtensions } from '../../extensions';
 import { comingUpWhen, eventWhen } from '../../lib/eventInfo';
@@ -104,6 +105,12 @@ export function TodayStrip({ onAsk }: { onAsk: (prompt: string) => void }) {
             </Button>
           )}
           <ZwiftWeightAlert zwiftKg={data.snapshot.zwiftWeightKg} trendKg={data.snapshot.weightKg} synced={data.snapshot.zwiftWeightSynced} compact />
+        </div>
+      )}
+      {/* Shown folded or not: a due chain is for before the next ride. */}
+      {!!data.chainsDue?.length && (
+        <div className="flex flex-col gap-2 px-4 pb-3">
+          <ChainAlerts chains={data.chainsDue} compact />
         </div>
       )}
     </div>
@@ -256,6 +263,7 @@ export function RightRail({ onAsk, onOpenMemory }: { onAsk: (prompt: string) => 
             </Button>
           </>
         )}
+        <ChainAlerts chains={data.chainsDue} compact />
       </Card>
 
       <CoachMemoryCard today={data.today} onOpen={onOpenMemory} />

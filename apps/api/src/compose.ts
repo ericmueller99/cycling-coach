@@ -33,6 +33,7 @@ import {
   deleteUserData,
   forgetContexts,
   removeRideReferences,
+  rideBikesFor,
   rideIdsFrom,
   clearOutlook,
   getOutlook,
@@ -66,6 +67,7 @@ import { CoachFoodService } from './services/coach-food';
 import { IntervalsSync, manualRetryAt } from './services/intervals-sync';
 import { clearContexts } from './services/coach-forget';
 import { MATCH_DAYS, settleRides } from './services/rides';
+import { addBike, changeBike, chooseRideBike, equipment as equipmentStatus, markWaxed, removeBike } from './services/equipment';
 import { TrainingData } from './services/training-data';
 import { weightHistory } from './services/weight';
 import { ZwiftSync } from './services/zwift-sync';
@@ -440,8 +442,13 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
       list: async (userId, from, to) => {
         const [events, ratings] = await Promise.all([listEvents(c, userId, from, to), listFeedback(c, userId, { from, to })]);
         const rides = await training.activities(userId, from, to);
+        const bikes = await rideBikesFor(c, userId, rides.map((a) => a.id));
         const completedBy = new Map(events.flatMap((e) => sessionRideIds(e).map((rideId) => [rideId, e.id] as const)));
-        return { events, activities: rides.map((a) => ({ ...a, matchedEventId: completedBy.get(a.id) })), feedback: ratings };
+        return {
+          events,
+          activities: rides.map((a) => ({ ...a, matchedEventId: completedBy.get(a.id), ...(bikes.has(a.id) ? { bikeId: bikes.get(a.id) } : {}) })),
+          feedback: ratings,
+        };
       },
       create: (userId, input) => calendar.create(userId, input, { source: 'manual' }),
       patch: (userId, id, patch) => calendar.patch(userId, id, patch),
@@ -464,6 +471,18 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
       create: (userId, input) => calendar.addTimeOff(userId, input, { source: 'manual' }),
       patch: (userId, id, patch) => calendar.patchTimeOff(userId, id, patch),
       remove: (userId, id) => calendar.removeTimeOff(userId, id),
+    },
+
+    equipment: {
+      list: async (userId) => {
+        const profile = await getProfile(c, userId);
+        return equipmentStatus(c, userId, todayIn(profile?.timezone ?? 'UTC', now()));
+      },
+      create: (userId, input) => addBike(c, userId, input, now()),
+      update: (userId, id, patch) => changeBike(c, userId, id, patch, now()),
+      remove: (userId, id) => removeBike(c, userId, id, now()),
+      waxed: (userId, id, at) => markWaxed(c, userId, id, at, now()),
+      setRideBike: (userId, activityId, bikeId) => chooseRideBike(c, userId, activityId, bikeId, now()),
     },
 
     feedback: {

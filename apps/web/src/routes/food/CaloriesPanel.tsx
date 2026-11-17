@@ -4,6 +4,7 @@ import { Button, ErrorNote, inputCls } from '../../components/ui';
 import { CALORIES_ROWS, NUTRIENT_ROWS, fmtKcal, nowTime, parseCalories, type CaloriesDraft } from '../../lib/food';
 import { useFoodMutations } from '../../lib/foodQueries';
 import { errorMessage } from '../../lib/queries';
+import { KcalLeft } from './KcalLeft';
 
 function NumberField({ id, label, unit, value, onChange, autoFocus }: { id: string; label: string; unit: string; value: string; onChange: (v: string) => void; autoFocus?: boolean }) {
   return (
@@ -84,6 +85,7 @@ export function CaloriesPanel({ lib, date, slot, setSlot, onLogged }: { lib: Foo
           <input id={`${id}-time`} type="time" value={time} onChange={(e) => setTime(e.target.value)} className={inputCls} />
         </label>
       </div>
+      <KcalLeft date={date} kcal={nutrients?.kcal ?? 0} />
       {error && <ErrorNote>{error}</ErrorNote>}
       <Button variant="primary" disabled={!nutrients || m.logCalories.isPending} onClick={log}>
         Add {nutrients ? `${fmtKcal(nutrients.kcal)} kcal ` : ''}to {slot}

@@ -4,6 +4,7 @@ export * from './coach';
 export * from './coach-food';
 export * from './common';
 export * from './course';
+export * from './equipment';
 export * from './events';
 export * from './feedback';
 export * from './food';

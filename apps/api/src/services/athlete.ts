@@ -11,6 +11,7 @@ import {
   type Collections,
 } from '@cycling-coach/db';
 import type { DashboardPayload, FitnessDay, Goal, IntegrationStatus, IsoDate, PowerBest, Profile } from '@cycling-coach/shared';
+import { dueChains } from './equipment';
 
 /** Goals with their live progress — goals store a measure and target, never a current value. */
 export function withProgress(goals: Goal[], profile: Profile, powerBests: PowerBest[], ctl?: number): Goal[] {
@@ -91,6 +92,7 @@ export async function buildDashboard(
     const goal = goalForEvent(ctx.goals, e.id);
     return { id: e.id, title: e.title, date: e.date, weight: goal ? eventGoalWeight(goal) : null };
   });
+  const due = await dueChains(c, userId, today);
   return {
     today,
     timezone: profile.timezone,
@@ -109,6 +111,7 @@ export async function buildDashboard(
     },
     ...(mainGoal ? { mainGoal } : {}),
     ...(upcomingEvents.length ? { upcomingEvents } : {}),
+    ...(due.length ? { chainsDue: due } : {}),
     intervals,
   };
 }

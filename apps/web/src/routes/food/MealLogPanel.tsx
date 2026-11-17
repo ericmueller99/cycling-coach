@@ -7,6 +7,7 @@ import { Button, ErrorNote, inputCls } from '../../components/ui';
 import { findLoggable, fmtKcal, macroLine, nowTime } from '../../lib/food';
 import { useFoodMutations } from '../../lib/foodQueries';
 import { errorMessage } from '../../lib/queries';
+import { KcalLeft } from './KcalLeft';
 
 const SCALES = [0.25, 0.5, 0.75, 1, 1.5, 2];
 
@@ -112,6 +113,7 @@ export function MealLogPanel({ meal, lib, date, slot, onLogged }: { meal: Meal; 
         <span className="font-mono text-lg font-semibold">{fmtKcal(total.kcal)} kcal</span>
         <span className="font-mono text-xs text-muted">{macroLine(total)}</span>
       </div>
+      <KcalLeft date={date} kcal={total.kcal} />
       {error && <ErrorNote>{error}</ErrorNote>}
       <Button variant="primary" size="lg" disabled={!active.length || m.log.isPending} onClick={log}>
         Log {active.length} item{active.length === 1 ? '' : 's'} to {slot}

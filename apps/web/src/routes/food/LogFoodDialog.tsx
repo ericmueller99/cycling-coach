@@ -11,6 +11,7 @@ import { errorMessage } from '../../lib/queries';
 import { useIsMobile } from '../../lib/useIsMobile';
 import { CaloriesPanel } from './CaloriesPanel';
 import { EstimateFood, useEstimateFood } from './EstimateFood';
+import { KcalLeft } from './KcalLeft';
 import { LogFoodAI } from './LogFoodAI';
 import { MealLogPanel } from './MealLogPanel';
 import { SourceTag } from './SourceTag';
@@ -145,6 +146,7 @@ function StapleDetailPanel({ hit, lib, date, slot, setSlot, onLogged }: { hit: S
           <input id={`${id}-time`} type="time" value={time} onChange={(e) => setTime(e.target.value)} className={inputCls} />
         </label>
       </div>
+      <KcalLeft date={date} kcal={priced?.nutrients.kcal ?? 0} />
       {error && <ErrorNote>{error}</ErrorNote>}
       <Button variant="primary" disabled={!priced || busy} onClick={saveAndAdd}>
         Save to my foods &amp; add to {slot}
@@ -213,6 +215,7 @@ function Detail({
           <input id={`${id}-time`} type="time" value={time} onChange={(e) => setTime(e.target.value)} className={inputCls} />
         </label>
       </div>
+      <KcalLeft date={date} kcal={priced?.nutrients.kcal ?? 0} />
       {error && <ErrorNote>{error}</ErrorNote>}
       <div className="flex flex-wrap justify-end gap-2">
         <Button disabled={!priced || m.log.isPending} onClick={() => add(true)}>

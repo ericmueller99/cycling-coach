@@ -14,6 +14,7 @@ import { durationText } from '../../lib/session';
 import { AddRideFromDay, SessionRideList } from './grouping';
 import { askCoachPrompt, intervalsUrl, PANEL } from './shared';
 import { ZwiftRouteCard } from './zwift-route';
+import { RideBikes } from './RideBike';
 
 /** Result banner colours and wording by compliance band. */
 const BAND: Record<SessionCompliance['band'], { word: string; bg: string; border: string; fg: string }> = {
@@ -153,6 +154,7 @@ export function CompletedPanel({
       {result.data?.compliance && <ResultBanner c={result.data.compliance} />}
       {totals && <PlannedVsActual event={event} activity={totals} compliance={result.data?.compliance ?? null} />}
       {grouped && <SessionRideList event={event} rides={result.data?.rides ?? rides} />}
+      <RideBikes rides={rides} />
       <ZwiftRouteCard event={event} />
       {event.coachNote && (
         <div className="rounded-[10px] border border-accent-line bg-accent-tint-2 p-3 text-[13px] whitespace-pre-wrap">

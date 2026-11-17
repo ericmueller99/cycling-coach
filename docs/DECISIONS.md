@@ -2889,3 +2889,40 @@ unchanged; there's no migration.
   share link, and log as separate entries.
 - *Saving the dough as a food*: a snapshot of its nutrients. Edits wouldn't flow through and its method would be lost.
 - *Flattening the dough's ingredients into the pizza when it's added*: the same copy-everywhere problem.
+
+## 114. Bikes, which ride was on which, and when a waxed chain is due (Nov 17)
+
+**Decision.** The athlete adds their bikes on a new **Equipment** tab under Athlete. Each bike has a name, an optional
+default (indoor rides or outdoor rides), a chain and notes. A chain is **waxed**, with a re-wax interval in km and the
+time it was last waxed, or **lubed**, which is a type only for now. A waxed chain's wear is the distance of the bike's
+rides since its last wax. At the interval it's due. An amber alert (DESIGN §4a) shows on the bike's card, on the Coach
+rail's Today card and on the phone's Today strip, whether that strip is folded or not. **Mark re-waxed** starts the
+count again from now and adds `{ at, km }` to the bike's wax log. That click is the rider's own confirmation, so there's
+no proposal.
+- **Kept here, not intervals.icu gear.** intervals.icu has gear of its own, filled from Strava or Garmin. Reading it
+  would tie wear to whatever those set, and writing it is more sync to keep right. The bikes stay in this app, as time
+  off does (#87), and work the same for a Garmin-only rider or a self-host install.
+- **Their own collection.** A sync replaces a ride's doc whole (`saveActivities`), so a bike stored on the activity would
+  be wiped. `ride_bikes` holds `{ activityId, bikeId | null, how: 'default' | 'manual' }`. `null` is "no bike" (a
+  rental, a friend's bike). Wear joins through `activities`, so a row for a ride deleted since counts for nothing.
+- **Defaults by ride kind, one per kind, stamped once.** `core.rideKind` treats a ride as indoor when it's a trainer
+  ride, a virtual type or from Zwift, and as outdoor otherwise. Only cycling sports take a bike. A ride with no row gets
+  its kind's default when `settleRides` runs, after the intervals.icu sync and after `Core.rides`, so every source is
+  covered. Setting a default also backfills that kind's rides that have no bike. After that, a ride's bike never moves
+  unless the rider moves it, from the ride's panel on the calendar. A second trainer bike is a manual choice. Only one
+  bike per kind can be the default, so setting it on one takes it from the other. Later rules, such as Zwift ride types
+  picking a bike, slot in where `defaultBikeFor` decides.
+- **Deleting a bike** leaves its rides on "no bike", so a default doesn't pick them up again.
+- **Duplicates (#71, #91).** `replaceRideReferences` moves the bike to the intervals.icu twin, unless the rider had
+  already set one on the twin. `removeRideReferences` deletes the rows.
+- **Wax time.** Times are the athlete's local `YYYY-MM-DDTHH:mm`, like ride starts. Mark re-waxed uses now. A date typed
+  in the form means the end of that day, so that day's rides count toward the old wax. A ride starting in the same
+  minute as the wax counts as before it.
+- **The coach doesn't see bikes yet.** The Equipment tab says so. If it does later, it gets a line through
+  `coachContext`-style extra context, which is sent only when it changes. Wear changes with every ride, so it stays out
+  of the frozen athlete block (#6).
+
+**Rejected.**
+- *A `bikeId` on the activity doc*: the sync replaces the doc whole.
+- *Working out the default when the ride is read*: changing the default would move every old ride.
+- *A dedicated job after each sync*: `settleRides` already runs after every ride source, inside the same lease.

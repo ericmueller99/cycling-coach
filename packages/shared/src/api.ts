@@ -2,6 +2,7 @@ import type { CalendarEvent } from './calendar';
 import type { Proposal, ThreadSummary, UiMessage } from './coach';
 import type { MealIdeas, RecipeDraft } from './coach-food';
 import type { IsoDate } from './common';
+import type { ChainDue } from './equipment';
 import type { SessionFeedback } from './feedback';
 import type { EventWeightChoice, Goal, Memory, PowerBest, Profile } from './profile';
 import type { CalendarActivity, FitnessDay, IntegrationStatus } from './training';
@@ -73,6 +74,8 @@ export interface DashboardPayload {
     fitness?: FitnessDay | undefined;
   };
   mainGoal?: Goal | undefined;
+  /** Waxed chains past their interval (DECISIONS #114). */
+  chainsDue?: ChainDue[] | undefined;
   intervals: IntegrationStatus;
 }
 

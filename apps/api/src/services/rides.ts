@@ -1,19 +1,23 @@
 import { matchActivities, missedEventIds, shadowedRides } from '@cycling-coach/core';
 import { deleteActivities, listActivities, listEvents, patchEvent, replaceRideReferences, type Collections } from '@cycling-coach/db';
 import type { IsoDate } from '@cycling-coach/shared';
+import { stampDefaultBikes } from './equipment';
 
 /** How far back `Core.rides` settles after new rides. The sync passes its own window. */
 export const MATCH_DAYS = 21;
 
 /**
  * Put the stored rides in order, whichever source just wrote (DECISIONS #71): drop second-source rides
- * intervals.icu also has, then tick off sessions from what's left and mark the missed ones.
+ * intervals.icu also has, give new rides their default bike, then tick off sessions from what's left and mark the missed ones.
  */
 export async function settleRides(c: Collections, userId: string, from: IsoDate, today: IsoDate, now: Date): Promise<{ matched: number; missed: number }> {
   const listed = await listActivities(c, userId, from, today);
   const shadowed = shadowedRides(listed);
   for (const { id, twinId } of shadowed) await replaceRideReferences(c, userId, id, twinId, now);
   await deleteActivities(c, userId, shadowed.map((s) => s.id));
+
+  // New rides take their kind's default bike, once (DECISIONS #114).
+  await stampDefaultBikes(c, userId, now, from);
 
   const gone = new Set(shadowed.map((s) => s.id));
   const rides = listed.filter((a) => !gone.has(a.id));

@@ -10,6 +10,10 @@ import {
   calendarDeleteQuerySchema,
   timeOffInputSchema,
   timeOffPatchSchema,
+  bikeInputSchema,
+  bikePatchSchema,
+  rideBikeInputSchema,
+  waxedInputSchema,
   eventQuerySchema,
   goalInputSchema,
   goalPatchSchema,
@@ -87,6 +91,11 @@ import {
   type TimeOff,
   type TimeOffInput,
   type TimeOffPatch,
+  type Bike,
+  type BikeInput,
+  type BikePatch,
+  type EquipmentPayload,
+  type LocalDateTime,
   type TurnStop,
   THREAD_LIST_MAX,
   threadListQuerySchema,
@@ -190,6 +199,17 @@ export interface AppServices {
     create(userId: string, input: TimeOffInput): Promise<TimeOff>;
     patch(userId: string, id: string, patch: TimeOffPatch): Promise<TimeOff | ServiceFailure | null>;
     remove(userId: string, id: string): Promise<boolean>;
+  };
+  /** Bikes, ride bikes and waxed-chain wear (DECISIONS #114). */
+  equipment: {
+    list(userId: string): Promise<EquipmentPayload>;
+    create(userId: string, input: BikeInput): Promise<Bike>;
+    update(userId: string, id: string, patch: BikePatch): Promise<Bike | null>;
+    remove(userId: string, id: string): Promise<boolean>;
+    /** "Mark re-waxed": now, unless `at` says when. */
+    waxed(userId: string, id: string, at: LocalDateTime | undefined): Promise<Bike | ServiceFailure | null>;
+    /** `null` is "no bike". */
+    setRideBike(userId: string, activityId: string, bikeId: string | null): Promise<ServiceFailure | null>;
   };
   feedback: {
     save(userId: string, input: SessionFeedbackInput): Promise<SessionFeedback | { cleared: true } | ServiceFailure>;
@@ -515,6 +535,26 @@ export function createApp(deps: AppDeps) {
     .delete('/time-off/:id', async (c) =>
       (await services.timeOff.remove(c.get('user')!.id, c.req.param('id'))) ? c.json({ ok: true }) : c.json({ error: 'Not found' }, 404),
     )
+
+    // ── Equipment (DECISIONS #114) ─────────────────────────────────────────
+    .get('/equipment', async (c) => c.json(await services.equipment.list(c.get('user')!.id)))
+    .post('/bikes', json(bikeInputSchema), async (c) => c.json(await services.equipment.create(c.get('user')!.id, c.req.valid('json')), 201))
+    .patch('/bikes/:id', json(bikePatchSchema), async (c) => {
+      const bike = await services.equipment.update(c.get('user')!.id, c.req.param('id'), c.req.valid('json'));
+      return bike ? c.json(bike) : c.json({ error: 'Not found' }, 404);
+    })
+    .delete('/bikes/:id', async (c) =>
+      (await services.equipment.remove(c.get('user')!.id, c.req.param('id'))) ? c.json({ ok: true }) : c.json({ error: 'Not found' }, 404),
+    )
+    .post('/bikes/:id/waxed', json(waxedInputSchema), async (c) => {
+      const bike = await services.equipment.waxed(c.get('user')!.id, c.req.param('id'), c.req.valid('json').at);
+      if (!bike) return c.json({ error: 'Not found' }, 404);
+      return isFailure(bike) ? c.json({ error: bike.error }, bike.status) : c.json(bike);
+    })
+    .put('/rides/:id/bike', json(rideBikeInputSchema), async (c) => {
+      const failed = await services.equipment.setRideBike(c.get('user')!.id, c.req.param('id'), c.req.valid('json').bikeId);
+      return failed ? c.json({ error: failed.error }, failed.status) : c.json({ ok: true });
+    })
 
     // ── Ride feedback ───────────────────────────────────────────────────────
     .put('/feedback', json(sessionFeedbackInputSchema), async (c) => {

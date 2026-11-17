@@ -3,6 +3,8 @@ import { Link } from '@tanstack/react-router';
 export interface SectionTab<K extends string> {
   key: K;
   label: string;
+  /** The label in the phone's segmented control, where four tabs share 390 px. */
+  short?: string | undefined;
   /** Shown after the label ("Foods 15"). */
   count?: number | undefined;
 }
@@ -35,9 +37,9 @@ export function SectionTabs<K extends string>({
               to={base}
               params={{ tab: t.key }}
               aria-current={on ? 'page' : undefined}
-              className={`flex min-h-[36px] items-center justify-center truncate rounded-lg px-1 text-[13px] no-underline ${on ? 'bg-surface font-semibold text-ink shadow-[0_1px_2px_rgba(0,0,0,0.06)] hover:text-ink' : 'text-muted hover:text-ink'}`}
+              className={`flex min-h-[36px] min-w-0 items-center justify-center rounded-lg px-1 text-[13px] no-underline ${on ? 'bg-surface font-semibold text-ink shadow-[0_1px_2px_rgba(0,0,0,0.06)] hover:text-ink' : 'text-muted hover:text-ink'}`}
             >
-              {t.label}
+              <span className="truncate">{t.short ?? t.label}</span>
             </Link>
           );
         })}

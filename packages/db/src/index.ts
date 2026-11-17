@@ -6,6 +6,7 @@ export * from './repos/calendar';
 export * from './repos/courses';
 export * from './repos/coach-food';
 export * from './repos/energy';
+export * from './repos/equipment';
 export * from './repos/events';
 export * from './repos/feedback';
 export * from './repos/food';

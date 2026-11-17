@@ -10,6 +10,7 @@ import { useIsMobile } from '../../lib/useIsMobile';
 import { BudgetSection } from './BudgetSection';
 import { ConnectionsSection } from './connections';
 import { EnergySection } from './EnergySection';
+import { BikesSection, EquipmentNotes } from './equipment';
 import { FtpCard } from './ftp';
 import { GoalsSection } from './goals';
 import { MemorySection } from './memory';
@@ -20,12 +21,13 @@ import { Snapshot } from './Snapshot';
 import { WeightSection } from './weight';
 import { ZwiftSection } from './zwift';
 
-export const ATHLETE_TABS = ['performance', 'body', 'goals'] as const;
+export const ATHLETE_TABS = ['performance', 'body', 'goals', 'equipment'] as const;
 export type AthleteTab = (typeof ATHLETE_TABS)[number];
 const TABS = [
-  { key: 'performance' as const, label: 'Performance' },
-  { key: 'body' as const, label: 'Body & energy' },
-  { key: 'goals' as const, label: 'Goals & coach' },
+  { key: 'performance' as const, label: 'Performance', short: 'Power' },
+  { key: 'body' as const, label: 'Body & energy', short: 'Body' },
+  { key: 'goals' as const, label: 'Goals & coach', short: 'Goals' },
+  { key: 'equipment' as const, label: 'Equipment' },
 ];
 
 /** Two balanced columns, stacked below 1100 px. */
@@ -39,8 +41,8 @@ function Columns({ left, right }: { left: ReactNode; right: ReactNode }) {
 }
 
 /**
- * Athlete: a snapshot strip and three tabs — Performance, Body & energy, Goals &
- * coach. Everything here is context the coach gets with every message.
+ * Athlete: a snapshot strip and four tabs — Performance, Body & energy, Goals &
+ * coach, Equipment. All but Equipment is context the coach gets with every message.
  */
 export function AthletePage({ tab, addWeightGoal }: { tab: AthleteTab; addWeightGoal: boolean }) {
   const { data, isPending, error } = useProfile();
@@ -87,6 +89,8 @@ export function AthletePage({ tab, addWeightGoal }: { tab: AthleteTab; addWeight
         }
       />
     );
+  } else if (tab === 'equipment') {
+    body = <Columns left={<BikesSection />} right={<EquipmentNotes />} />;
   } else {
     body = (
       <Columns
@@ -126,7 +130,9 @@ export function AthletePage({ tab, addWeightGoal }: { tab: AthleteTab; addWeight
         <header className="flex flex-col gap-3 border-b border-line px-7 pt-[18px]">
           <div>
             <h1 className="m-0 text-xl font-bold">Athlete</h1>
-            <div className="text-[13px] text-muted">Everything here is sent to the coach as context with every message.</div>
+            <div className="text-[13px] text-muted">
+              {tab === 'equipment' ? 'Your bikes, which rides they’ve done, and when a chain is due.' : 'Everything here is sent to the coach as context with every message.'}
+            </div>
           </div>
           {snapshot}
           {tabs}

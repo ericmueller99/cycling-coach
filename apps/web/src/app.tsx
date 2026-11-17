@@ -227,7 +227,7 @@ const sharedRecipeRoute = createRoute({
   },
 });
 
-/** Athlete: Performance · Body & energy · Goals & coach. `?addWeightGoal=1` opens the goal editor. */
+/** Athlete: Performance · Body & energy · Goals & coach · Equipment. `?addWeightGoal=1` opens the goal editor. */
 const athleteIndexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/athlete',

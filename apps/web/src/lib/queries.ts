@@ -20,6 +20,8 @@ import type {
   OutlookRevert,
   TimeOffInput,
   TimeOffPatch,
+  BikeInput,
+  BikePatch,
 } from '@cycling-coach/shared';
 import { addDays, daysBetween, weekStart } from '@cycling-coach/core';
 import { keepPreviousData, useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -40,6 +42,7 @@ export const keys = {
   thread: (id: string) => ['threads', id] as const,
   calendar: (from: string, to: string) => ['calendar', from, to] as const,
   timeOff: ['timeOff'] as const,
+  equipment: ['equipment'] as const,
   outlook: ['outlook'] as const,
   intervals: ['intervals'] as const,
   zwift: ['zwift'] as const,
@@ -249,6 +252,47 @@ export function useTimeOffMutations() {
     remove: useMutation({
       mutationFn: async (id: string) => unwrap(await api.api['time-off'][':id'].$delete({ param: { id } })),
       onSuccess: invalidate,
+    }),
+  };
+}
+
+/** Bikes and their chains (DECISIONS #114). */
+export function useEquipment() {
+  return useQuery({ queryKey: keys.equipment, queryFn: async () => unwrap(await api.api.equipment.$get()) });
+}
+
+/** A bike change can move ride totals and the chain alert, and ride bikes show on the calendar. */
+export function useEquipmentMutations() {
+  const qc = useQueryClient();
+  const invalidate = () => {
+    void qc.invalidateQueries({ queryKey: keys.equipment });
+    void qc.invalidateQueries({ queryKey: keys.dashboard });
+  };
+  const invalidateRides = () => {
+    invalidate();
+    void qc.invalidateQueries({ queryKey: ['calendar'] });
+  };
+  return {
+    create: useMutation({
+      mutationFn: async (input: BikeInput) => unwrap(await api.api.bikes.$post({ json: input })),
+      onSuccess: invalidateRides,
+    }),
+    update: useMutation({
+      mutationFn: async ({ id, patch }: { id: string; patch: BikePatch }) => unwrap(await api.api.bikes[':id'].$patch({ param: { id }, json: patch })),
+      onSuccess: invalidateRides,
+    }),
+    remove: useMutation({
+      mutationFn: async (id: string) => unwrap(await api.api.bikes[':id'].$delete({ param: { id } })),
+      onSuccess: invalidateRides,
+    }),
+    waxed: useMutation({
+      mutationFn: async (id: string) => unwrap(await api.api.bikes[':id'].waxed.$post({ param: { id }, json: {} })),
+      onSuccess: invalidate,
+    }),
+    setRideBike: useMutation({
+      mutationFn: async ({ activityId, bikeId }: { activityId: string; bikeId: string | null }) =>
+        unwrap(await api.api.rides[':id'].bike.$put({ param: { id: activityId }, json: { bikeId } })),
+      onSuccess: invalidateRides,
     }),
   };
 }

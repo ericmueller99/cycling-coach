@@ -30,6 +30,7 @@ import { AddRideFromDay, AddToSession } from './grouping';
 import { askCoachPrompt, FIELD, intervalsUrl, PANEL, rideName } from './shared';
 import { SyncRow } from './sync';
 import { ZwiftRouteCard, ZwiftRoutePicker } from './zwift-route';
+import { RideBikes } from './RideBike';
 
 /**
  * The calendar's session, ride and add-session panels. Desktop shows them beside the grid; on
@@ -95,6 +96,7 @@ export function ActivityPanel({
   const body = (
     <>
       <RideSummary activity={activity} />
+      <RideBikes rides={[activity]} />
       <AddToSession activity={activity} sessions={sessions} onAdded={onAdded} />
       <FeedbackCard target={{ activityId: activity.id }} feedback={feedback} />
       <Button size="lg" onClick={() => void navigate({ to: '/', search: { new: true, prompt: askCoachPrompt(name, date, `ride ${activity.id}`) } })}>

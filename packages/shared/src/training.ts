@@ -44,7 +44,11 @@ export interface Activity {
 }
 
 /** A completed ride on the calendar, tagged with the session it completed (if any). */
-export type CalendarActivity = Activity & { matchedEventId?: string | undefined };
+export type CalendarActivity = Activity & {
+  matchedEventId?: string | undefined;
+  /** The bike it was ridden on (DECISIONS #114): `null` for "no bike", absent when none is set. */
+  bikeId?: string | null | undefined;
+};
 
 /** Several rides counted as one — a session ridden in pieces. */
 export interface RideTotals {

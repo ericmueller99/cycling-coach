@@ -2,6 +2,7 @@ import type { CalendarEvent, CalendarEventInput, CalendarEventPatch, ClearableEv
 import type { UpdateFilter } from 'mongodb';
 import type { CalendarEventDoc, Collections } from '../collections';
 import { compact, idOf, oid } from './util';
+import { moveRideBike, removeRideBikes } from './equipment';
 
 export const toEvent = (doc: CalendarEventDoc): CalendarEvent => {
   const { _id, userId: _u, createdAt: _c, updatedAt: _t, ...rest } = doc;
@@ -77,6 +78,7 @@ export async function replaceRideReferences(c: Collections, userId: string, id: 
   await c.sessionFeedback.updateMany({ userId, activityId: id }, { $set: { activityId: twinId, updatedAt: now } }).catch((err: { code?: number }) => {
     if (err.code !== 11000) throw err;
   });
+  await moveRideBike(c, userId, id, twinId, now);
 }
 
 /**
@@ -86,6 +88,7 @@ export async function replaceRideReferences(c: Collections, userId: string, id: 
  */
 export async function removeRideReferences(c: Collections, userId: string, ids: readonly string[], now: Date): Promise<void> {
   if (!ids.length) return;
+  await removeRideBikes(c, userId, ids);
   const gone = new Set(ids);
   const events = await c.calendarEvents.find({ userId, $or: [{ activityId: { $in: [...ids] } }, { extraActivityIds: { $in: [...ids] } }] }).toArray();
   for (const e of events) {

@@ -18,6 +18,7 @@ export * from './feedback';
 export * from './coach-context';
 export * from './compliance';
 export * from './rides';
+export * from './equipment';
 export * from './food';
 export * from './sync';
 export * from './readiness';

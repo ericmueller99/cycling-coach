@@ -21,6 +21,8 @@ import type {
   ProposalChange,
   ProposalItemStatus,
   TimeOffInput,
+  BikeInput,
+  WaxRecord,
   EventFilters,
   BodyScanInput,
   BmrSource,
@@ -220,6 +222,28 @@ export interface CourseDoc {
   analysis: CourseAnalysis;
   analysisVersion: number;
   createdAt: Date;
+}
+
+/** A bike (DECISIONS #114). `waxes` grows by one on each "Mark re-waxed". */
+export interface BikeDoc extends BikeInput {
+  _id?: ObjectId;
+  userId: string;
+  waxes: WaxRecord[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Which bike a ride was on, apart from `activities` because a sync replaces a ride's doc whole.
+ * `bikeId: null` is "no bike". `default` was stamped by the kind's default bike; `manual` was the rider.
+ */
+export interface RideBikeDoc {
+  _id?: ObjectId;
+  userId: string;
+  activityId: string;
+  bikeId: string | null;
+  how: 'default' | 'manual';
+  updatedAt: Date;
 }
 
 export interface TimeOffDoc extends TimeOffInput {
@@ -585,6 +609,8 @@ export function collections(db: Db) {
     workouts: db.collection<WorkoutDoc>('workouts'),
     calendarEvents: db.collection<CalendarEventDoc>('calendar_events'),
     timeOff: db.collection<TimeOffDoc>('time_off'),
+    bikes: db.collection<BikeDoc>('bikes'),
+    rideBikes: db.collection<RideBikeDoc>('ride_bikes'),
     courses: db.collection<CourseDoc>('courses'),
     coachOutlook: db.collection<CoachOutlookDoc>('coach_outlook'),
     threads: db.collection<ThreadDoc>('threads'),
@@ -629,6 +655,9 @@ export async function ensureIndexes(db: Db): Promise<void> {
     c.workouts.createIndex({ userId: 1, createdAt: -1 }),
     c.calendarEvents.createIndex({ userId: 1, date: 1 }),
     c.timeOff.createIndex({ userId: 1, startDate: 1 }),
+    c.bikes.createIndex({ userId: 1 }),
+    c.rideBikes.createIndex({ userId: 1, activityId: 1 }, { unique: true }),
+    c.rideBikes.createIndex({ userId: 1, bikeId: 1 }),
     c.courses.createIndex({ userId: 1, eventId: 1 }, { unique: true }),
     c.coachOutlook.createIndex({ userId: 1 }, { unique: true }),
     c.calendarEvents.createIndex({ userId: 1, 'intervals.eventId': 1 }, { sparse: true }),

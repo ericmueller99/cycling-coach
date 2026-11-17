@@ -78,6 +78,21 @@ export function todayIn(timeZone: string, now: Date): IsoDate {
   }).format(now);
 }
 
+/** The athlete's local wall-clock time at instant `now`, `YYYY-MM-DDTHH:mm` (the shape of a ride's start). */
+export function localDateTimeIn(timeZone: string, now: Date): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(now);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? '00';
+  return `${part('year')}-${part('month')}-${part('day')}T${part('hour')}:${part('minute')}`;
+}
+
 export function dayOfMonth(iso: IsoDate): number {
   return toUtc(iso).getUTCDate();
 }

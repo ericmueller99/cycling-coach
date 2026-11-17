@@ -84,11 +84,12 @@ export function StatTile({ label, value, unit, compact = false }: { label: strin
   );
 }
 
-export function ProgressBar({ value, height = 8 }: { value: number; height?: number }) {
+/** `warn` is amber, for something nearly due (a chain near its re-wax). */
+export function ProgressBar({ value, height = 8, tone = 'accent' }: { value: number; height?: number; tone?: 'accent' | 'warn' }) {
   const pct = Math.max(0, Math.min(100, value * 100));
   return (
     <div className="overflow-hidden rounded bg-track" style={{ height }}>
-      <div className="h-full bg-accent" style={{ width: `${pct}%` }} />
+      <div className={`h-full ${tone === 'warn' ? 'bg-[#D97706]' : 'bg-accent'}`} style={{ width: `${pct}%` }} />
     </div>
   );
 }

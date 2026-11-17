@@ -9,6 +9,8 @@ export const USER_COLLECTIONS = [
   'workouts',
   'calendarEvents',
   'timeOff',
+  'bikes',
+  'rideBikes',
   'courses',
   'coachOutlook',
   'threads',
