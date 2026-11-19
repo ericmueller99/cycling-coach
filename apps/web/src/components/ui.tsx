@@ -85,11 +85,12 @@ export function StatTile({ label, value, unit, compact = false }: { label: strin
 }
 
 /** `warn` is amber, for something nearly due (a chain near its re-wax). */
-export function ProgressBar({ value, height = 8, tone = 'accent' }: { value: number; height?: number; tone?: 'accent' | 'warn' }) {
+/** `color` overrides `tone` (a Zwift category's colour, DECISIONS #115). */
+export function ProgressBar({ value, height = 8, tone = 'accent', color }: { value: number; height?: number; tone?: 'accent' | 'warn'; color?: string }) {
   const pct = Math.max(0, Math.min(100, value * 100));
   return (
     <div className="overflow-hidden rounded bg-track" style={{ height }}>
-      <div className={`h-full ${tone === 'warn' ? 'bg-[#D97706]' : 'bg-accent'}`} style={{ width: `${pct}%` }} />
+      <div className={`h-full ${color ? '' : tone === 'warn' ? 'bg-[#D97706]' : 'bg-accent'}`} style={{ width: `${pct}%`, background: color }} />
     </div>
   );
 }

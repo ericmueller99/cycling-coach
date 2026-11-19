@@ -2,6 +2,8 @@ import type { EventItem, ZwiftEventPen } from '@cycling-coach/shared';
 import { CalendarAddIcon, CheckIcon, ExternalIcon } from '../../components/icons';
 import { badgesOf, calendarInputFor, penNoteOf, relLabel, statsOf, timeLabel, TYPE_STYLE, whereOf, zwiftEventUrl } from '../../lib/events';
 import { errorMessage, useAddEventToCalendar } from '../../lib/queries';
+import { categoryBadge, penCategory, ZWIFT_CATEGORY_COLORS } from '../../lib/zwiftColors';
+import type { CSSProperties } from 'react';
 
 /** The public feed has no sign-up counts; only the logged-in feed does. */
 const counted = (e: EventItem) => e.seenVia === 'extended';
@@ -32,11 +34,37 @@ function TypeTag({ e }: { e: EventItem }) {
   );
 }
 
-function penBox(e: EventItem, p: ZwiftEventPen) {
+/**
+ * A category or pace pen wears Zwift's colour for its letter: yours gets an ink ring, a pen you
+ * can't enter fades (DECISIONS #115). A pen with no letter keeps the neutral box.
+ */
+function penBox(e: EventItem, p: ZwiftEventPen): CSSProperties {
   const mine = p.id === e.me.myPenId && e.me.canEnter !== false;
-  if (mine) return { bg: '#C8F25A', fg: '#0E1014', border: '#7DA30A' };
   const closed = e.categoryEnforced && e.me.canEnter !== null && !e.me.enterablePenIds.includes(p.id);
-  return closed ? { bg: '#F3F4F6', fg: '#9AA1AD', border: '#E3E6EB' } : { bg: '#FFFFFF', fg: '#4B5563', border: '#E3E6EB' };
+  const cat = penCategory(p.label);
+  if (!cat) {
+    if (mine) return { background: '#C8F25A', color: '#0E1014', borderColor: '#7DA30A' };
+    return closed ? { background: '#F3F4F6', color: '#9AA1AD', borderColor: '#E3E6EB' } : { background: '#FFFFFF', color: '#4B5563', borderColor: '#E3E6EB' };
+  }
+  const c = ZWIFT_CATEGORY_COLORS[cat];
+  return {
+    background: c.bg,
+    color: c.fg,
+    borderColor: c.bg,
+    ...(mine ? { boxShadow: '0 0 0 2px #FFFFFF, 0 0 0 4px #0E1014' } : {}),
+    ...(closed && !mine ? { opacity: 0.3 } : {}),
+  };
+}
+
+/** "Pen B" on the phone card, in the pen's Zwift colour. */
+function MyPenChip({ pen }: { pen: ZwiftEventPen }) {
+  const cat = penCategory(pen.label);
+  if (!cat) return <span className="rounded-md border border-accent-ring bg-accent px-1.5 font-sans text-[11px] leading-5 font-bold text-on-accent">Pen {pen.name}</span>;
+  return (
+    <span className="rounded-md border px-1.5 font-sans text-[11px] leading-5 font-bold" style={{ ...categoryBadge(cat), borderColor: ZWIFT_CATEGORY_COLORS[cat].bg }}>
+      Pen {pen.name}
+    </span>
+  );
 }
 
 /** The pens column, by what the pens are. */
@@ -67,15 +95,9 @@ function Pens({ e }: { e: EventItem }) {
       ) : (
         <div className="flex flex-wrap gap-[3px]">
           {e.pens.map((p) => {
-            const s = penBox(e, p);
             const title = p.paceFrom ? `${p.name}: ${p.paceFrom}–${p.paceTo} W/kg` : p.rangeLabel ? `${p.name}: ${p.rangeLabel}` : p.name;
             return (
-              <span
-                key={p.id}
-                title={title}
-                className="flex h-[22px] w-[22px] items-center justify-center rounded-md border text-[11px] font-bold"
-                style={{ background: s.bg, color: s.fg, borderColor: s.border }}
-              >
+              <span key={p.id} title={title} className="flex h-[22px] w-[22px] items-center justify-center rounded-md border text-[11px] font-bold" style={penBox(e, p)}>
                 {p.name.slice(0, 1)}
               </span>
             );
@@ -195,7 +217,7 @@ export function EventCard({ e, timeZone }: { e: EventItem; timeZone: string }) {
         </span>
         <span className="flex-auto" />
         {mine && e.penKind === 'category' && e.me.canEnter !== false && (
-          <span className="rounded-md border border-accent-ring bg-accent px-1.5 font-sans text-[11px] leading-5 font-bold text-on-accent">Pen {mine.name}</span>
+          <MyPenChip pen={mine} />
         )}
       </div>
       {e.penKind === 'distance' && (

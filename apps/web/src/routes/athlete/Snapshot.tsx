@@ -6,6 +6,7 @@ import { useRestDayBudget } from '../../lib/budget';
 import { untilLabel } from '../../lib/eventInfo';
 import { fmtKcal } from '../../lib/food';
 import { useWeightHistory } from '../../lib/queries';
+import { categoryBadge, ZWIFT_CATEGORY_COLORS } from '../../lib/zwiftColors';
 import type { AthleteTab } from './AthletePage';
 
 function SnapTile({ tab, label, value, children }: { tab: AthleteTab; label: string; value: ReactNode; children: ReactNode }) {
@@ -53,9 +54,21 @@ export function Snapshot({ profile, mainGoal, today }: { profile: Profile; mainG
           </span>
         )}
       </SnapTile>
-      <SnapTile tab="performance" label="Zwift category" value={category ?? '—'}>
+      <SnapTile
+        tab="performance"
+        label="Zwift category"
+        value={
+          category ? (
+            <span className="inline-flex h-[26px] min-w-[32px] items-center justify-center rounded-[7px] px-1.5 font-sans text-[16px] font-bold" style={categoryBadge(category)}>
+              {category}
+            </span>
+          ) : (
+            '—'
+          )
+        }
+      >
         {closest?.gap ? (
-          <span className="text-accent-ink">
+          <span style={{ color: ZWIFT_CATEGORY_COLORS[closest.category].ink }}>
             {closest.category} is +{closest.gap.watts} W {closest.gap.metric === 'zftp' ? 'zFTP' : 'zMAP'}
           </span>
         ) : category ? (

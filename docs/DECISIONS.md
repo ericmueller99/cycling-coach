@@ -2926,3 +2926,26 @@ no proposal.
 - *A `bikeId` on the activity doc*: the sync replaces the doc whole.
 - *Working out the default when the ride is read*: changing the default would move every old ride.
 - *A dedicated job after each sync*: `settleRides` already runs after every ride source, inside the same lease.
+
+## 115. Zwift categories wear Zwift's colours (Nov 19)
+
+**Decision.** Wherever the app shows a Zwift category or pen letter, it uses Zwift's own colours, the ones riders see
+on pens, pace partners and ZwiftPower: **A+ black, A red, B green, C blue, D yellow, E purple**. One map,
+`apps/web/src/lib/zwiftColors.ts`, holds them. Each colour has a fill, a text colour (ink on yellow, white on the rest),
+a light tint for rows, and a darker ink for coloured text. The fills are a shade darker than in game, so bold white
+letters stay readable at 11–13 px.
+- **Pace category panel and the phone's Zwift card.** Every badge is in its category's colour, whatever its state, as
+  Zwift lists its pens. State shows in the row instead: the current row and the closest row get a tint of their own
+  colour, and the status text says "You are here" or "Closest · +N W". The header badge, the "Closest: A+" text and the
+  zFTP gap bar take the matching colours. A+ black gets a lighter tint than the others, because at the same 12% it reads
+  as a heavy grey. `ProgressBar` takes a `color`.
+- **The Athlete header's Zwift category tile** shows the letter as a coloured badge.
+- **Event pens.** Category and pace pens are filled in their letter's colour (`ZwiftEventPen.label` 1–5 = A–E). Your
+  pen gets an ink ring, a pen you can't enter in an enforced event fades to 30%, and the phone's "Pen B" chip is in the
+  pen's colour. A pen with no letter keeps the neutral box.
+- **Distance pens** (Short, Long) aren't categories, so their lime "matches your filters" highlight stays.
+
+**Rejected.**
+- *Lime for "closest" and a black badge for "current"*: those read as BikeCoach states, not categories, and a rider
+  looks for "the red one".
+- *Greying out the rows already met*: Zwift shows every pen in colour, and the status column already says "Met".

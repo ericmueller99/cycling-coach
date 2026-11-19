@@ -1,21 +1,33 @@
 import { formatShortDate, wattsPerKg, zwiftCategoryTable, zwiftWeightDrift, type ZwiftCategoryRow } from '@cycling-coach/core';
 import type { Profile, ZwiftCategory } from '@cycling-coach/shared';
-import { useState, type ReactNode } from 'react';
+import { useState, type CSSProperties, type ReactNode } from 'react';
 import { ChevronDown } from '../../components/icons';
 import { Button, Card, ProgressBar } from '../../components/ui';
 import { ZwiftWeightAlert } from '../../components/ZwiftWeightAlert';
 import { useIsMobile } from '../../lib/useIsMobile';
+import { categoryBadge, ZWIFT_CATEGORY_COLORS } from '../../lib/zwiftColors';
 import { Tile } from './shared';
 
 /** Phones fold the watts under the rule; wider screens give them a column. */
 const CATEGORY_GRID = 'grid grid-cols-[44px_minmax(0,1fr)_96px] sm:grid-cols-[56px_minmax(0,1.6fr)_minmax(0,1fr)_150px]';
 
-const ROW_STYLE: Record<ZwiftCategoryRow['state'], { row: string; badge: string; status: string }> = {
-  current: { row: 'bg-surface-2', badge: 'bg-ink text-white', status: 'text-ink' },
-  closest: { row: 'bg-accent-tint', badge: 'bg-accent text-on-accent', status: 'text-accent-ink' },
-  above: { row: 'bg-surface', badge: 'bg-hover text-[#4B5563]', status: 'text-muted' },
-  met: { row: 'bg-surface', badge: 'bg-hover text-[#4B5563]', status: 'text-success' },
-};
+/**
+ * Badges always wear Zwift's colour for their category; the row's state shows in a tint of that
+ * colour (current, closest) and in the status text (DECISIONS #115).
+ */
+function rowStyle(r: ZwiftCategoryRow): { row: CSSProperties; status: CSSProperties; statusClass: string } {
+  const c = ZWIFT_CATEGORY_COLORS[r.category];
+  switch (r.state) {
+    case 'current':
+      return { row: { background: c.tint }, status: {}, statusClass: 'text-ink' };
+    case 'closest':
+      return { row: { background: c.tint }, status: { color: c.ink }, statusClass: '' };
+    case 'above':
+      return { row: {}, status: {}, statusClass: 'text-muted' };
+    case 'met':
+      return { row: {}, status: {}, statusClass: 'text-success' };
+  }
+}
 
 const gapLabel = (gap: ZwiftCategoryRow['gap']) => (gap ? `+${gap.watts} W ${gap.metric === 'zftp' ? 'zFTP' : 'zMAP'}` : '—');
 
@@ -65,7 +77,9 @@ function PaceCategoryPanel({ zftp, zmap, weightKg, shownCategory, asOf, zwiftWei
   return (
     <div className="overflow-hidden rounded-xl border border-line">
       <div className="flex flex-wrap items-center gap-4 border-b border-line bg-surface-alt px-4 py-3.5">
-        <div className="flex h-[52px] w-[52px] flex-none items-center justify-center rounded-xl bg-ink text-[26px] font-bold text-white">{category}</div>
+        <div className="flex h-[52px] w-[52px] flex-none items-center justify-center rounded-xl text-[26px] font-bold" style={categoryBadge(category)}>
+          {category}
+        </div>
         <div className="flex-[1_1_200px]">
           <div className="text-xs font-semibold tracking-[0.06em] text-muted uppercase">Current pace category</div>
           <div className="font-semibold">
@@ -77,10 +91,13 @@ function PaceCategoryPanel({ zftp, zmap, weightKg, shownCategory, asOf, zwiftWei
           {closest ? (
             <>
               <div className="text-[13px]">
-                <span className="font-semibold text-accent-ink">Closest: {closest.category}</span> — {routes.join(', or ') || 'add zFTP or zMAP'}
+                <span className="font-semibold" style={{ color: ZWIFT_CATEGORY_COLORS[closest.category].ink }}>
+                  Closest: {closest.category}
+                </span>{' '}
+                — {routes.join(', or ') || 'add zFTP or zMAP'}
               </div>
               <div className="flex flex-col gap-1">
-                {zftp !== undefined && closest.zftpWatts && <GapBar label="zFTP" have={zftp} need={closest.zftpWatts} color="#7DA30A" />}
+                {zftp !== undefined && closest.zftpWatts && <GapBar label="zFTP" have={zftp} need={closest.zftpWatts} color={ZWIFT_CATEGORY_COLORS[closest.category].bg} />}
                 {zmap !== undefined && closest.zmapWatts && <GapBar label="zMAP" have={zmap} need={closest.zmapWatts} color="#A3AAB6" />}
               </div>
             </>
@@ -96,19 +113,23 @@ function PaceCategoryPanel({ zftp, zmap, weightKg, shownCategory, asOf, zwiftWei
         <div className="text-right">You</div>
       </div>
       {rows.map((r) => {
-        const style = ROW_STYLE[r.state];
+        const style = rowStyle(r);
         const watts = r.zftpWatts ? [r.zmapWatts ? `${r.zmapWatts} W zMAP` : '', `${r.zftpWatts} W zFTP`].filter(Boolean).join(' · ') : '—';
         return (
-          <div key={r.category} className={`${CATEGORY_GRID} items-center gap-x-2 border-b border-divider px-4 py-2.5 ${style.row}`}>
+          <div key={r.category} className={`${CATEGORY_GRID} items-center gap-x-2 border-b border-divider bg-surface px-4 py-2.5`} style={style.row}>
             <div>
-              <span className={`inline-flex h-[26px] min-w-[30px] items-center justify-center rounded-[7px] px-1.5 text-[13px] font-bold ${style.badge}`}>{r.category}</span>
+              <span className="inline-flex h-[26px] min-w-[30px] items-center justify-center rounded-[7px] px-1.5 text-[13px] font-bold" style={categoryBadge(r.category)}>
+                {r.category}
+              </span>
             </div>
             <div className="text-[13px]">
               {r.rule}
               {r.zftpWatts && <div className="font-mono text-[11px] text-muted sm:hidden">{watts}</div>}
             </div>
             <div className="hidden font-mono text-xs text-muted sm:block">{watts}</div>
-            <div className={`text-right text-xs font-semibold ${style.status}`}>{rowStatus(r)}</div>
+            <div className={`text-right text-xs font-semibold ${style.statusClass}`} style={style.status}>
+              {rowStatus(r)}
+            </div>
           </div>
         );
       })}
@@ -128,15 +149,20 @@ function CategorySummary({ rows, shown, zftp, zmap }: { rows: ZwiftCategoryRow[]
   const have = gap && (gap.metric === 'zftp' ? zftp : zmap);
   return (
     <div className="flex items-center gap-3 rounded-xl bg-surface-2 p-3">
-      <div className="flex h-[48px] w-[48px] flex-none items-center justify-center rounded-xl bg-ink text-[24px] font-bold text-white">{category}</div>
+      <div className="flex h-[48px] w-[48px] flex-none items-center justify-center rounded-xl text-[24px] font-bold" style={categoryBadge(category)}>
+        {category}
+      </div>
       <div className="min-w-0 flex-auto">
         <div className="font-semibold">Category {category}</div>
         {closest && gap && need ? (
           <>
             <div className="text-[13px]">
-              <span className="font-semibold text-accent-ink">{closest.category}</span> is {gap.watts} W more {gap.metric === 'zftp' ? 'zFTP' : 'zMAP'} ({need} W)
+              <span className="font-semibold" style={{ color: ZWIFT_CATEGORY_COLORS[closest.category].ink }}>
+                {closest.category}
+              </span>{' '}
+              is {gap.watts} W more {gap.metric === 'zftp' ? 'zFTP' : 'zMAP'} ({need} W)
             </div>
-            {have !== undefined && <ProgressBar value={have / need} height={6} />}
+            {have !== undefined && <ProgressBar value={have / need} height={6} color={ZWIFT_CATEGORY_COLORS[closest.category].bg} />}
           </>
         ) : (
           <div className="text-[13px] font-semibold text-accent-ink">Top category on zFTP</div>
@@ -189,13 +215,17 @@ export function ZwiftSection({ profile }: { profile: Profile }) {
             {rulesOpen && (
               <div className="flex flex-col overflow-hidden rounded-[10px] border border-line">
                 {rows.map((r) => {
-                  const style = ROW_STYLE[r.state];
+                  const style = rowStyle(r);
                   return (
-                    <div key={r.category} className={`flex gap-2.5 border-b border-divider px-3 py-2.5 last:border-0 ${style.row}`}>
-                      <span className={`flex h-[24px] w-[30px] flex-none items-center justify-center rounded-md text-xs font-bold ${style.badge}`}>{r.category}</span>
+                    <div key={r.category} className="flex gap-2.5 border-b border-divider bg-surface px-3 py-2.5 last:border-0" style={style.row}>
+                      <span className="flex h-[24px] w-[30px] flex-none items-center justify-center rounded-md text-xs font-bold" style={categoryBadge(r.category)}>
+                        {r.category}
+                      </span>
                       <div className="min-w-0 flex-auto">
                         <div className="text-[13px]">{r.rule}</div>
-                        <div className={`text-xs font-semibold ${style.status}`}>{rowStatus(r)}</div>
+                        <div className={`text-xs font-semibold ${style.statusClass}`} style={style.status}>
+                          {rowStatus(r)}
+                        </div>
                       </div>
                     </div>
                   );
