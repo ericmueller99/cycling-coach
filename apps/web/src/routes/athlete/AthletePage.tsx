@@ -19,6 +19,7 @@ import { TrainingCard } from './training';
 import { PowerCurveCard } from './powerCurve';
 import { Snapshot } from './Snapshot';
 import { WeightSection } from './weight';
+import { WkgSimulatorCard } from './wkgSimulator';
 import { ZwiftSection } from './zwift';
 
 export const ATHLETE_TABS = ['performance', 'body', 'goals', 'equipment'] as const;
@@ -69,7 +70,12 @@ export function AthletePage({ tab, addWeightGoal }: { tab: AthleteTab; addWeight
             <PowerCurveCard bests={data.powerBests} weightKg={data.profile.weightKg} ftp={data.profile.ftpZwift} goalDurations={goalDurations} />
           </>
         }
-        right={<ZwiftSection profile={data.profile} />}
+        right={
+          <>
+            <ZwiftSection profile={data.profile} />
+            <WkgSimulatorCard profile={data.profile} />
+          </>
+        }
       />
     );
   } else if (tab === 'body') {
