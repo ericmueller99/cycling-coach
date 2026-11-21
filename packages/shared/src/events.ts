@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isoDateSchema } from './common';
 
 /**
  * Zwift events, synced into our own database and filtered locally (DECISIONS #29).
@@ -132,7 +133,11 @@ export const eventFiltersSchema = z.object({
   q: z.string().max(100).default(''),
   /** Hide events that have already started. Off = also those that started in the last hour (late join). */
   upcoming: z.boolean().default(true),
+  /** Relative days, so a saved "Today" stays today. */
   day: z.enum(['all', 'today', 'tomorrow']).default('all'),
+  /** Local dates, inclusive (YYYY-MM-DD). Any day of the synced range, or a span of them. */
+  dateFrom: isoDateSchema.optional(),
+  dateTo: isoDateSchema.optional(),
   timesOfDay: z.array(z.enum(timesOfDay)).default([]),
   /** Local start-time window, HH:mm. */
   from: hhmm.optional(),
@@ -189,6 +194,8 @@ export interface EventQueryResult {
   total: number;
   /** Every cycling event stored. */
   all: number;
+  /** Start of the latest stored event: how far the synced events reach. */
+  through?: string | undefined;
   /** Counts per type and world under every other filter (each facet ignores its own filter). */
   facets: { types: { [K in ZwiftEventType]?: number | undefined }; worlds: Record<string, number> };
 }
@@ -203,6 +210,12 @@ export interface ExtendedRunStatus {
   finishedAt?: string | undefined;
   /** "Get more events" is refused until then (6 h after the last run). */
   nextAllowedAt?: string | undefined;
+  /** It also runs on its own once a day (DECISIONS #116). */
+  daily?: boolean | undefined;
+  /** The last "Refresh sign-ups" (one request, DECISIONS #116). */
+  signupsAt?: string | undefined;
+  /** "Refresh sign-ups" is refused until then. */
+  signupsAllowedAt?: string | undefined;
   error?: string | undefined;
 }
 
@@ -222,6 +235,13 @@ export interface EventsStatus {
 }
 
 export type EventsRefreshResult = { kind: 'done' | 'busy' } | { kind: 'too_soon'; retryAt: string } | { kind: 'error'; error: string };
+
+/** "Refresh sign-ups": `elsewhere` are sign-ups for events we haven't stored (beyond the synced days). */
+export type EventsSignupsResult =
+  | { kind: 'done'; found: number; elsewhere: { eventId: number; name?: string | undefined; start?: string | undefined }[] }
+  | { kind: 'cooldown'; nextAllowedAt: string }
+  | { kind: 'not_configured' }
+  | { kind: 'error'; error: string };
 
 export type EventsExtendResult =
   | { kind: 'started' | 'running'; status: ExtendedRunStatus }

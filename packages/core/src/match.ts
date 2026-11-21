@@ -16,6 +16,10 @@ export interface MatchableEvent {
   extraActivityIds?: readonly string[] | undefined;
   /** A real-world event's distance, so its ride can be told by length rather than name (DECISIONS #98). */
   distanceKm?: number | undefined;
+  /** `race` holds out for its race ride whatever its colour `type` (DECISIONS #117). */
+  kind?: 'workout' | 'race' | 'ride' | undefined;
+  /** The Zwift route a race follows, by its lengths: the race's distance when it has no `distanceKm` (DECISIONS #117). */
+  route?: { lapKm: number; leadinKm: number; laps?: number | undefined } | undefined;
 }
 
 export interface MatchableActivity {
@@ -30,37 +34,61 @@ export interface MatchableActivity {
   distanceKm?: number | undefined;
 }
 
-const RACE = /\b(race|racing|ladder|zrl|crit|criterium|time trial|tt)\b/i;
+const RACE = /\b(race|racing|ladder|zrl|crit|criterium|time trial|tt|ttt)\b/i;
+/** A warm-up named after its race ("ZRL TTT Warm-up") is never the race. */
+const WARMUP = /\b(warm[- ]?up|cool[- ]?down)\b/i;
 const STRUCTURED = /\b(workout|interval|intervals|vo2|threshold|sweet ?spot|over-?unders?|\d+x\d+)\b/i;
 /** How far a ride's distance may be from an event's and still be the event: a missed turn, a neutral roll-out. */
 const EVENT_DISTANCE_SLACK = 0.25;
 
 /**
- * Whether a ride looks like this race. Zwift names its race rides; an outdoor ride is "Morning Ride",
- * so a real-world event with a known distance is told by length instead (DECISIONS #98).
+ * How long the race is: a real-world event's distance, or its Zwift route's lead-in and laps. A route with no laps
+ * set is at least one lap (as its card shows it), so that's a minimum, not the length (DECISIONS #117).
+ */
+export function raceDistance(e: Pick<MatchableEvent, 'distanceKm' | 'route'>): { km: number; exact: boolean } | null {
+  if (e.distanceKm && e.distanceKm > 0) return { km: e.distanceKm, exact: true };
+  const r = e.route;
+  if (!r || !(r.lapKm > 0)) return null;
+  const laps = r.laps && r.laps > 0 ? r.laps : undefined;
+  return { km: r.leadinKm + (laps ?? 1) * r.lapKm, exact: laps !== undefined };
+}
+
+const isRaceSession = (e: MatchableEvent) => e.type === 'race' || e.kind === 'race';
+const raceName = (name: string) => RACE.test(name) && !WARMUP.test(name);
+
+/**
+ * Whether a ride looks like this race. When the race's length is known (#98's distance, or a Zwift route), the
+ * ride's length decides, since a warm-up is often named after its race; otherwise the name does (DECISIONS #117).
  */
 function looksLikeRace(e: MatchableEvent, a: MatchableActivity): boolean {
-  if (RACE.test(a.name)) return true;
-  if (!e.distanceKm || !a.distanceKm) return false;
-  return Math.abs(a.distanceKm - e.distanceKm) / e.distanceKm <= EVENT_DISTANCE_SLACK;
+  const d = raceDistance(e);
+  if (d && a.distanceKm) {
+    return d.exact ? Math.abs(a.distanceKm - d.km) / d.km <= EVENT_DISTANCE_SLACK : a.distanceKm >= d.km * (1 - EVENT_DISTANCE_SLACK);
+  }
+  return raceName(a.name);
 }
 
 function score(e: MatchableEvent, a: MatchableActivity): number {
-  const isRace = e.type === 'race' ? looksLikeRace(e, a) : RACE.test(a.name);
+  const raceSession = isRaceSession(e);
+  const isRace = raceSession ? looksLikeRace(e, a) : raceName(a.name);
   let s = 0;
-  switch (e.type) {
-    case 'race':
-      s += isRace ? 3 : -1;
-      break;
-    case 'intervals':
-    case 'openers':
-      s += STRUCTURED.test(a.name) ? 2 : 0;
-      s -= isRace ? 2 : 0;
-      break;
-    case 'endurance':
-    case 'recovery':
-      s -= isRace ? 2 : 0;
-      break;
+  if (raceSession) {
+    s += isRace ? 3 : -1;
+    // Of two rides that both look like the race, the one nearer its length.
+    const d = raceDistance(e);
+    if (isRace && d && a.distanceKm) s += 1 - Math.min(1, Math.abs(a.distanceKm - d.km) / d.km);
+  } else {
+    switch (e.type) {
+      case 'intervals':
+      case 'openers':
+        s += STRUCTURED.test(a.name) ? 2 : 0;
+        s -= isRace ? 2 : 0;
+        break;
+      case 'endurance':
+      case 'recovery':
+        s -= isRace ? 2 : 0;
+        break;
+    }
   }
   if (e.durationMin) {
     const ratio = Math.abs(a.movingSec / 60 - e.durationMin) / e.durationMin;
@@ -73,10 +101,11 @@ function score(e: MatchableEvent, a: MatchableActivity): number {
 
 /**
  * intervals.icu can pair a race with the warm-up, which uploads first. A matched session is closed,
- * so a race session waits out its day for a ride named like a race, and only then takes the pairing.
+ * so a race session waits out its day for a ride that looks like the race (by length when known, else by
+ * name), and only then takes the pairing (DECISIONS #68, #117).
  */
 function holdsOutForRace(e: MatchableEvent, paired: MatchableActivity, rides: readonly MatchableActivity[], today: string): boolean {
-  if (e.type !== 'race' || looksLikeRace(e, paired)) return false;
+  if (!isRaceSession(e) || looksLikeRace(e, paired)) return false;
   return e.date >= today || rides.some((r) => r.startLocal.slice(0, 10) === e.date && looksLikeRace(e, r));
 }
 

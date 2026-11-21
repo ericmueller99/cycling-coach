@@ -4,7 +4,7 @@ import { ApiError } from '../lib/api';
 import { errorMessage } from '../lib/queries';
 import { SESSION_STYLE, TENTATIVE } from '../lib/session';
 
-type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'neutral' | 'danger';
+type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'neutral' | 'danger' | 'dangerSolid';
 
 const VARIANT: Record<ButtonVariant, string> = {
   primary: 'border-0 bg-accent text-on-accent font-semibold',
@@ -13,6 +13,8 @@ const VARIANT: Record<ButtonVariant, string> = {
   /** A primary button with nothing to do yet ("Saved"): grey, not faded. */
   neutral: 'border-0 bg-hover text-faint font-semibold disabled:opacity-100',
   danger: 'border border-[#F1B5B0] bg-surface text-danger font-medium',
+  /** Filled red: an undo you should see at once (Unlink this ride) and its confirm. */
+  dangerSolid: 'border-0 bg-danger text-white font-semibold disabled:opacity-60',
 };
 
 /** Primary buttons 40–44px, secondary 36px, radius 8–10px; every tap target ≥ 44px on mobile. */

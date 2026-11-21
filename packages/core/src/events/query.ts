@@ -191,6 +191,8 @@ function matches(c: Candidate, f: EventFilters, today: string, nowMs: number, ex
   if (f.upcoming && Date.parse(e.start) <= nowMs) return false;
   if (f.day === 'today' && c.local.date !== today) return false;
   if (f.day === 'tomorrow' && c.local.date !== addDays(today, 1)) return false;
+  if (f.dateFrom && c.local.date < f.dateFrom) return false;
+  if (f.dateTo && c.local.date > f.dateTo) return false;
   if (f.timesOfDay.length && !f.timesOfDay.some((t) => c.local.hour >= HOURS[t][0] && c.local.hour < HOURS[t][1])) return false;
   if (f.from && c.local.hhmm < f.from) return false;
   if (f.to && c.local.hhmm > f.to) return false;
@@ -288,11 +290,13 @@ export function queryEvents(
     if (matches(c, f, today, nowMs)) hits.push(c);
   }
   hits.sort(SORTS[query.sort]);
+  const through = candidates.reduce<string | undefined>((last, c) => (!last || c.event.start > last ? c.event.start : last), undefined);
 
   return {
     items: hits.slice(query.offset, query.offset + query.limit).map((c): EventItem => ({ ...c.event, pens: c.pens, me: c.me })),
     total: hits.length,
     all: candidates.length,
+    ...(through ? { through } : {}),
     facets: { types, worlds },
   };
 }

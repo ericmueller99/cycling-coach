@@ -42,6 +42,7 @@ import {
   type EventQuery,
   type EventQueryResult,
   type EventsExtendResult,
+  type EventsSignupsResult,
   type EventsRefreshResult,
   type EventsStatus,
   type Goal,
@@ -261,6 +262,8 @@ export interface AppServices {
     query(userId: string, query: EventQuery): Promise<EventQueryResult>;
     refresh(): Promise<EventsRefreshResult>;
     extend(userId: string): Promise<EventsExtendResult>;
+    /** "Refresh sign-ups": one logged-in request for the athlete's sign-ups, at most every 5 min (DECISIONS #116). */
+    refreshSignups(userId: string): Promise<EventsSignupsResult>;
     searches: {
       list(userId: string): Promise<SavedSearch[]>;
       create(userId: string, input: SavedSearchInput): Promise<SavedSearch>;
@@ -679,6 +682,14 @@ export function createApp(deps: AppDeps) {
       if (result.kind === 'not_configured') return c.json({ error: 'No Zwift login for this account' }, 503);
       if (result.kind === 'cooldown') return c.json({ error: 'Already fetched recently', nextAllowedAt: result.nextAllowedAt }, 409);
       return c.json(await services.events.status(userId));
+    })
+    .post('/events/signups/refresh', async (c) => {
+      const userId = c.get('user')!.id;
+      const result = await services.events.refreshSignups(userId);
+      if (result.kind === 'not_configured') return c.json({ error: 'No Zwift login for this account' }, 503);
+      if (result.kind === 'cooldown') return c.json({ error: 'Refreshed a few minutes ago', nextAllowedAt: result.nextAllowedAt }, 409);
+      if (result.kind === 'error') return c.json({ error: `Zwift didn't answer: ${result.error}` }, 502);
+      return c.json({ found: result.found, elsewhere: result.elsewhere, status: await services.events.status(userId) });
     })
     .get('/events/searches', async (c) => c.json(await services.events.searches.list(c.get('user')!.id)))
     .post('/events/searches', json(savedSearchInputSchema), async (c) =>

@@ -3,6 +3,11 @@ import { deleteActivities, listActivities, listEvents, patchEvent, replaceRideRe
 import type { IsoDate } from '@cycling-coach/shared';
 import { stampDefaultBikes } from './equipment';
 
+/** A Zwift route's lengths by Zwift's route id: `ZwiftRouteData` in a running app, so a race's ride can be told by length (DECISIONS #117). */
+export interface RouteLengths {
+  info(id: number): { lapKm: number; leadinKm: number } | null;
+}
+
 /** How far back `Core.rides` settles after new rides. The sync passes its own window. */
 export const MATCH_DAYS = 21;
 
@@ -10,7 +15,14 @@ export const MATCH_DAYS = 21;
  * Put the stored rides in order, whichever source just wrote (DECISIONS #71): drop second-source rides
  * intervals.icu also has, give new rides their default bike, then tick off sessions from what's left and mark the missed ones.
  */
-export async function settleRides(c: Collections, userId: string, from: IsoDate, today: IsoDate, now: Date): Promise<{ matched: number; missed: number }> {
+export async function settleRides(
+  c: Collections,
+  userId: string,
+  from: IsoDate,
+  today: IsoDate,
+  now: Date,
+  routes?: RouteLengths,
+): Promise<{ matched: number; missed: number }> {
   const listed = await listActivities(c, userId, from, today);
   const shadowed = shadowedRides(listed);
   for (const { id, twinId } of shadowed) await replaceRideReferences(c, userId, id, twinId, now);
@@ -22,7 +34,15 @@ export async function settleRides(c: Collections, userId: string, from: IsoDate,
   const gone = new Set(shadowed.map((s) => s.id));
   const rides = listed.filter((a) => !gone.has(a.id));
   const events = await listEvents(c, userId, from, today);
-  const matchable = events.map((e) => ({ ...e, intervalsEventId: e.intervals?.eventId, distanceKm: e.eventInfo?.distanceKm }));
+  const matchable = events.map((e) => {
+    const route = e.zwiftRouteId !== undefined ? routes?.info(e.zwiftRouteId) : null;
+    return {
+      ...e,
+      intervalsEventId: e.intervals?.eventId,
+      distanceKm: e.eventInfo?.distanceKm,
+      ...(route ? { route: { lapKm: route.lapKm, leadinKm: route.leadinKm, laps: e.zwiftLaps } } : {}),
+    };
+  });
   const pairs = matchActivities(
     matchable,
     rides.map((a) => ({

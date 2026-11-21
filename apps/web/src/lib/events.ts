@@ -12,7 +12,7 @@ import {
   type ZwiftEventPen,
   type ZwiftEventType,
 } from '@cycling-coach/shared';
-import { todayIn } from '@cycling-coach/core';
+import { addDays, daysBetween, todayIn } from '@cycling-coach/core';
 
 /** Event-type colours. TT and TTT share a purple the session tags don't have. */
 export const TYPE_STYLE: Record<ZwiftEventType, { label: string; fg: string; bg: string; dot: string }> = {
@@ -100,6 +100,58 @@ const lengthLabel = (f: EventFilters) => {
   return f.lengthMin !== undefined ? `${f.lengthMin}+ ${unit}` : `< ${f.lengthMax} ${unit}`;
 };
 
+/** The filters with no local-date limit. */
+const clearDates = (f: EventFilters): EventFilters => withFilter(withFilter(f, 'dateFrom', undefined), 'dateTo', undefined);
+
+const shortDay = (date: string, opts: Intl.DateTimeFormatOptions) =>
+  new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', ...opts }).format(new Date(`${date}T12:00:00Z`)).replace(',', '');
+
+/** "Sun Nov 22", "Nov 22–24", "From Nov 22", "Until Nov 24". */
+export function datesLabel(from: string | undefined, to: string | undefined): string {
+  const md = (d: string) => shortDay(d, { month: 'short', day: 'numeric' });
+  if (from && to) return from === to ? shortDay(from, { weekday: 'short', month: 'short', day: 'numeric' }) : `${md(from)}–${from.slice(0, 7) === to.slice(0, 7) ? to.slice(8).replace(/^0/, '') : md(to)}`;
+  return from ? `From ${md(from)}` : `Until ${md(to!)}`;
+}
+
+export interface DayOption {
+  key: string;
+  /** "Today", "Tomorrow", or the weekday ("Sun"). */
+  label: string;
+  /** The day of the month ("22"); empty for Any. */
+  sub: string;
+  on: boolean;
+  pick: (f: EventFilters) => EventFilters;
+}
+
+/**
+ * The When section's day strip: Any, Today, Tomorrow, then each later day the synced events reach
+ * (at most two weeks). Today and Tomorrow stay relative (`day`), so a saved search keeps meaning
+ * "today"; a later day is a date. Picking the day that's on goes back to Any.
+ */
+export function dayOptions(f: EventFilters, today: string, throughDate: string | undefined): DayOption[] {
+  const anyOn = f.day === 'all' && !f.dateFrom && !f.dateTo;
+  const reset = (x: EventFilters): EventFilters => ({ ...clearDates(x), day: 'all' });
+  const last = throughDate && throughDate > addDays(today, 1) ? (daysBetween(today, throughDate) > 14 ? addDays(today, 14) : throughDate) : addDays(today, 1);
+  const opts: DayOption[] = [{ key: 'all', label: 'Any', sub: '', on: anyOn, pick: reset }];
+  for (let d = today, i = 0; d <= last; d = addDays(d, 1), i++) {
+    const single = f.dateFrom === d && f.dateTo === d;
+    if (i < 2) {
+      const rel = i === 0 ? 'today' : 'tomorrow';
+      const on = (f.day === rel && !f.dateFrom && !f.dateTo) || (f.day === 'all' && single);
+      opts.push({ key: rel, label: i === 0 ? 'Today' : 'Tomorrow', sub: shortDay(d, { day: 'numeric' }), on, pick: (x) => (on ? reset(x) : { ...clearDates(x), day: rel }) });
+    } else {
+      const on = f.day === 'all' && single;
+      opts.push({ key: d, label: shortDay(d, { weekday: 'short' }), sub: shortDay(d, { day: 'numeric' }), on, pick: (x) => (on ? reset(x) : { ...x, day: 'all', dateFrom: d, dateTo: d }) });
+    }
+  }
+  return opts;
+}
+
+/** A From/To date edit: sets that end of the span, and drops a relative day. */
+export function withDate(f: EventFilters, end: 'dateFrom' | 'dateTo', value: string | undefined): EventFilters {
+  return { ...withFilter(f, end, value || undefined), day: 'all' };
+}
+
 /** One removable chip per filter that differs from the defaults (results toolbar). */
 export function activeChips(f: EventFilters): ActiveChip[] {
   const d = DEFAULT_EVENT_FILTERS;
@@ -108,6 +160,7 @@ export function activeChips(f: EventFilters): ActiveChip[] {
   if (f.q) add('q', `“${f.q}”`, (x) => ({ ...x, q: '' }));
   if (f.upcoming !== d.upcoming) add('upcoming', 'Incl. started events', (x) => ({ ...x, upcoming: d.upcoming }));
   if (f.day !== 'all') add('day', f.day === 'today' ? 'Today' : 'Tomorrow', (x) => ({ ...x, day: 'all' }));
+  if (f.dateFrom || f.dateTo) add('dates', datesLabel(f.dateFrom, f.dateTo), clearDates);
   for (const t of f.timesOfDay) add(`tod-${t}`, TIMES_OF_DAY.find((x) => x.key === t)!.label, (x) => ({ ...x, timesOfDay: x.timesOfDay.filter((y) => y !== t) }));
   if (f.from || f.to) add('time', `${f.from ?? '…'}–${f.to ?? '…'}`, (x) => withFilter(withFilter(x, 'from', undefined), 'to', undefined));
   for (const t of f.types) add(`type-${t}`, TYPE_STYLE[t].label, (x) => ({ ...x, types: x.types.filter((y) => y !== t) }));
@@ -185,9 +238,14 @@ export function dayLabel(date: string, today: string) {
   return diff === 0 ? `Today · ${text}` : diff === 1 ? `Tomorrow · ${text}` : text;
 }
 
-/** The pen a row's single-number stats describe: the athlete's, else the first. */
+/** The pen they signed up for in Zwift, if any. */
+export function signedUpPen(e: EventItem): ZwiftEventPen | undefined {
+  return e.pens.find((p) => e.me.signedUpPenIds.includes(p.id));
+}
+
+/** The pen a row's single-number stats describe: the one they signed up for, else theirs, else the first. */
 export function shownPen(e: EventItem): ZwiftEventPen | undefined {
-  return e.pens.find((p) => p.id === e.me.myPenId) ?? e.pens[0];
+  return signedUpPen(e) ?? e.pens.find((p) => p.id === e.me.myPenId) ?? e.pens[0];
 }
 
 const range = (xs: number[], fmt: (n: number) => string) => {
@@ -284,9 +342,12 @@ export function penNoteOf(e: EventItem): PenNote {
 /** zwift.com's page for the event, where the athlete signs up. */
 export const zwiftEventUrl = (id: number) => `https://www.zwift.com/events/view/${id}`;
 
-/** The calendar session for an event: the athlete's pen (or the matched option), at its local start. */
+/**
+ * The calendar session for an event: the pen they signed up for in Zwift, else theirs (or the
+ * matched option), at its local start.
+ */
 export function calendarInputFor(e: EventItem, timeZone: string): CalendarEventInput {
-  const pen = e.pens.find((p) => p.id === e.me.myPenId) ?? e.pens.find((p) => e.me.matchedPenIds.includes(p.id)) ?? e.pens[0];
+  const pen = signedUpPen(e) ?? e.pens.find((p) => p.id === e.me.myPenId) ?? e.pens.find((p) => e.me.matchedPenIds.includes(p.id)) ?? e.pens[0];
   const start = pen?.start ?? e.start;
   const race = e.type === 'race' || e.type === 'tt' || e.type === 'ttt';
   const hhmm = new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(start));

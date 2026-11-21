@@ -243,7 +243,8 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   /** Rides, wellness and curves as synced from intervals.icu (DECISIONS #49) — what every screen reads. */
   const training = new TrainingData(c, integrations, now);
   /** Zwift race routes, for accounts with the Zwift feature (DECISIONS #102). */
-  const routeCourses = new ZwiftRouteCourses(c, new ZwiftRouteData(), features, now);
+  const routeData = new ZwiftRouteData();
+  const routeCourses = new ZwiftRouteCourses(c, routeData, features, now);
   const calendar = new CalendarService(
     c,
     integrations,
@@ -286,10 +287,11 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     calendar,
     { full: (userId) => jobs.trigger(JOB.full, userId), delta: (userId) => jobs.trigger(JOB.delta, userId) },
     now,
+    routeData,
   );
   const zwiftSync = new ZwiftSync(c, integrations, zwiftLock);
-  const zwiftEvents = new ZwiftEventsService(c, new ZwiftPublic({ gate: integrations.zwiftGate }), integrations, now, {}, undefined, zwiftLock);
-  const jobDeps: JobDeps = { c, sync, zwiftSync, zwiftEvents, deltaEveryMs: opts.intervalsSyncEveryMs, now };
+  const zwiftEvents = new ZwiftEventsService(c, new ZwiftPublic({ gate: integrations.zwiftGate }), integrations, now, { daily: env.ZWIFT_DAILY_EVENTS }, undefined, zwiftLock);
+  const jobDeps: JobDeps = { c, sync, zwiftSync, zwiftEvents, deltaEveryMs: opts.intervalsSyncEveryMs, zwiftDailyEvents: env.ZWIFT_DAILY_EVENTS, now };
   registerJobs(jobs, jobDeps);
   const coachFood = new CoachFoodService(
     c,
@@ -539,6 +541,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
       query: (userId, query) => zwiftEvents.query(userId, query),
       refresh: () => zwiftEvents.syncPublic(),
       extend: (userId) => zwiftEvents.extend(userId),
+      refreshSignups: (userId) => zwiftEvents.refreshSignups(userId),
       searches: {
         list: (userId) => listEventSearches(c, userId),
         create: (userId, input) => createEventSearch(c, userId, input, now()),
@@ -645,7 +648,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
         const profile = await getProfile(c, userId);
         if (!profile) return;
         const today = todayIn(profile.timezone, now());
-        await settleRides(c, userId, addDays(today, -MATCH_DAYS), today, now());
+        await settleRides(c, userId, addDays(today, -MATCH_DAYS), today, now(), routeData);
       },
       purge: async (userId, provider) => {
         const ids = await rideIdsFrom(c, userId, provider);

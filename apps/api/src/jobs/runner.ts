@@ -90,10 +90,13 @@ export class JobRunner {
 
   // ── Schedule ────────────────────────────────────────────────────────────
 
-  /** Make sure the job exists; a new one falls due shortly (with jitter), an existing one keeps its time. */
-  schedule(kind: string, key: string): Promise<void> {
+  /**
+   * Make sure the job exists; a new one falls due at `firstAt`, else shortly (with jitter). An
+   * existing one keeps its time.
+   */
+  schedule(kind: string, key: string, firstAt?: Date): Promise<void> {
     const now = this.now();
-    return ensureJob(this.c, kind, key, new Date(now.getTime() + this.jitter(this.def(kind).every)), now);
+    return ensureJob(this.c, kind, key, firstAt ?? new Date(now.getTime() + this.jitter(this.def(kind).every)), now);
   }
 
   /** Due now. Picked up by the next loop pass in whichever process runs one. */

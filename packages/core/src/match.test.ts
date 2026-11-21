@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { matchActivities, missedEventIds, type MatchableActivity, type MatchableEvent } from './match';
+import { matchActivities, missedEventIds, raceDistance, type MatchableActivity, type MatchableEvent } from './match';
 
 const ride = (id: string, startLocal: string, name: string, min: number, sportType = 'VirtualRide'): MatchableActivity => ({
   id,
@@ -103,6 +103,72 @@ describe('matchActivities', () => {
     });
   });
 
+  describe('a Zwift race with a route, told by length (DECISIONS #117)', () => {
+    // Nov 17: intervals.icu paired the warm-up workout (named after the race) with the race event.
+    const londonCalling = { lapKm: 31.7, leadinKm: 0.46 };
+    const race: MatchableEvent = { ...ev('race', '2026-11-17', 'race', 40), kind: 'race', intervalsEventId: 77, route: londonCalling };
+    const warmupSession: MatchableEvent = { ...ev('wu', '2026-11-17', 'openers', 24), kind: 'workout', intervalsEventId: 78 };
+    const warmup = { ...ride('warmup', '2026-11-17T17:10:00', 'Zwift - Intervals icu: ZRL TTT Warm-up · 24 min', 37), pairedEventId: 77, distanceKm: 21 };
+    const raceRide = {
+      ...ride('ttt', '2026-11-17T17:49:00', 'Zwift - TTT: Zwift Racing League 2026/27 Round 2: Team Tempo - Open Indigo League Division 2 (A)', 44),
+      distanceKm: 32,
+    };
+
+    it('gives the race its race ride and the warm-up session its warm-up', () => {
+      for (const today of ['2026-11-17', TODAY]) {
+        expect(matchActivities([race, warmupSession], [warmup, raceRide], today)).toEqual(
+          expect.arrayContaining([
+            { eventId: 'race', activityId: 'ttt' },
+            { eventId: 'wu', activityId: 'warmup' },
+          ]),
+        );
+      }
+    });
+
+    it('waits on race day while only the warm-up has uploaded, though its name says ZRL', () => {
+      expect(matchActivities([race], [warmup], '2026-11-17')).toEqual([]);
+    });
+
+    it('without a route, the warm-up name alone keeps it off the race', () => {
+      const noRoute = { ...race, route: undefined };
+      expect(matchActivities([noRoute], [warmup, raceRide], TODAY)).toEqual([{ eventId: 'race', activityId: 'ttt' }]);
+    });
+
+    it('lets length overrule a race-like name', () => {
+      const shortRace = { ...ride('crit', '2026-11-17T17:49:00', 'Zwift - Race: Crit City', 20), distanceKm: 9 };
+      expect(matchActivities([race], [shortRace], TODAY)).toEqual([]);
+    });
+
+    it('with laps set, rejects a ride far longer than the race', () => {
+      const twoLaps = { ...race, route: { ...londonCalling, laps: 2 } };
+      expect(matchActivities([twoLaps], [{ ...raceRide, distanceKm: 64 }], TODAY)).toEqual([{ eventId: 'race', activityId: 'ttt' }]);
+      expect(matchActivities([{ ...twoLaps, route: { ...londonCalling, laps: 1 } }], [{ ...raceRide, distanceKm: 64 }], TODAY)).toEqual([]);
+    });
+
+    it('with no laps set, takes any ride of at least one lap', () => {
+      expect(matchActivities([race], [{ ...raceRide, distanceKm: 64 }], TODAY)).toEqual([{ eventId: 'race', activityId: 'ttt' }]);
+    });
+
+    it('prefers the ride nearer the race length when two look like it', () => {
+      const longWarmup = { ...ride('long', '2026-11-17T16:00:00', 'Zwift - Watopia', 44), distanceKm: 50 };
+      expect(matchActivities([race], [longWarmup, raceRide], TODAY)).toEqual([{ eventId: 'race', activityId: 'ttt' }]);
+    });
+  });
+
+  it('reads TTT as a race name', () => {
+    const tttSession = ev('e1', '2026-11-17', 'race', 40);
+    expect(matchActivities([tttSession], [ride('a', '2026-11-17T17:49:00', 'Zwift - WTRL TTT Zone 3', 44)], TODAY)).toEqual([
+      { eventId: 'e1', activityId: 'a' },
+    ]);
+  });
+
+  it('holds out for the race on a race session of another colour', () => {
+    const race: MatchableEvent = { ...ev('e1', '2026-10-27', 'intervals', 40), kind: 'race', intervalsEventId: 77 };
+    const warmup = { ...ride('warmup', '2026-10-27T16:56:27', 'Zwift - Seafoam Circuit in Watopia', 22), pairedEventId: 77 };
+    const raceRide = ride('race', '2026-10-27T17:32:13', 'Zwift - Race: ClubLadder Team A vs Team B', 35);
+    expect(matchActivities([race], [warmup, raceRide], TODAY)).toEqual([{ eventId: 'e1', activityId: 'race' }]);
+  });
+
   it('lets a late upload un-miss a session', () => {
     const events = [{ ...ev('e1', '2026-10-28', 'endurance', 60), status: 'missed' as const }];
     expect(matchActivities(events, [ride('a', '2026-10-28T08:00:00', 'Morning ride', 60, 'Ride')], TODAY)).toEqual([
@@ -136,6 +202,13 @@ describe('matchActivities', () => {
     const activities = [ride('long', '2026-11-01T09:00:00', 'Long Z2', 84), ride('loop', '2026-11-01T10:30:00', 'Beach Island Loop', 27)];
     expect(matchActivities(events, activities, TODAY)).toEqual([]);
   });
+});
+
+it('gives a race its length from a distance or a route', () => {
+  expect(raceDistance({ distanceKm: 142 })).toEqual({ km: 142, exact: true });
+  expect(raceDistance({ route: { lapKm: 10, leadinKm: 1, laps: 3 } })).toEqual({ km: 31, exact: true });
+  expect(raceDistance({ route: { lapKm: 10, leadinKm: 1 } })).toEqual({ km: 11, exact: false });
+  expect(raceDistance({})).toBeNull();
 });
 
 it('marks past planned sessions missed, not today or done ones', () => {

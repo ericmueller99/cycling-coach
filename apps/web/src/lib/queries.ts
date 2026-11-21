@@ -23,6 +23,7 @@ import type {
   BikeInput,
   BikePatch,
 } from '@cycling-coach/shared';
+import { eventFiltersSchema } from '@cycling-coach/shared';
 import { addDays, daysBetween, weekStart } from '@cycling-coach/core';
 import { keepPreviousData, useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
@@ -615,6 +616,22 @@ export function useEvents(q: Omit<EventQuery, 'offset' | 'limit'>) {
   });
 }
 
+/** What the "You're signed up" strip asks for: every upcoming sign-up, whatever the page's filters. */
+export const SIGNED_UP_QUERY: Omit<EventQuery, 'offset' | 'limit'> = {
+  filters: eventFiltersSchema.parse({ signedUpOnly: true, canEnter: false, hideWomenOnly: false }),
+  sort: 'start',
+};
+
+/** The athlete's Zwift sign-ups (DECISIONS #116). Our own API only. */
+export function useSignedUpEvents(enabled: boolean) {
+  return useQuery({
+    queryKey: keys.events(SIGNED_UP_QUERY),
+    queryFn: async () => unwrap(await api.api.events.query.$post({ json: { ...SIGNED_UP_QUERY, offset: 0, limit: 50 } })),
+    enabled,
+    refetchInterval: 60_000,
+  });
+}
+
 /** Feed status. Polls our API (not Zwift) every 2 s only while "Get more events" runs. */
 export function useEventsStatus() {
   const qc = useQueryClient();
@@ -654,6 +671,19 @@ export function useExtendEvents() {
   });
 }
 
+/** "Refresh sign-ups": one request to Zwift for the athlete's sign-ups, at most every 5 min (DECISIONS #116). */
+export function useRefreshSignups() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => unwrap(await api.api.events.signups.refresh.$post()),
+    onSuccess: (r) => {
+      qc.setQueryData(keys.eventsStatus, r.status);
+      void qc.invalidateQueries({ queryKey: ['events'], predicate: (query) => query.queryKey[1] !== 'status' && query.queryKey[1] !== 'searches' });
+    },
+    onSettled: () => void qc.invalidateQueries({ queryKey: keys.eventsStatus }),
+  });
+}
+
 export function useEventSearches() {
   const qc = useQueryClient();
   const list = useQuery({ queryKey: keys.eventSearches, queryFn: async () => unwrap(await api.api.events.searches.$get()) });
@@ -678,6 +708,32 @@ export function useAddEventToCalendar() {
   return useMutation({
     mutationFn: async (input: CalendarEventInput) => unwrap(await api.api.calendar.$post({ json: input })),
     onSuccess: () => {
+      invalidate();
+      void qc.invalidateQueries({ queryKey: ['events'] });
+    },
+  });
+}
+
+/**
+ * "Add all to calendar": one session per event, one after another, each through the calendar
+ * service like a single add. Returns the titles that failed.
+ */
+export function useAddEventsToCalendar() {
+  const qc = useQueryClient();
+  const invalidate = useInvalidateTraining();
+  return useMutation({
+    mutationFn: async (inputs: CalendarEventInput[]) => {
+      const failed: string[] = [];
+      for (const input of inputs) {
+        try {
+          unwrap(await api.api.calendar.$post({ json: input }));
+        } catch {
+          failed.push(input.title);
+        }
+      }
+      return { added: inputs.length - failed.length, failed };
+    },
+    onSettled: () => {
       invalidate();
       void qc.invalidateQueries({ queryKey: ['events'] });
     },

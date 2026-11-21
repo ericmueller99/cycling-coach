@@ -129,3 +129,36 @@ export function formatMonthTitle(year: number, month: number): string {
 }
 
 export const WEEKDAY_LABELS = DOW;
+
+/**
+ * The instant at local wall-clock `hhmm` on `date` in `timeZone`. A time skipped by a DST jump
+ * lands after the jump; a repeated one takes the first.
+ */
+export function instantAt(date: IsoDate, hhmm: string, timeZone: string): Date {
+  const [y, mo, d] = date.split('-').map(Number) as [number, number, number];
+  const [h, mi] = hhmm.split(':').map(Number) as [number, number];
+  const wall = Date.UTC(y, mo - 1, d, h, mi);
+  const offset = (at: number) => Date.parse(`${localDateTimeIn(timeZone, new Date(at))}:00Z`) - at;
+  const want = `${date}T${hhmm}`;
+  const first = wall - offset(wall);
+  const second = wall - offset(first);
+  const hits = (t: number) => localDateTimeIn(timeZone, new Date(t)) === want;
+  return new Date(hits(second) ? second : hits(first) ? first : Math.max(first, second));
+}
+
+/**
+ * When a once-a-day job runs next: tomorrow (local) at a random minute in [`windowStart`,
+ * `windowEnd`), or later today if today's window hasn't begun. `rand` is in [0, 1) — the caller
+ * passes `Math.random()`, so the time differs from day to day.
+ */
+export function nextDailyRun(opts: { now: Date; timeZone: string; windowStart: string; windowEnd: string; rand: number }): Date {
+  const { now, timeZone, windowStart, windowEnd } = opts;
+  const minutes = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
+  const from = minutes(windowStart);
+  const span = Math.max(1, minutes(windowEnd) - from);
+  const at = from + Math.min(span - 1, Math.floor(Math.max(0, opts.rand) * span));
+  const hhmm = `${String(Math.floor(at / 60)).padStart(2, '0')}:${String(at % 60).padStart(2, '0')}`;
+  const today = todayIn(timeZone, now);
+  const startToday = instantAt(today, windowStart, timeZone);
+  return instantAt(now < startToday ? today : addDays(today, 1), hhmm, timeZone);
+}

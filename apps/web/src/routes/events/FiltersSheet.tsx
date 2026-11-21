@@ -18,6 +18,7 @@ import {
   WhenSection,
   WorldSection,
   type SetFilters,
+  type WhenContext,
 } from './controls';
 import { SavedSearches } from './FilterRail';
 
@@ -46,6 +47,7 @@ export function FiltersSheet({
   facets,
   total,
   z2,
+  when,
   onClose,
 }: {
   f: EventFilters;
@@ -53,6 +55,7 @@ export function FiltersSheet({
   facets: EventQueryResult['facets'] | undefined;
   total: number | undefined;
   z2?: string | undefined;
+  when: WhenContext;
   onClose: () => void;
 }) {
   const [page, setPage] = useState<Page | null>(null);
@@ -111,7 +114,7 @@ export function FiltersSheet({
             <ForMeSection f={f} set={set} z2={z2} mobile />
           </Divided>
           <Divided>
-            <WhenSection f={f} set={set} mobile />
+            <WhenSection f={f} set={set} when={when} mobile />
           </Divided>
           <Divided>
             <TypeSection f={f} set={set} facets={facets} mobile />

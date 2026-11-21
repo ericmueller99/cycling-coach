@@ -25,7 +25,7 @@ function Badges({ e }: { e: EventItem }) {
   );
 }
 
-function TypeTag({ e }: { e: EventItem }) {
+export function TypeTag({ e }: { e: EventItem }) {
   const s = TYPE_STYLE[e.type];
   return (
     <span className="flex-none rounded-md px-[7px] py-px text-[11px] font-semibold" style={{ color: s.fg, background: s.bg }}>
@@ -57,7 +57,7 @@ function penBox(e: EventItem, p: ZwiftEventPen): CSSProperties {
 }
 
 /** "Pen B" on the phone card, in the pen's Zwift colour. */
-function MyPenChip({ pen }: { pen: ZwiftEventPen }) {
+export function MyPenChip({ pen }: { pen: ZwiftEventPen }) {
   const cat = penCategory(pen.label);
   if (!cat) return <span className="rounded-md border border-accent-ring bg-accent px-1.5 font-sans text-[11px] leading-5 font-bold text-on-accent">Pen {pen.name}</span>;
   return (
@@ -111,7 +111,7 @@ function Pens({ e }: { e: EventItem }) {
   );
 }
 
-function AddButton({ e, timeZone, big }: { e: EventItem; timeZone: string; big?: boolean }) {
+export function AddButton({ e, timeZone, big }: { e: EventItem; timeZone: string; big?: boolean }) {
   const add = useAddEventToCalendar();
   const on = Boolean(e.me.calendarEventId) || add.isSuccess;
   const label = on ? `${e.name} is on your calendar` : `Add ${e.name} to calendar`;

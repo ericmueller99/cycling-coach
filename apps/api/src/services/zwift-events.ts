@@ -2,11 +2,13 @@ import { deriveEvent, queryEvents, todayIn, addDays, withEstimates, type EventAt
 import {
   getProfile,
   getSyncState,
+  getZwiftEvent,
   listZwiftEventMarks,
   listZwiftEvents,
   listZwiftRoutes,
   patchSyncState,
   removeMissingZwiftEvents,
+  replaceZwiftEventMarks,
   saveZwiftEventMarks,
   saveZwiftRoutes,
   upsertZwiftEvents,
@@ -19,13 +21,14 @@ import type {
   EventQueryResult,
   EventsExtendResult as ExtendResult,
   EventsRefreshResult as RefreshResult,
+  EventsSignupsResult as SignupsResult,
   EventsStatus,
   ExtendedRunStatus,
   ZwiftEvent,
 } from '@cycling-coach/shared';
 import { localLock, type IntegrationResolver, type Lock } from '../integrations';
 import type { ZwiftClient, ZwiftPublic } from '../providers/zwift';
-import { mapEvent, mapRoutes, signedUpPens } from '../providers/zwift/events-map';
+import { mapEvent, mapRoutes, mapUpcomingSignups, signedUpPens } from '../providers/zwift/events-map';
 import { PUBLIC_PAGE_LIMIT } from '../providers/zwift/public';
 import { walkEventFeed, walkPublicFeed } from './zwift-event-walk';
 
@@ -49,6 +52,10 @@ export const EVENTS_LIMITS = {
   extendedMaxMs: 6 * MIN,
   /** …and can't be run again until this long after the last run, even across restarts. */
   extendedCooldownMs: 6 * HOUR,
+  /** The daily walk skips a day when any walk ran this recently (DECISIONS #116). */
+  dailySkipWithinMs: 20 * HOUR,
+  /** "Refresh sign-ups" (one request) is refused this soon after the last one. */
+  signupsCooldownMs: 5 * MIN,
   /** GameDictionary.xml is refreshed when older than this. */
   routesMaxAgeMs: 7 * 24 * HOUR,
 } as const;
@@ -64,10 +71,11 @@ type Limits = { -readonly [K in keyof typeof EVENTS_LIMITS]: number };
 
 /**
  * Zwift events in our own database. Pages only ever query Mongo; Zwift is called by the hourly
- * public sync, by "Refresh" (at most every 15 min), and by "Get more events" — only when an athlete
- * with a Zwift login clicks it, at most every 6 h per athlete, one paced cursor walk with hard page
- * and time budgets, using that athlete's own login (DECISIONS #52–53). Everything shares one lock,
- * so no two of these ever run side by side, whoever started them.
+ * public sync, by "Refresh" (at most every 15 min), and by "Get more events" — when an athlete
+ * with a Zwift login clicks it (at most every 6 h), and, unless the deployment turns it off, once a
+ * day per athlete at a varying early-morning time (DECISIONS #116). Each is one paced cursor walk
+ * with hard page and time budgets, using that athlete's own login (DECISIONS #52–53). Everything
+ * shares one lock, so no two of these ever run side by side, whoever started them.
  */
 export class ZwiftEventsService {
   private publicQueued = false;
@@ -76,18 +84,22 @@ export class ZwiftEventsService {
   private routes: Map<number, ZwiftRoute> | null = null;
   private cache: { events: ZwiftEvent[]; at: number } | null = null;
   private readonly limits: Limits;
+  /** The daily walk is on (DECISIONS #116); only changes the status the page shows. */
+  private readonly daily: boolean;
 
   constructor(
     private readonly c: Collections,
     private readonly pub: ZwiftPublic,
     private readonly integrations: Pick<IntegrationResolver, 'zwiftFor'>,
     private readonly now: () => Date,
-    limits: Partial<Limits> = {},
+    opts: Partial<Limits> & { daily?: boolean } = {},
     private readonly log: (line: string) => void = (line) => console.log(line),
     /** Every Zwift caller shares it: the server's spans processes, so only one ever talks to Zwift (#56). */
     private readonly zwiftLock: Lock = localLock(),
   ) {
+    const { daily, ...limits } = opts;
     this.limits = { ...EVENTS_LIMITS, ...limits };
+    this.daily = daily ?? false;
   }
 
   /** One job at a time: public sync, extended walk, route refresh and the metrics sync never overlap. */
@@ -182,6 +194,80 @@ export class ZwiftEventsService {
     return { kind: 'started', status: run };
   }
 
+  /**
+   * The daily walk (DECISIONS #116), from the `zwift.extended` job: the same walk as the button,
+   * awaited. Skipped when any walk ran in the last 20 h, checked again under the lock so a click
+   * that got there first wins. Never retried: a failed walk just waits for tomorrow.
+   */
+  async dailyWalk(userId: string): Promise<'ran' | 'failed' | 'skipped' | 'not_configured'> {
+    const zwift = await this.integrations.zwiftFor(userId);
+    if (!zwift) return 'not_configured';
+    return this.exclusive(async () => {
+      const last = (await this.extendedState(userId))?.lastAt;
+      if (this.runs.get(userId)?.state === 'running') return 'skipped';
+      if (last && this.now().getTime() - last.getTime() < this.limits.dailySkipWithinMs) return 'skipped';
+      const run: ExtendedRunStatus = { state: 'running', pages: 0, events: 0, startedAt: this.now().toISOString() };
+      this.runs.set(userId, run);
+      await this.walk(userId, zwift, run);
+      return run.state === 'error' ? 'failed' : 'ran';
+    });
+  }
+
+  /**
+   * "Refresh sign-ups" (DECISIONS #116): one logged-in request, `/api/events/upcoming`, that lists
+   * every sign-up, so the athlete's marks become exactly that list. Only when clicked, at most every
+   * 5 min, through the gate and the shared lock; never retried. A sign-up for an event we haven't
+   * stored keeps its mark (it shows once a sync brings the event) and comes back in `elsewhere`.
+   */
+  async refreshSignups(userId: string): Promise<SignupsResult> {
+    const zwift = await this.integrations.zwiftFor(userId);
+    if (!zwift) return { kind: 'not_configured' };
+    const last = (await this.c.integrations.findOne({ userId, provider: 'zwift' }, { projection: { signups: 1 } }))?.signups?.lastAt;
+    const nextAllowed = last ? last.getTime() + this.limits.signupsCooldownMs : 0;
+    if (nextAllowed > this.now().getTime()) return { kind: 'cooldown', nextAllowedAt: new Date(nextAllowed).toISOString() };
+
+    return this.exclusive(async () => {
+      let raw: unknown;
+      try {
+        raw = await zwift.upcomingSignups();
+      } catch (err) {
+        const error = (err as Error).message;
+        await this.recordSignups(userId, { found: 0, error });
+        this.log(`zwift events: sign-ups refresh failed — ${error}`);
+        return { kind: 'error', error } as const;
+      }
+      const profile = await getProfile(this.c, userId);
+      const me = profile?.zwiftId && /^\d+$/.test(profile.zwiftId) ? Number(profile.zwiftId) : undefined;
+      const signups = mapUpcomingSignups(raw).filter((s) => me === undefined || s.profileId === undefined || s.profileId === me);
+      const pens = new Map<number, number[]>();
+      for (const s of signups) pens.set(s.eventId, [...(pens.get(s.eventId) ?? []), s.penId]);
+      const elsewhere: Extract<SignupsResult, { kind: 'done' }>['elsewhere'] = [];
+      const marks = await Promise.all(
+        [...pens].map(async ([eventId, signedUpPenIds]) => {
+          const event = await getZwiftEvent(this.c, eventId);
+          const s = signups.find((x) => x.eventId === eventId)!;
+          if (!event) elsewhere.push({ eventId, name: s.name, start: s.start });
+          const fallback = new Date((s.start ? Date.parse(s.start) : this.now().getTime()) + 6 * HOUR);
+          return { eventId, signedUpPenIds, expiresAt: event ? this.expiresAt(event) : fallback };
+        }),
+      );
+      await replaceZwiftEventMarks(this.c, userId, marks);
+      await this.recordSignups(userId, { found: pens.size });
+      this.cache = null;
+      this.log(`zwift events: sign-ups refreshed — ${pens.size} found${elsewhere.length ? `, ${elsewhere.length} not stored yet` : ''}`);
+      return { kind: 'done', found: pens.size, elsewhere } as const;
+    });
+  }
+
+  private async recordSignups(userId: string, s: { found: number; error?: string }) {
+    const at = this.now();
+    await this.c.integrations.updateOne(
+      { userId, provider: 'zwift' },
+      { $set: { signups: { lastAt: at, found: s.found, ...(s.error ? { error: s.error } : {}) }, updatedAt: at } },
+      { upsert: true },
+    );
+  }
+
   /** The athlete's last extended walk, kept on their Zwift integration doc (the cooldown survives restarts). */
   private async extendedState(userId: string) {
     return (await this.c.integrations.findOne({ userId, provider: 'zwift' }, { projection: { extended: 1 } }))?.extended;
@@ -259,12 +345,13 @@ export class ZwiftEventsService {
 
   async status(userId: string): Promise<EventsStatus> {
     const now = this.now();
-    const [summary, state, zwift, last] = await Promise.all([
+    const [summary, state, zwift, doc] = await Promise.all([
       zwiftEventsSummary(this.c, new Date(now.getTime() - SHOW_STARTED_MS).toISOString()),
       getSyncState(this.c),
       this.integrations.zwiftFor(userId),
-      this.extendedState(userId),
+      this.c.integrations.findOne({ userId, provider: 'zwift' }, { projection: { extended: 1, signups: 1 } }),
     ]);
+    const last = doc?.extended;
     const iso = (d: Date | undefined) => d?.toISOString();
     const future = (t: number) => (t > now.getTime() ? new Date(t).toISOString() : undefined);
     const running = this.runs.get(userId);
@@ -281,6 +368,14 @@ export class ZwiftEventsService {
             error: last?.error,
           }
       : null;
+    if (extended) {
+      if (this.daily) extended.daily = true;
+      const signups = doc?.signups;
+      if (signups) {
+        extended.signupsAt = signups.lastAt.toISOString();
+        extended.signupsAllowedAt = future(signups.lastAt.getTime() + this.limits.signupsCooldownMs);
+      }
+    }
     return {
       source: summary.count === 0 ? 'none' : summary.extendedThrough ? 'extended' : 'public',
       count: summary.count,

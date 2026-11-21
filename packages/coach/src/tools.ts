@@ -67,6 +67,7 @@ import {
   type Workout,
   type WorkoutInput,
   terrains,
+  timesOfDay,
   zwiftEventTypeSchema,
 } from '@cycling-coach/shared';
 import { z } from 'zod';
@@ -940,9 +941,15 @@ export const COACH_TOOLS = [
   defineTool({
     name: 'find_events',
     description:
-      "Search upcoming Zwift events (races, group rides, group workouts, TTs) from the app's synced copy — about the next day, or about a week when the athlete has used \"Get more events\". Results already know which pens they may enter (from their zFTP/zMAP/Racing Score) and estimate ride time. To put one on their calendar, propose it with propose_plan (race kind for races and TTs, ride for group rides), passing zwiftEventId and zwiftPenId from the result and its start time.",
+      "Search upcoming Zwift events (races, group rides, group workouts, TTs) in the app's synced copy: about the next day from the public feed, about a week once Get more events has run (it also runs daily). The result says how far the synced events reach. Results sort by start and are capped, so for a particular day or span pass date_from/date_to — without them you only see the soonest events. signed_up_only lists the events they've signed up for in Zwift (as of the last Get more events or Refresh sign-ups on the Events page). Results already know which pens they may enter (from their zFTP/zMAP/Racing Score) and estimate ride time. To put one on their calendar, propose it with propose_plan (race kind for races and TTs, ride for group rides), passing zwiftEventId and zwiftPenId from the result and its start time.",
     schema: z.object({
-      day: z.enum(['all', 'today', 'tomorrow']).optional().describe("Local day; default all."),
+      date_from: isoDateSchema.optional().describe('First local date to include, YYYY-MM-DD. For one day, give the same date_to.'),
+      date_to: isoDateSchema.optional().describe('Last local date to include, YYYY-MM-DD.'),
+      day: z.enum(['all', 'today', 'tomorrow']).optional().describe('Shortcut for today or tomorrow; default all.'),
+      times_of_day: z.array(z.enum(timesOfDay)).optional().describe('Local start: morning 05–11, midday 11–14, afternoon 14–18, evening 18–24.'),
+      start_after: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional().describe('Earliest local start, HH:mm.'),
+      start_before: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional().describe('Latest local start, HH:mm.'),
+      signed_up_only: z.boolean().optional().describe("Only events they've signed up for in Zwift."),
       types: z.array(zwiftEventTypeSchema).optional().describe('Event types; empty or absent = all.'),
       min_km: z.number().optional().describe('Shortest distance, km.'),
       max_km: z.number().optional().describe('Longest distance, km.'),
@@ -960,10 +967,17 @@ export const COACH_TOOLS = [
     async run(input, { ports }) {
       const filters = eventFiltersSchema.parse({
         day: input.day,
+        dateFrom: input.date_from,
+        dateTo: input.date_to,
+        timesOfDay: input.times_of_day,
+        from: input.start_after,
+        to: input.start_before,
         types: input.types,
         terrain: input.terrain,
         fitsZ2: input.fits_z2,
-        canEnter: input.can_enter,
+        // A sign-up is one they're in, whatever our reading of the pen rules says.
+        canEnter: input.signed_up_only ? false : input.can_enter,
+        signedUpOnly: input.signed_up_only,
         q: input.search?.slice(0, 100),
         ...(input.min_minutes !== undefined || input.max_minutes !== undefined
           ? { lengthUnit: 'min', lengthMin: input.min_minutes, lengthMax: input.max_minutes }
@@ -972,21 +986,38 @@ export const COACH_TOOLS = [
       const { result, timeZone } = await ports.findEvents({ filters, sort: input.sort ?? 'start', offset: 0, limit: input.limit ?? 10 });
       if (!result.all) return { content: 'No Zwift events are synced yet (the public feed syncs hourly).' };
       const when = new Intl.DateTimeFormat('en-US', { timeZone, weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+      const day = new Intl.DateTimeFormat('en-US', { timeZone, weekday: 'short', month: 'short', day: 'numeric' });
+      const throughDate = result.through ? new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(result.through)) : undefined;
+      const reach = result.through ? `Synced events run through ${day.format(new Date(result.through))}.` : '';
+      const beyond =
+        throughDate && input.date_from && input.date_from > throughDate
+          ? ` ${input.date_from} is past what's synced: they can click "Get more events" on the Events page for about the next 7 days (you can't run it).`
+          : '';
       const lines = result.items.map((e) => {
+        const signed = e.pens.find((p) => e.me.signedUpPenIds.includes(p.id));
         const mine = e.pens.find((p) => p.id === e.me.myPenId);
-        const shown = mine ?? e.pens[0];
+        const shown = signed ?? mine ?? e.pens[0];
         const km = e.penKind === 'distance' ? e.pens.map((p) => `${p.name} ${p.km ?? '?'} km`).join(' / ') : shown?.km !== undefined ? `${shown.km} km · ${shown.ascentM ?? 0} m` : shown?.durationMin ? `${shown.durationMin} min` : '';
         const est = shown?.estMin ? ` · ~${shown.estMin} min` : '';
-        const enter = e.me.canEnter === false ? " · they can't enter" : e.me.canEnter === null ? ' · pen rules unclear, check in Zwift' : mine ? ` · their pen ${mine.name}${e.me.basis && e.me.basis !== 'open' ? ` (${e.me.basis === 'zftp' ? 'zFTP' : 'Racing Score'})` : ''}` : '';
+        const enter = signed ? '' : e.me.canEnter === false ? " · they can't enter" : e.me.canEnter === null ? ' · pen rules unclear, check in Zwift' : mine ? ` · their pen ${mine.name}${e.me.basis && e.me.basis !== 'open' ? ` (${e.me.basis === 'zftp' ? 'zFTP' : 'Racing Score'})` : ''}` : '';
         const pace = e.penKind === 'pace' ? ` · pace ${e.pens.map((p) => (p.paceFrom ? `${p.name} ${p.paceFrom}–${p.paceTo} W/kg` : p.name)).join(', ')}` : '';
-        const flags = [e.me.fitsZ2 && 'fits Z2', e.rules.includes('NO_POWERUPS') && 'no power-ups', e.categoryEnforced && 'category enforced', e.me.signedUpPenIds.length && 'they are signed up', e.me.calendarEventId && 'on their calendar']
+        const flags = [
+          e.me.fitsZ2 && 'fits Z2',
+          e.rules.includes('NO_POWERUPS') && 'no power-ups',
+          e.categoryEnforced && 'category enforced',
+          signed && `they are signed up${e.penKind === 'none' ? '' : ` (pen ${signed.name})`}`,
+          e.me.calendarEventId && 'on their calendar',
+        ]
           .filter(Boolean)
           .join(', ');
-        return `${when.format(new Date(e.start))} · ${e.type} · ${e.name} · ${[e.world, e.route && `${e.route}${e.laps && e.laps > 1 ? ` × ${e.laps}` : ''}`].filter(Boolean).join(' · ')} · ${km}${est}${pace}${enter} · ${e.signedUp} signed up${flags ? ` · ${flags}` : ''} · zwiftEventId ${e.id}, zwiftPenId ${(mine ?? e.pens[0])?.id ?? '-'}`;
+        return `${when.format(new Date(e.start))} · ${e.type} · ${e.name} · ${[e.world, e.route && `${e.route}${e.laps && e.laps > 1 ? ` × ${e.laps}` : ''}`].filter(Boolean).join(' · ')} · ${km}${est}${pace}${enter} · ${e.signedUp} signed up${flags ? ` · ${flags}` : ''} · zwiftEventId ${e.id}, zwiftPenId ${shown?.id ?? '-'}`;
       });
       const summary = `Found ${result.total} Zwift event${result.total === 1 ? '' : 's'}`;
+      const tail = `${reach}${beyond}`.trim();
       return {
-        content: lines.length ? `${summary}${result.total > lines.length ? ` (showing ${lines.length})` : ''}:\n${lines.join('\n')}` : `No events match (of ${result.all} synced).`,
+        content: lines.length
+          ? `${summary}${result.total > lines.length ? ` (showing ${lines.length})` : ''}:\n${lines.join('\n')}${tail ? `\n${tail}` : ''}`
+          : `No events match (of ${result.all} synced).${tail ? ` ${tail}` : ''}`,
         ui: { type: 'tool', toolUseId: '', name: 'find_events', status: 'ok', summary: `${summary} in the synced feed`, source: 'app', rows: lines },
       };
     },

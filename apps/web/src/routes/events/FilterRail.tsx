@@ -18,6 +18,7 @@ import {
   WhenSection,
   WorldSection,
   type SetFilters,
+  type WhenContext,
 } from './controls';
 
 /** Typing waits a moment before it filters, so each keystroke isn't a query. */
@@ -99,11 +100,13 @@ export function FilterRail({
   set,
   facets,
   z2,
+  when,
 }: {
   f: EventFilters;
   set: SetFilters;
   facets: EventQueryResult['facets'] | undefined;
   z2?: string | undefined;
+  when: WhenContext;
 }) {
   const id = useId();
   const [q, setQ] = useDebouncedSearch(f, set);
@@ -122,7 +125,7 @@ export function FilterRail({
           className="min-h-10 rounded-[10px] border border-line-strong bg-surface px-3 text-ink"
         />
       </div>
-      <WhenSection f={f} set={set} />
+      <WhenSection f={f} set={set} when={when} />
       <TypeSection f={f} set={set} facets={facets} />
       <LengthSection f={f} set={set} />
       <TerrainSection f={f} set={set} />

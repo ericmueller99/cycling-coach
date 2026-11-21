@@ -1,7 +1,8 @@
 import { penLetters, terrains, zwiftEventTypes, type EventFilters, type EventQueryResult } from '@cycling-coach/shared';
+import { addDays, todayIn } from '@cycling-coach/core';
 import { useEffect, useId, useState, type ReactNode } from 'react';
 import { Chip, Segmented } from '../../components/ui';
-import { LENGTH_PRESETS, POPULARITY, SERIES, TERRAIN, TIMES_OF_DAY, TYPE_STYLE, UNLOCKS, toggle, withFilter } from '../../lib/events';
+import { dayOptions, LENGTH_PRESETS, POPULARITY, SERIES, TERRAIN, TIMES_OF_DAY, TYPE_STYLE, UNLOCKS, toggle, withDate, withFilter } from '../../lib/events';
 
 /**
  * The filter controls, shared by the desktop rail and the mobile filters sheet.
@@ -89,22 +90,64 @@ function NumberInput({ value, onChange, placeholder, label, className = '' }: { 
 
 // ── Sections ──────────────────────────────────────────────────────────────
 
-export function WhenSection({ f, set, mobile }: SectionProps) {
+/** What the day strip needs: the athlete's zone and how far the synced events reach. */
+export interface WhenContext {
+  timeZone: string;
+  /** Start of the latest stored event (`EventsStatus.through`). */
+  through?: string | undefined;
+}
+
+export function WhenSection({ f, set, mobile, when }: SectionProps & { when: WhenContext }) {
   const id = useId();
+  const now = new Date();
+  const today = todayIn(when.timeZone, now);
+  const throughDate = when.through ? todayIn(when.timeZone, new Date(when.through)) : undefined;
+  const lastDate = throughDate && throughDate > today ? throughDate : addDays(today, 1);
+  const days = dayOptions(f, today, throughDate);
   return (
     <div className="flex flex-col gap-2">
       <SectionTitle mobile={mobile}>When</SectionTitle>
       <SwitchRow mobile={mobile} on={f.upcoming} onChange={(upcoming) => set({ ...f, upcoming })} label="Upcoming only" hint="Hide events that have already started" />
-      <Segmented
-        label="Day"
-        value={f.day}
-        onChange={(day) => set({ ...f, day })}
-        options={[
-          { key: 'all', label: 'Both days' },
-          { key: 'today', label: 'Today' },
-          { key: 'tomorrow', label: 'Tomorrow' },
-        ]}
-      />
+      <div role="group" aria-label="Day" className={`scrollbar-none flex gap-1.5 ${mobile ? '-mx-4 overflow-x-auto px-4' : 'flex-wrap'}`}>
+        {days.map((d) => (
+          <button
+            key={d.key}
+            type="button"
+            aria-pressed={d.on}
+            onClick={() => set(d.pick(f))}
+            className={`flex flex-none flex-col items-center justify-center rounded-[10px] border px-2.5 leading-[1.15] ${mobile ? 'min-h-[48px] min-w-[52px]' : 'min-h-[42px] min-w-[46px]'} ${d.on ? 'border-accent-ring bg-[#E4F5B5] text-[#2F4A0D]' : 'border-line-strong bg-surface text-ink'}`}
+          >
+            <span className={`text-[13px] ${d.on ? 'font-semibold' : 'font-medium'}`}>{d.label}</span>
+            {d.sub && <span className={`font-mono text-[11px] ${d.on ? '' : 'text-muted'}`}>{d.sub}</span>}
+          </button>
+        ))}
+      </div>
+      <div className="flex items-center gap-2 text-[13px]">
+        <label htmlFor={`${id}-dfrom`} className="text-muted">
+          Dates
+        </label>
+        <input
+          id={`${id}-dfrom`}
+          type="date"
+          aria-label="From date"
+          min={today}
+          max={lastDate}
+          value={f.dateFrom ?? ''}
+          onChange={(e) => set(withDate(f, 'dateFrom', e.target.value))}
+          className={`${inputCls} flex-1 text-[13px]`}
+        />
+        <span className="text-muted">to</span>
+        <input
+          id={`${id}-dto`}
+          type="date"
+          aria-label="To date"
+          min={f.dateFrom ?? today}
+          max={lastDate}
+          value={f.dateTo ?? ''}
+          onChange={(e) => set(withDate(f, 'dateTo', e.target.value))}
+          className={`${inputCls} flex-1 text-[13px]`}
+        />
+      </div>
       <div className="flex flex-wrap gap-1.5">
         {TIMES_OF_DAY.map((t) => (
           <Chip key={t.key} mobile={mobile} on={f.timesOfDay.includes(t.key)} onClick={() => set({ ...f, timesOfDay: toggle(f.timesOfDay, t.key) })}>
@@ -465,7 +508,7 @@ export function StatusSection({ f, set, mobile }: SectionProps) {
       <CheckRow checked={f.onCalendar} onChange={(onCalendar) => set({ ...f, onCalendar })}>
         On my calendar
       </CheckRow>
-      <div className="text-xs text-muted">Sign-ups show after “Get more events” (they need your Zwift login).</div>
+      <div className="text-xs text-muted">Sign-ups come from Zwift with your login: Get more events, or Refresh in “You’re signed up”.</div>
     </div>
   );
 }

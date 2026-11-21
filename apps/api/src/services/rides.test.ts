@@ -89,6 +89,31 @@ describe('removing a source’s rides', () => {
 });
 
 describe('settleRides', () => {
+  it('tells a race with a Zwift route by its length, not the warm-up named after it (DECISIONS #117)', async () => {
+    const race = await createEvent(
+      c,
+      U,
+      { date: DAY, kind: 'race', type: 'race', title: 'TTT', durationMin: 40, zwiftRouteId: 9, startTime: '17:45' } as never,
+      { source: 'app' } as never,
+      NOW,
+    );
+    await saveActivities(
+      c,
+      U,
+      [
+        ride('wu', { name: 'Zwift - TTT Warm-up', type: 'VirtualRide', startLocal: `${DAY}T17:05:00`, distanceM: 21000, movingSec: 37 * 60 }),
+        ride('ttt', { name: 'Zwift - Warm-up then race', type: 'VirtualRide', startLocal: `${DAY}T17:49:00`, distanceM: 32000, movingSec: 44 * 60 }),
+      ],
+      NOW,
+    );
+    const routes = { info: (id: number) => (id === 9 ? { lapKm: 31.7, leadinKm: 0.46 } : null) };
+    // Both names say warm-up, so only length tells: 21 km is more than a quarter short of one 32 km lap.
+    await settleRides(c, U, DAY, TODAY, NOW);
+    expect(await getEvent(c, U, race.id)).toMatchObject({ status: 'missed' });
+    await settleRides(c, U, DAY, TODAY, NOW, routes);
+    expect(await getEvent(c, U, race.id)).toMatchObject({ status: 'done', activityId: 'ttt' });
+  });
+
   it('ticks off a session from a second source’s ride', async () => {
     const event = await session();
     await saveActivities(c, U, [garmin('1')], NOW);

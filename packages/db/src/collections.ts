@@ -298,6 +298,8 @@ export interface IntegrationDoc {
   fullSync?: FullSyncState;
   /** Zwift: this athlete's last "Get more events" walk; `lastAt` drives their 6 h cooldown. */
   extended?: { lastAt: Date; pages: number; events: number; through?: string; error?: string };
+  /** Zwift: the last "Refresh sign-ups" (`/api/events/upcoming`, DECISIONS #116); `lastAt` drives its cooldown. */
+  signups?: { lastAt: Date; found: number; error?: string };
   updatedAt: Date;
 }
 

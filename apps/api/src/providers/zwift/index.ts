@@ -92,6 +92,15 @@ export class ZwiftClient {
     return mapZwift(profile, powerProfile, publicProfile);
   }
 
+  /**
+   * The athlete's own upcoming sign-ups in one request (`/api/events/upcoming`, logged in — not the
+   * public `/api/public/events/upcoming`). Sauce4Zwift has called it since Dec 2023; the response
+   * shape is checked live before anything maps it (DECISIONS #116).
+   */
+  async upcomingSignups(): Promise<unknown> {
+    return this.get('/api/events/upcoming');
+  }
+
   /** One page of upcoming events between `from` and `to` (ms). The feed may run past `to`. */
   async eventFeedPage(p: { from: number; to: number; cursor?: string | undefined }): Promise<EventFeedPage> {
     const q = new URLSearchParams({ from: String(p.from), to: String(p.to), limit: String(EVENT_FEED_LIMIT) });

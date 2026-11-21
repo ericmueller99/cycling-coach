@@ -103,6 +103,19 @@ export async function saveZwiftEventMarks(
   if (cleared.length) await c.zwiftEventMarks.deleteMany({ userId, eventId: { $in: cleared } });
 }
 
+/**
+ * The athlete's complete sign-up list (from `/api/events/upcoming`, DECISIONS #116): these marks,
+ * and no others.
+ */
+export async function replaceZwiftEventMarks(
+  c: Collections,
+  userId: string,
+  marks: { eventId: number; signedUpPenIds: number[]; expiresAt: Date }[],
+) {
+  await c.zwiftEventMarks.deleteMany({ userId, eventId: { $nin: marks.map((m) => m.eventId) } });
+  await saveZwiftEventMarks(c, userId, marks);
+}
+
 export async function listZwiftEventMarks(c: Collections, userId: string): Promise<Map<number, number[]>> {
   const docs = await c.zwiftEventMarks.find({ userId }).toArray();
   return new Map(docs.map((d) => [d.eventId, d.signedUpPenIds]));

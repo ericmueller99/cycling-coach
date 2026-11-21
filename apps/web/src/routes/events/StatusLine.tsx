@@ -44,8 +44,9 @@ export function StatusLine({ status, timeZone, now, compact }: { status: EventsS
 }
 
 /**
- * "Get more events": the one logged-in walk (~7 days), only when clicked, at most every 6 h — the
- * server refuses sooner. Hidden when the server has no Zwift login.
+ * "Get more events": the logged-in walk (~7 days, with sign-ups), at most every 6 h — the server
+ * refuses sooner. It may also run on its own once a day (DECISIONS #116). Hidden when the server
+ * has no Zwift login.
  */
 export function GetMoreButton({ status, timeZone, now, size = 'md' }: { status: EventsStatus | undefined; timeZone: string; now: Date; size?: 'sm' | 'md' | 'lg' }) {
   const extend = useExtendEvents();
@@ -60,7 +61,11 @@ export function GetMoreButton({ status, timeZone, now, size = 'md' }: { status: 
       type="button"
       onClick={() => extend.mutate()}
       disabled={running || Boolean(cooldown)}
-      title={cooldown ? `Fetched ${agoLabel(ext.finishedAt, now)} — Zwift's logged-in feed is read at most every 6 hours.` : 'Loads about the next 7 days with your Zwift login. Read-only.'}
+      title={
+        cooldown
+          ? `Fetched ${agoLabel(ext.finishedAt, now)} — Zwift's logged-in feed is read at most every 6 hours${ext.daily ? ', and once a day on its own' : ''}.`
+          : `Loads about the next 7 days, and your sign-ups, with your Zwift login. Read-only.${ext.daily ? ' It also runs once a day on its own.' : ''}`
+      }
       className={`flex items-center gap-2 border-0 bg-accent font-semibold text-on-accent ${sizing}`}
     >
       {size !== 'sm' && <DownloadIcon />}

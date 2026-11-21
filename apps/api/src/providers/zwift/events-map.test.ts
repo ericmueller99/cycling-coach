@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { deriveEvent, eligibility } from '@cycling-coach/core';
 import { describe, expect, it } from 'vitest';
-import { mapEvent, mapRoutes, signedUpPens } from './events-map';
+import { mapEvent, mapRoutes, mapUpcomingSignups, signedUpPens } from './events-map';
 
 // Trimmed from the live feeds (research pull, 2026-10-31).
 const raw = JSON.parse(readFileSync(new URL('./fixtures/events.json', import.meta.url), 'utf8')) as Record<string, unknown>[];
@@ -90,5 +90,29 @@ describe('real events end to end', () => {
     const e = derived(/Everesting/);
     expect(e.penKind).toBe('distance');
     expect(e.pens.map((p) => p.km)).toEqual([110.2, 56.3]);
+  });
+});
+
+describe('mapUpcomingSignups (DECISIONS #116)', () => {
+  it('reads the logged-in sign-up list (live shape, made-up ids)', () => {
+    const raw = [
+      {
+        profileId: 900001,
+        eventSubgroupId: 7000002,
+        eventId: 5000001,
+        eventName: 'Made-up Sunday Social',
+        eventStarts: '2026-11-22T16:00:26.000+0000',
+        eventSeriesId: null,
+        eventSeriesName: null,
+        eventPointsConfigs: [],
+        eventSubgroupPointsConfigs: [],
+      },
+      { eventId: 'x', eventSubgroupId: 1 },
+      null,
+    ];
+    expect(mapUpcomingSignups(raw)).toEqual([
+      { profileId: 900001, eventId: 5000001, penId: 7000002, name: 'Made-up Sunday Social', start: '2026-11-22T16:00:26.000Z' },
+    ]);
+    expect(mapUpcomingSignups({ data: [] })).toEqual([]);
   });
 });

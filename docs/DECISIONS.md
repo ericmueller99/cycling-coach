@@ -441,7 +441,7 @@ through `services/calendar.ts` (races and TTs as `race`, group rides as `ride`),
 `zwiftEventId` / `zwiftPenId` fields so the list can show "on your calendar".
 
 Rejected: the logged-in feed on a schedule (the maintainer's call — maybe a daily sync later, through the
-same gate and budgets); `POST /api/events/search` (protobuf only, and it ignored the date window);
+same gate and budgets; **since #116 it runs once a day**); `POST /api/events/search` (protobuf only, and it ignored the date window);
 filtering in Mongo queries (the rules are per-athlete expressions; ~4,000
 events filter in-process in ~200 ms); hiding events (no hide action yet).
 
@@ -2949,3 +2949,104 @@ letters stay readable at 11–13 px.
 - *Lime for "closest" and a black badge for "current"*: those read as BikeCoach states, not categories, and a rider
   looks for "the red one".
 - *Greying out the rows already met*: Zwift shows every pen in colour, and the status column already says "Met".
+
+## 116. Zwift events: any day, your sign-ups up top, a daily walk, and the coach sees the week (Nov 20)
+
+**Why.** With a week of events stored (~4,000), three things fell short:
+- The When filter only knew Today and Tomorrow, from when only the ~28 h public feed existed. A ride on Sunday at 9am
+  meant scrolling.
+- Sign-ups were known, but hidden in the filter rail.
+- The coach couldn't see past the first day or two. `find_events` sorts by start and returns at most 25 events, and
+  it had no date filter. So with a week synced it only ever saw about the next hour, and its description said it
+  covered "about the next day". An empty result didn't say how far the synced events reached, so the coach concluded
+  it had no access.
+
+**Decisions.**
+- **Dates.** `EventFilters` gains `dateFrom` / `dateTo`: inclusive local dates, optional, no defaults, so saved searches
+  and URLs still parse.
+  - `day` stays for Today and Tomorrow, so a saved "Today" keeps meaning today. Both can be set, and both must hold.
+  - The When section is a day strip: Any · Today · Tomorrow · then each later day the stored events reach, up to two
+    weeks. A later day sets both dates; picking the day that's on goes back to Any. A From/To date pair covers a span.
+  - `EventQueryResult.through` is the latest stored start.
+- **"You're signed up".** A strip above the list, on desktop and phone, lists every upcoming sign-up whatever the
+  filters.
+  - Each sign-up shows its day, time and pen, with Add to calendar. **Add all to calendar** adds the rest one by one,
+    each through `services/calendar.ts`. Nothing is added on its own: the rider still confirms each calendar write
+    with a click.
+  - The strip shows only with a Zwift login. Its open/closed state is a per-browser convenience.
+  - A **Signed up** quick chip joins the phone's chips.
+- **The signed-up pen wins.** Add to calendar, the stats and `find_events` use the pen the athlete signed up for in
+  Zwift over the pen we'd pick. Its start, route and laps (#102) are what they'll ride.
+- **`find_events` gains:**
+  - `date_from` / `date_to`, `times_of_day`, `start_after` / `start_before` and `signed_up_only`.
+  - A results line, "Synced events run through <day>".
+  - When `date_from` is past that, a plain note that the athlete can click Get more events (the coach can't).
+  - Sign-ups show as "they are signed up (pen B)", with that pen as `zwiftPenId`.
+  - The persona says to use the dates for a particular day and `signed_up_only` for sign-ups.
+- **A daily walk.** This supersedes #29's "the logged-in feed never runs on a timer". Get more events also runs as the
+  per-athlete job `zwift.extended` while the athlete has a Zwift login.
+  - **When.** Once a day at a random minute between 04:00 and 07:00 local (`core.nextDailyRun`, with `instantAt` for
+    local time to an instant). It's never the same time two days running, and the sign-ups are fresh before morning
+    rides.
+  - **Same walk.** It is the button's walk, with the same gate, lock, page/time budgets and cooldown record.
+  - **First run.** A new job (the first deploy, a new Zwift login) waits for the next morning window instead of
+    falling due at once.
+  - **Skips.** It skips the day if any walk ran in the last 20 h, checked again under the lock.
+  - **No retries.** A failure is logged and waits for tomorrow; the job never throws, so the runner's backoff never
+    applies.
+  - **The button.** It keeps its 6 h cooldown, which now also follows a scheduled run.
+  - **Off switch.** `ZWIFT_DAILY_EVENTS=false` turns the daily walk off for a deployment. On hosted it reaches only
+    accounts with a stored Zwift login (the `zwift` flag).
+- **Refresh sign-ups: one request.** The strip's **Refresh** calls Zwift's logged-in `GET /api/events/upcoming`
+  (`ZwiftClient.upcomingSignups`). Sauce4Zwift has used it since Dec 2023.
+  - It returns every sign-up in one request, instead of the ~65-page walk.
+  - Checked live on Nov 20, it's an array of `{ profileId, eventId, eventSubgroupId, eventName, eventStarts:
+    "…+0000", eventSeriesId, … }`, with no pen details (`mapUpcomingSignups`).
+  - Because the list is complete, the athlete's marks become exactly that list (`replaceZwiftEventMarks`), and a
+    cancelled sign-up loses its mark. Items for another profile id are dropped.
+  - A sign-up for an event we haven't stored keeps its mark (expiring 6 h after its start), shows once a sync brings
+    the event, and is named under the strip meanwhile.
+  - Only on a click, at most every 5 min (`signups.lastAt` on the Zwift integration doc), through the gate and the
+    shared lock, and never retried. `POST /api/events/signups/refresh`.
+
+**Rejected.**
+- *Adding sign-ups to the calendar on their own:* calendar writes push to intervals.icu and Zwift, and the rider
+  confirms them.
+- *Replacing `day` with dates:* a saved "Today" would freeze on the day it was saved.
+- *A fixed daily time:* the same minute every day reads as a bot.
+- *Running the daily walk at boot:* a deploy would fire every athlete's walk at once.
+
+## 117. Race matching goes by length when it's known; a route gives the length; Unlink in the open (Nov 20)
+
+**Why.** On Nov 17, intervals.icu paired the warm-up workout ("Zwift - Intervals icu: ZRL TTT Warm-up · 24 min",
+21 km) with the race event. The race ride ("Zwift - TTT: Zwift Racing League … (A)", 32 km) was left unpaired. #68's
+hold-out only skips a pairing whose ride isn't *named* like a race, and "ZRL" in the warm-up's name passed. A warm-up
+workout is often named after its race, so names can't decide this.
+
+**Decision.**
+- **Length decides when it's known.** `core.raceDistance` gives a race's length:
+  - #98's `eventInfo.distanceKm`;
+  - or its Zwift route (#102): lead-in plus laps × lap. With no laps set, that's a minimum of one lap, as the route
+    card shows.
+  - `looksLikeRace` then reads only the ride's distance: within 25% of an exact length, or at least 75% of a minimum.
+    It reads the name only when either distance is missing. This replaces #98's "name or distance".
+- **Names, when they're all there is:**
+  - A name with "warm-up" or "cool-down" is never the race.
+  - "TTT" is a race word (`\btt\b` doesn't match inside it).
+- **The hold-out covers `kind: 'race'`** as well as `type: 'race'`. Only the coach's prompt sets a race's colour.
+- **The scorer:** among rides that look like the race, the one nearer its length scores higher.
+- **Where route lengths come from.** They are zwift-data's lap and lead-in figures (`ZwiftRouteData.info`), handed to
+  `settleRides` by the composition root. The Strava-derived heights aren't used, and nothing here reaches the coach.
+- **Unlink is out of the ⋯ menu.** It is a filled red button under "Matched to …" in the completed panel's header
+  (and the phone sheet's), always on screen. It confirms in a `Dialog`, so the confirm can't open below the fold.
+  ⋯ keeps Download .zwo and Mark not done, and is hidden when neither applies.
+
+**Unchanged.**
+- A matched session stays closed (#68).
+- intervals.icu's own pairing is never written (#16), so the athlete still fixes it there.
+
+**Rejected.**
+- *Matching the route by name.* intervals.icu has no route field on an activity. Zwift names the route only on free
+  rides ("… in Watopia"), not on races or workouts.
+- *Start time against the race's `startTime`.* A warm-up and race ridden as one activity start well before the gun,
+  and length already separates them.

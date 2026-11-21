@@ -2,6 +2,7 @@ import { combineRides, formatLongDay, formatWorkoutDuration, sessionRideIds, wor
 import type { CalendarActivity, CalendarEvent, RideTotals, SessionCompliance, SessionFeedback } from '@cycling-coach/shared';
 import { useNavigate } from '@tanstack/react-router';
 import { useState, type ReactNode } from 'react';
+import { Dialog } from '../../components/Dialog';
 import { FeedbackCard } from '../../components/FeedbackCard';
 import { DoneIcon, MoreIcon } from '../../components/icons';
 import { Sheet } from '../../components/Sheet';
@@ -168,36 +169,60 @@ export function CompletedPanel({
     </>
   );
 
-  const moreActions: ReactNode = more && (
+  // Unlink sits in the header, always on screen, where the wrong match is read (DECISIONS #117).
+  const unlinkButton = event.activityId && (
+    <Button
+      size="lg"
+      variant="dangerSolid"
+      className="mt-1 w-full"
+      onClick={() => {
+        unlink.reset();
+        setConfirmUnlink(true);
+      }}
+    >
+      {grouped ? 'Unlink all rides' : 'Unlink this ride'}
+    </Button>
+  );
+  const unlinkDialog = confirmUnlink && (
+    <Dialog
+      title={grouped ? 'Unlink all its rides?' : 'Unlink this ride?'}
+      width={440}
+      onClose={() => setConfirmUnlink(false)}
+      footer={
+        <div className="flex gap-2">
+          <Button size="lg" variant="ghost" className="flex-1" onClick={() => setConfirmUnlink(false)}>
+            Keep
+          </Button>
+          <Button
+            size="lg"
+            variant="dangerSolid"
+            className="flex-1"
+            disabled={unlink.isPending}
+            onClick={() => unlink.mutate(event.id, { onSuccess: () => setConfirmUnlink(false) })}
+          >
+            {unlink.isPending ? 'Unlinking…' : grouped ? 'Unlink rides' : 'Unlink ride'}
+          </Button>
+        </div>
+      }
+    >
+      <p className="m-0 text-[14px]">
+        {grouped
+          ? 'The session goes back to planned (or missed, once its day is over) and the rides show on their own again. Your rating stays with the main ride.'
+          : 'The session goes back to planned (or missed, once its day is over) and won’t be matched to this ride again. Your rating stays with the ride.'}
+      </p>
+      {unlink.error && <ErrorNote>{errorMessage(unlink.error)}</ErrorNote>}
+    </Dialog>
+  );
+
+  const hasMore = !!event.workoutId || !event.activityId;
+  const moreActions: ReactNode = more && hasMore && (
     <div className="flex flex-col gap-2">
       {event.workoutId && (
         <Button size="lg" variant="ghost" onClick={() => downloadZwo(event.workoutId!).catch((e) => setError(errorMessage(e)))}>
           Download .zwo
         </Button>
       )}
-      {event.activityId ? (
-        confirmUnlink ? (
-          <div className="flex flex-col gap-2 rounded-[10px] border border-line bg-surface p-3 text-[13px]">
-            <span>
-              {grouped
-                ? 'Unlink all its rides? The session goes back to planned (or missed, once its day is over) and the rides show on their own again. Your rating stays with the main ride.'
-                : 'Unlink this ride? The session goes back to planned (or missed, once its day is over) and won’t be matched to this ride again. Your rating stays with the ride.'}
-            </span>
-            <span className="flex gap-2">
-              <Button size="lg" variant="ghost" className="flex-1" onClick={() => setConfirmUnlink(false)}>
-                Keep
-              </Button>
-              <Button size="lg" variant="danger" className="flex-1" disabled={unlink.isPending} onClick={() => unlink.mutate(event.id)}>
-                {unlink.isPending ? 'Unlinking…' : grouped ? 'Unlink rides' : 'Unlink ride'}
-              </Button>
-            </span>
-          </div>
-        ) : (
-          <Button size="lg" variant="ghost" onClick={() => setConfirmUnlink(true)}>
-            {grouped ? 'Unlink all rides' : 'Unlink activity'}
-          </Button>
-        )
-      ) : (
+      {!event.activityId && (
         <Button size="lg" variant="ghost" disabled={patch.isPending} onClick={() => patch.mutate({ id: event.id, patch: { status: 'planned' } })}>
           Mark not done
         </Button>
@@ -209,12 +234,14 @@ export function CompletedPanel({
       <Button size="lg" className="flex-auto" onClick={askCoach}>
         Ask coach about this ride
       </Button>
-      <Button size="lg" aria-label="More actions" aria-expanded={more} className="w-11 flex-none px-0 mobile:w-[44px]" onClick={() => setMore((m) => !m)}>
-        <MoreIcon />
-      </Button>
+      {hasMore && (
+        <Button size="lg" aria-label="More actions" aria-expanded={more} className="w-11 flex-none px-0 mobile:w-[44px]" onClick={() => setMore((m) => !m)}>
+          <MoreIcon />
+        </Button>
+      )}
     </div>
   );
-  const errors = (error || patch.error || unlink.error) && <ErrorNote>{error ?? errorMessage(patch.error ?? unlink.error)}</ErrorNote>;
+  const errors = (error || patch.error) && <ErrorNote>{error ?? errorMessage(patch.error)}</ErrorNote>;
 
   if (sheet) {
     return (
@@ -228,6 +255,7 @@ export function CompletedPanel({
               <StatusPill />
             </span>
             {matched}
+            {unlinkButton}
           </div>
         }
         onClose={onClose}
@@ -236,6 +264,7 @@ export function CompletedPanel({
         {body}
         {moreActions}
         {errors}
+        {unlinkDialog}
       </Sheet>
     );
   }
@@ -255,10 +284,12 @@ export function CompletedPanel({
           ✕
         </button>
       </div>
+      {unlinkButton}
       {body}
       <div className="border-t border-line pt-3">{actions}</div>
       {moreActions}
       {errors}
+      {unlinkDialog}
     </aside>
   );
 }

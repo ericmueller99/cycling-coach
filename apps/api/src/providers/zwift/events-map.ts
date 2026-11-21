@@ -76,6 +76,40 @@ export function mapEvent(raw: unknown): ZwiftEventSource | null {
 }
 
 /** Pen ids the logged-in rider is signed up to (`signedUp` on each subgroup). */
+/** One of the athlete's sign-ups, from the logged-in `/api/events/upcoming` (DECISIONS #116). */
+export interface ZwiftSignup {
+  /** Whose sign-up it is; kept to drop anyone else's, should the list ever carry them. */
+  profileId?: number | undefined;
+  eventId: number;
+  /** The pen (event subgroup) they signed up for. */
+  penId: number;
+  name?: string | undefined;
+  /** ISO start. */
+  start?: string | undefined;
+}
+
+/**
+ * `/api/events/upcoming` → sign-ups. Live shape (2026-11-20): an array of
+ * `{ profileId, eventSubgroupId, eventId, eventName, eventStarts: "2026-11-22T16:00:26.000+0000", … }` —
+ * no pen details, so the event itself comes from our stored copy.
+ */
+export function mapUpcomingSignups(raw: unknown): ZwiftSignup[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((r): ZwiftSignup[] => {
+    if (!isObj(r) || typeof r['eventId'] !== 'number' || typeof r['eventSubgroupId'] !== 'number') return [];
+    const startMs = typeof r['eventStarts'] === 'string' ? Date.parse(r['eventStarts'].replace(/([+-]\d{2})(\d{2})$/, '$1:$2')) : NaN;
+    return [
+      {
+        profileId: typeof r['profileId'] === 'number' ? r['profileId'] : undefined,
+        eventId: r['eventId'],
+        penId: r['eventSubgroupId'],
+        name: typeof r['eventName'] === 'string' ? r['eventName'] : undefined,
+        start: Number.isFinite(startMs) ? new Date(startMs).toISOString() : undefined,
+      },
+    ];
+  });
+}
+
 export function signedUpPens(raw: unknown): number[] {
   if (!isObj(raw) || !Array.isArray(raw['eventSubgroups'])) return [];
   return raw['eventSubgroups'].flatMap((p) => (isObj(p) && p['signedUp'] === true && typeof p['id'] === 'number' ? [p['id']] : []));

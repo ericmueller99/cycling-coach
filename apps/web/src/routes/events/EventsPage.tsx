@@ -8,10 +8,11 @@ import { ErrorNote } from '../../components/ui';
 import { activeChips, countActive, filtersPrompt, SORTS, whenLabel, withFilter, type EventsSearch } from '../../lib/events';
 import { errorMessage, useEvents, useEventsStatus, useProfile } from '../../lib/queries';
 import { useIsMobile } from '../../lib/useIsMobile';
-import type { SetFilters } from './controls';
+import type { SetFilters, WhenContext } from './controls';
 import { DesktopEventList, MobileEventList } from './EventList';
 import { useDebouncedSearch, FilterRail } from './FilterRail';
 import { FiltersSheet } from './FiltersSheet';
+import { SignedUpStrip } from './SignedUp';
 import { GetMoreButton, StatusLine } from './StatusLine';
 
 /** Relative times ("in 25 min") stay current. */
@@ -41,7 +42,7 @@ function EndCard({ status, timeZone, now, empty }: { status: EventsStatus | unde
           </div>
           <div className="text-[13px] text-muted">
             {status?.extended
-              ? 'Get more events loads about the next 7 days using your Zwift login. It runs once and is cached; nothing is posted to Zwift.'
+              ? `Get more events loads about the next 7 days, and your sign-ups, using your Zwift login${status.extended.daily ? '. It also runs once a day, early in the morning' : ''}. Nothing is posted to Zwift.`
               : 'The public feed covers about the next day and refreshes every hour.'}
           </div>
         </div>
@@ -86,6 +87,7 @@ function ResultsToolbar({ f, set, sort, setSort, result }: { f: EventFilters; se
 
 const QUICK: { key: string; label: string; on: (f: EventFilters) => boolean; flip: (f: EventFilters) => EventFilters }[] = [
   { key: 'today', label: 'Today', on: (f) => f.day === 'today', flip: (f) => ({ ...f, day: f.day === 'today' ? 'all' : 'today' }) },
+  { key: 'signed', label: 'Signed up', on: (f) => f.signedUpOnly, flip: (f) => ({ ...f, signedUpOnly: !f.signedUpOnly }) },
   { key: 'races', label: 'Races', on: (f) => f.types.length === 1 && f.types[0] === 'race', flip: (f) => ({ ...f, types: f.types.length === 1 && f.types[0] === 'race' ? [] : ['race'] }) },
   { key: 'enter', label: 'I can enter', on: (f) => f.canEnter, flip: (f) => ({ ...f, canEnter: !f.canEnter }) },
   { key: 'z2', label: 'Fits Z2', on: (f) => f.fitsZ2, flip: (f) => ({ ...f, fitsZ2: !f.fitsZ2 }) },
@@ -138,6 +140,7 @@ export function EventsPage({ search }: { search: EventsSearch }) {
     if (!events.isFetchingNextPage) void events.fetchNextPage();
   }, [events]);
 
+  const when = useMemo(() => ({ timeZone, through: status.data?.through }), [timeZone, status.data?.through]);
   const askCoach = () => void navigate({ to: '/', search: { new: true, prompt: filtersPrompt(f) } });
   const listProps = {
     items,
@@ -149,7 +152,7 @@ export function EventsPage({ search }: { search: EventsSearch }) {
     footer: <EndCard status={status.data} timeZone={timeZone} now={now} empty={Boolean(first && first.total === 0)} />,
   };
 
-  if (isMobile) return <MobileEvents f={f} set={set} sort={sort} setSort={setSort} status={status.data} result={first} timeZone={timeZone} now={now} z2={z2} listProps={listProps} error={events.error} />;
+  if (isMobile) return <MobileEvents f={f} set={set} sort={sort} setSort={setSort} status={status.data} result={first} timeZone={timeZone} now={now} z2={z2} when={when} listProps={listProps} error={events.error} />;
 
   return (
     <div className="flex h-dvh min-h-0 flex-col">
@@ -167,8 +170,9 @@ export function EventsPage({ search }: { search: EventsSearch }) {
         </div>
       </header>
       <div className="flex min-h-0 flex-auto">
-        <FilterRail f={f} set={set} facets={first?.facets} z2={z2} />
+        <FilterRail f={f} set={set} facets={first?.facets} z2={z2} when={when} />
         <section aria-label="Results" className="flex min-h-0 min-w-0 flex-auto flex-col">
+          <SignedUpStrip status={status.data} timeZone={timeZone} now={now} />
           <ResultsToolbar f={f} set={set} sort={sort} setSort={setSort} result={first} />
           {events.error && (
             <div className="px-6 pt-4">
@@ -192,6 +196,7 @@ function MobileEvents({
   timeZone,
   now,
   z2,
+  when,
   listProps,
   error,
 }: {
@@ -204,6 +209,7 @@ function MobileEvents({
   timeZone: string;
   now: Date;
   z2: string | undefined;
+  when: WhenContext;
   listProps: Parameters<typeof MobileEventList>[0];
   error: unknown;
 }) {
@@ -274,9 +280,10 @@ function MobileEvents({
           </select>
         </div>
         {error ? <ErrorNote>{errorMessage(error)}</ErrorNote> : null}
+        <SignedUpStrip status={status} timeZone={timeZone} now={now} mobile />
         <MobileEventList {...listProps} />
       </div>
-      {sheet && <FiltersSheet f={f} set={set} facets={result?.facets} total={result?.total} z2={z2} onClose={() => setSheet(false)} />}
+      {sheet && <FiltersSheet f={f} set={set} facets={result?.facets} total={result?.total} z2={z2} when={when} onClose={() => setSheet(false)} />}
     </>
   );
 }

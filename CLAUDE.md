@@ -35,7 +35,9 @@ Only `providers/intervals-icu` talks to intervals.icu, and services get its clie
 Likewise only `providers/zwift` talks to Zwift (unofficial API for zFTP/zMAP/weight and events,
 read-only, opt-in, DECISIONS #23, #29, #52). **Every Zwift request goes through the shared
 `RequestGate`** (one at a time, 2 s apart), and the logged-in event feed runs only when the user clicks
-"Get more events" — never on a timer, at boot or from the coach.
+"Get more events" or once a day per athlete at a random early-morning time (`zwift.extended`, off with
+`ZWIFT_DAILY_EVENTS=false`, DECISIONS #116) — never at boot or from the coach. "Refresh sign-ups"
+(`/api/events/upcoming`, one request) likewise runs only on a click.
 
 A deployment may add rides of its own through `Core.rides` (DECISIONS #71); the sync never touches them.
 

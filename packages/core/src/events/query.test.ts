@@ -112,6 +112,29 @@ describe('queryEvents', () => {
     expect(ids(queryEvents([tonight, sunday], q({ filters: { from: '08:30', to: '10:00' } }), athlete, none, ctx))).toEqual([sunday.id]);
   });
 
+  it('any day of the synced range, or a span of days, by local date', () => {
+    const tonight = event({ start: '2026-11-01T06:30:00.000Z' }); // Sat 23:30 local — Sunday in UTC
+    const sunday = event({ start: '2026-11-01T17:00:00.000Z' }); // Sun 09:00 local
+    const tuesday = event({ start: '2026-11-03T17:00:00.000Z' }); // Tue 09:00 local
+    const all = [tonight, sunday, tuesday];
+    const run = (filters: EventQueryInput['filters']) => ids(queryEvents(all, q({ filters }), athlete, none, ctx));
+    expect(run({ dateFrom: '2026-11-01', dateTo: '2026-11-01' })).toEqual([sunday.id]);
+    expect(run({ dateFrom: '2026-10-31', dateTo: '2026-11-01' })).toEqual([tonight.id, sunday.id]);
+    expect(run({ dateFrom: '2026-11-02' })).toEqual([tuesday.id]);
+    expect(run({ dateTo: '2026-10-31' })).toEqual([tonight.id]);
+    expect(run({ dateFrom: '2026-11-01', dateTo: '2026-11-03', timesOfDay: ['morning'] })).toEqual([sunday.id, tuesday.id]);
+    // Both a relative day and dates: both must hold.
+    expect(run({ day: 'tomorrow', dateFrom: '2026-11-03' })).toEqual([]);
+  });
+
+  it('says how far the stored events reach, whatever matches', () => {
+    const later = event({ start: '2026-11-06T17:00:00.000Z' });
+    const r = queryEvents([event(), later], q({ filters: { types: ['tt'] } }), athlete, none, ctx);
+    expect(r.total).toBe(0);
+    expect(r.through).toBe(later.start);
+    expect(queryEvents([], q({}), athlete, none, ctx).through).toBeUndefined();
+  });
+
   it('distance options match if ANY option fits, and say which', () => {
     const long = pen(1, { name: 'Long', km: 112 });
     const short = pen(2, { name: 'Short', km: 26 });

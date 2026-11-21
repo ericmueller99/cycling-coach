@@ -1,3 +1,4 @@
+import { nextDailyRun } from '@cycling-coach/core';
 import type { Collections } from '@cycling-coach/db';
 import type { IntervalsSync } from '../services/intervals-sync';
 import type { ZwiftEventsService } from '../services/zwift-events';
@@ -8,6 +9,8 @@ export { JobBusyError, JobRunner, type JobDef, type JobRunnerOptions } from './r
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
+/** The daily walk's local window: early, so sign-ups are fresh before morning rides (DECISIONS #116). */
+export const DAILY_WALK_WINDOW = { windowStart: '04:00', windowEnd: '07:00' } as const;
 
 /** Job kinds (DECISIONS #56). Per-athlete jobs are keyed by userId; the rest by `GLOBAL`. */
 export const JOB = {
@@ -19,6 +22,8 @@ export const JOB = {
   zwiftMetrics: 'zwift.metrics',
   /** The public Zwift events feed (DECISIONS #29), hourly; the route table first when it's a week old. */
   zwiftPublic: 'zwift.public',
+  /** "Get more events" once a day per athlete with a Zwift login, at a varying local time (DECISIONS #116). */
+  zwiftExtended: 'zwift.extended',
   /** Re-checks which jobs should exist (new athletes, connections made or dropped), hourly. */
   ensure: 'jobs.ensure',
 } as const;
@@ -31,7 +36,11 @@ export interface JobDeps {
   zwiftEvents: ZwiftEventsService;
   /** How often the delta runs. Default 15 min; a deployment with webhooks can poll less (DECISIONS #64). */
   deltaEveryMs?: number | undefined;
+  /** The daily logged-in events walk (DECISIONS #116). Default on; `ZWIFT_DAILY_EVENTS=false` turns it off. */
+  zwiftDailyEvents?: boolean | undefined;
   now: () => Date;
+  /** In [0, 1); picks the daily walk's minute. Tests pass a fixed one. */
+  random?: () => number;
   log?: (line: string) => void;
 }
 
@@ -52,6 +61,18 @@ export function registerJobs(jobs: JobRunner, d: JobDeps): JobRunner {
         await d.zwiftSync.run(userId, d.now());
       },
     })
+    .register(JOB.zwiftExtended, {
+      every: 24 * HOUR,
+      // Never throws, so the runner never retries it: a failed walk waits for tomorrow (#29).
+      run: async (userId) => {
+        const outcome = await d.zwiftEvents.dailyWalk(userId).catch((err: Error) => {
+          log(`zwift events: daily walk crashed — ${err.message}`);
+          return 'failed' as const;
+        });
+        if (outcome !== 'ran') log(`zwift events: daily walk ${outcome}`);
+        return nextDailyWalk(d, userId);
+      },
+    })
     .register(JOB.zwiftPublic, {
       every: HOUR,
       run: async () => {
@@ -66,6 +87,12 @@ export function registerJobs(jobs: JobRunner, d: JobDeps): JobRunner {
         await ensureJobs(jobs, d);
       },
     });
+}
+
+/** The next daily walk for this athlete: a random minute in tomorrow's window, their local time. */
+async function nextDailyWalk(d: Pick<JobDeps, 'c' | 'now' | 'random'>, userId: string): Promise<Date> {
+  const profile = await d.c.profiles.findOne({ userId }, { projection: { timezone: 1 } });
+  return nextDailyRun({ now: d.now(), timeZone: profile?.timezone ?? 'UTC', ...DAILY_WALK_WINDOW, rand: (d.random ?? Math.random)() });
 }
 
 /**
@@ -86,14 +113,22 @@ export async function ensureJobs(jobs: JobRunner, d: JobDeps): Promise<void> {
 
 /**
  * One athlete's per-user jobs, from their current connections: a delta job while intervals.icu is
- * connected, a metrics job while they have a Zwift login. Returns what's connected.
+ * connected; a metrics job and the daily events walk while they have a Zwift login. Returns what's
+ * connected.
  */
-export async function ensureUserJobs(jobs: JobRunner, d: Pick<JobDeps, 'sync' | 'zwiftSync'>, userId: string): Promise<{ intervals: boolean; zwift: boolean }> {
+export async function ensureUserJobs(
+  jobs: JobRunner,
+  d: Pick<JobDeps, 'c' | 'now' | 'random' | 'sync' | 'zwiftSync' | 'zwiftDailyEvents'>,
+  userId: string,
+): Promise<{ intervals: boolean; zwift: boolean }> {
   const intervals = await d.sync.connected(userId);
   if (intervals) await jobs.schedule(JOB.delta, userId);
   else await jobs.remove(JOB.delta, userId);
   const zwift = await d.zwiftSync.connected(userId);
   if (zwift) await jobs.schedule(JOB.zwiftMetrics, userId);
   else await jobs.remove(JOB.zwiftMetrics, userId);
+  // A new daily walk waits for the next morning window, so a deploy or a new login never fires it.
+  if (zwift && d.zwiftDailyEvents !== false) await jobs.schedule(JOB.zwiftExtended, userId, await nextDailyWalk(d, userId));
+  else await jobs.remove(JOB.zwiftExtended, userId);
   return { intervals, zwift };
 }

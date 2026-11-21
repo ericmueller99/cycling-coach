@@ -58,7 +58,7 @@ import type { IntegrationResolver } from '../integrations';
 import { IntervalsError, isTransient, UNSHARED_STATUS, type IntervalsIcu, type RemoteEvent } from '../providers/intervals-icu';
 import type { CalendarService } from './calendar';
 import { reconcile } from './calendar-reconcile';
-import { MATCH_DAYS, settleRides } from './rides';
+import { MATCH_DAYS, settleRides, type RouteLengths } from './rides';
 
 /**
  * intervals.icu is the hub Garmin, Zwift and Strava feed; we sync from it into our own collections
@@ -148,6 +148,8 @@ export class IntervalsSync {
     /** The job runner's side of things: start/continue the full import, and run a delta soon. */
     private readonly jobs: SyncJobs,
     private readonly now: () => Date = () => new Date(),
+    /** Zwift route lengths, so a race with a route is matched by length (DECISIONS #117). */
+    private readonly routes?: RouteLengths,
   ) {}
 
   /** This athlete's client. Callers check `connected` first; losing it mid-run is an error. */
@@ -389,7 +391,7 @@ export class IntervalsSync {
 
       // 4. Done / missed, from the stored rides — across all history when a full import finishes.
       const matchFrom = finishing ? (full.oldest ?? addDays(today, -400)) : [window.from, addDays(today, -MATCH_DAYS)].sort()[0]!;
-      const settled = await settleRides(this.c, userId, matchFrom, today, now);
+      const settled = await settleRides(this.c, userId, matchFrom, today, now, this.routes);
       report.matched = settled.matched;
       report.missed += settled.missed;
 

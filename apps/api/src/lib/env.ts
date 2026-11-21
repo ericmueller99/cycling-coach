@@ -24,6 +24,11 @@ const schema = z.object({
   ZWIFT_USERNAME: z.string().optional(),
   ZWIFT_PASSWORD: z.string().optional(),
   /**
+   * Run "Get more events" once a day per athlete with a Zwift login, at a varying early-morning
+   * local time (docs/DECISIONS.md #116). `false` leaves it to the button.
+   */
+  ZWIFT_DAILY_EVENTS: z.stringbool().default(true),
+  /**
    * The account the INTERVALS_ICU_KEY and ZWIFT_* credentials belong to. Unset: the oldest account.
    * No other account ever uses them (docs/DECISIONS.md #53).
    */
