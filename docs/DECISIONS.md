@@ -3050,3 +3050,24 @@ workout is often named after its race, so names can't decide this.
   rides ("… in Watopia"), not on races or workouts.
 - *Start time against the race's `startTime`.* A warm-up and race ridden as one activity start well before the gun,
   and length already separates them.
+
+## 118. `find_events` isn't strict, and a test budgets the strict tools (Nov 24)
+
+**Why.** Every coach turn failed with #15's `400 The compiled grammar is too large`. #116 took `find_events` from 12
+optional parameters to 18 while it was strict, so the strict tools together went from 14 to 20. The API publishes caps
+(20 strict tools, 24 optional parameters, 16 unions), and 20 is inside them. It also limits the compiled size, which
+it doesn't publish, and each optional parameter roughly doubles part of the grammar. Only a live call shows it, and
+`coach:smoke` wasn't run after #116.
+
+**Decision.**
+- **`find_events` is `strict: false`.** Its schema, description and place in the list are unchanged. The 11 tools still
+  strict have 2 optional parameters between them.
+- **A budget test** in `schema.test.ts`, offline: at most 4 optional parameters on a strict tool and 8 across them, plus
+  the published caps. It's deliberately far below what the API accepts, because the real limit is unknown.
+
+**Trade-off.** A parameter the model makes up is dropped by Zod instead of being impossible, as with the other
+non-strict tools. Known parameters are still validated in `runTool`, and a failure goes back to the model to correct.
+
+**Rejected.**
+- *Making the parameters required.* Every search would spell out 18 values.
+- *Dropping #116's filters.* They're what lets the coach see past the next hour of events.

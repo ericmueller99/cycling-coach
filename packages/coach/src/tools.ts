@@ -963,6 +963,7 @@ export const COACH_TOOLS = [
       limit: z.number().int().min(1).max(25).optional().describe('At most 25; default 10.'),
     }),
     source: 'app',
+    strict: false,
     runningLabel: 'Searching Zwift events',
     async run(input, { ports }) {
       const filters = eventFiltersSchema.parse({

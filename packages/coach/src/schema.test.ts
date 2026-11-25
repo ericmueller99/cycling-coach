@@ -13,6 +13,16 @@ function* objects(node: unknown): Generator<Record<string, unknown>> {
   for (const v of Object.values(obj)) yield* objects(v);
 }
 
+/** Parameters the model may leave out: each one multiplies the compiled grammar. */
+function optionalCount(schema: unknown): number {
+  let count = 0;
+  for (const obj of objects(schema)) {
+    const required = (obj['required'] as string[] | undefined) ?? [];
+    count += Object.keys((obj['properties'] as object | undefined) ?? {}).filter((key) => !required.includes(key)).length;
+  }
+  return count;
+}
+
 describe('strict tool schemas', () => {
   it.each(TOOL_DEFINITIONS.map((t) => [t.name, t] as const))('%s is strict-compatible', (_n, tool) => {
     const json = JSON.stringify(tool.input_schema);
@@ -28,6 +38,7 @@ describe('strict tool schemas', () => {
     expect(TOOL_DEFINITIONS.filter((t) => !t.strict).map((t) => t.name).sort()).toEqual([
       'build_recipe',
       'create_workout',
+      'find_events',
       'offer_food_log',
       'propose_calendar_changes',
       'propose_goal',
@@ -37,6 +48,19 @@ describe('strict tool schemas', () => {
       'suggest_meals',
       'update_memory',
     ]);
+  });
+
+  it('keeps the strict tools well inside the grammar cap', () => {
+    // The API's compiled-size cap isn't published, and only a live call hits it: 18 optional parameters
+    // on one strict tool went over (DECISIONS #118). Over budget here? Make the tool `strict: false`.
+    // Raise a number only after `coach:smoke` passes with the new schema.
+    const strict = TOOL_DEFINITIONS.filter((t) => t.strict);
+    const optionals = Object.fromEntries(strict.map((t) => [t.name, optionalCount(t.input_schema)]));
+    expect(Object.entries(optionals).filter(([, n]) => n > 4), 'make these strict: false').toEqual([]);
+    expect(Object.values(optionals).reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(8);
+    // The published caps.
+    expect(strict.length).toBeLessThanOrEqual(20);
+    expect(strict.reduce((n, t) => n + JSON.stringify(t.input_schema).split('"anyOf":').length - 1, 0)).toBeLessThanOrEqual(16);
   });
 
   it('keeps discriminators and enums enforceable', () => {
